@@ -297,11 +297,11 @@ Review Items, Meals, and the quantity editor in Log Food. The next build phase i
 Target deployment is the always-on Mac Mini, not a public cloud product. The named service is `com.kanwar.nourish` and its dedicated port is **4317**. The service never selects a fallback port: if 4317 is already occupied, it exits with a clear error so the conflicting application can be fixed.
 
 - Application: `launchd` service using `ops/com.kanwar.nourish.plist`, with `RunAtLoad`, restart after failure, and a 10-second restart throttle.
-- Address: `http://mac-mini.tail8f99cb.ts.net:4317` from KP’s Tailscale devices; `http://localhost:4317` on the Mac Mini.
+- Address: `http://localhost:4317` on each Mac. The shared launcher pulls the latest public GitHub `main` checkout before opening the local app.
 - Database: local SQLite in a private ignored directory; WAL mode and foreign keys enabled.
 - Access: private network/Tailscale only, with no public ingress.
 - Backups: encrypted, versioned daily snapshots with retention and a scheduled restore test.
 - Monitoring: health endpoint, process restart, disk-space check, backup-age alert, and clear plain-English status.
 - Updates: tested locally, full suite green, backup recorded, then controlled restart.
 
-Runbook once the Mac Mini is online: pull `main`, run `npm ci && npm run build`, copy the checked-in LaunchAgent into `~/Library/LaunchAgents`, then bootstrap and kickstart it. Terminal commands `nourish` and `health` are defined in the shared iCloud aliases file to open the same Tailscale address from any synced Mac. The Mac Mini was offline when this configuration was prepared on 2026-08-09, so the final installation and external reachability check remain pending.
+Runbook once the Mac Mini is online: run the shared `nourish` launcher once to clone/pull GitHub `main`, then copy the checked-in LaunchAgent into `~/Library/LaunchAgents`, bootstrap it, and kickstart it. Terminal commands `nourish` and `health` are defined in the shared iCloud aliases file; on every synced Mac they pull the latest `main`, then open the local fixed-port copy. The Mac Mini was offline when this configuration was prepared on 2026-08-09, so the final always-on installation remains pending.
