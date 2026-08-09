@@ -25,15 +25,120 @@ export type CardIqFoodImport = {
   items: CardIqFoodItem[];
 };
 
-const nonFoodTerms = ["diaper", "shampoo", "detergent", "toilet paper", "tissue", "garbage bag", "gift card", "fastag", "mobile bill", "book", "towel", "hanger", "glass", "pitcher", "spray", "handwash", "cleaning", "kitchen cloth", "mosquito", "car", "charger"];
-const foodTerms = ["milk", "yogurt", "yoghurt", "curd", "paneer", "cheese", "whey", "protein", "bread", "oat", "rice", "dal", "chana", "rajma", "besan", "peanut", "makhana", "fruit", "vegetable", "carrot", "potato", "gourd", "onion", "tomato", "capsicum", "spinach", "cucumber", "broccoli", "pumpkin", "banana", "avocado", "mango", "lemon", "egg", "sugar", "tea", "coffee", "cocoa", "cookie", "biscuit", "snack", "noodle", "popcorn", "soda", "cola", "kombucha", "juice", "drink", "beverage", "chilli", "coriander", "ginger", "tamarind", "oil", "ghee", "flour", "poha", "vermicelli", "lettuce", "sprout"];
+/**
+ * Household, personal-care, medicine, and general-merchandise purchases. These are
+ * excluded for every store. Previously Instamart and BigBasket bypassed this check
+ * entirely, which let toilet cleaner, antiseptic, and incense into the food catalogue.
+ *
+ * Terms are matched as whole words, so "cough" does not exclude "cough drops"-shaped
+ * foods by accident and "cream" is deliberately absent: dairy cream and ice cream are
+ * food. Non-food creams are caught by their qualifier ("moisture cream") or brand.
+ */
+const nonFoodTerms = [
+  // cleaning and household
+  "detergent", "dishwash", "dish wash", "cleaner", "cleaning", "disinfectant", "antiseptic",
+  "toilet paper", "toilet cleaner", "floor cleaner", "garbage bag", "tissue", "kitchen cloth",
+  "cloth", "muslin", "towel", "hanger", "mosquito", "agarbatti", "incense", "phenyl",
+  // personal care
+  "shampoo", "conditioner", "body wash", "shower gel", "handwash", "hand wash", "soap",
+  "toothpaste", "toothbrush", "deodorant", "moisture cream", "moisturiser", "moisturizer",
+  "balm", "lotion", "sunscreen", "shaving", "razor", "comb", "lice", "diaper", "sanitary",
+  "skin", "hair",
+  // medicine
+  "cough", "syrup for", "tablet", "tablets", "capsule", "capsules", "ointment", "antacid",
+  "paracetamol", "diphenhydramine", "medicine", "sanitizer", "sanitiser",
+  // general merchandise
+  "gift card", "fastag", "mobile bill", "charger", "car", "battery", "cable", "book",
+  "paperback", "hardcover", "novel", "bestselling", "author", "glass", "pitcher", "spray",
+  "bottle cap", "container", "storage box",
+];
+
+/**
+ * Brands that only ever sell non-food in this order history. A brand check catches
+ * products whose category word is missing or unusual (Harpic "Power Plus Stain Removal",
+ * Aveeno "Soothing Relief", Chicco "for Kids").
+ */
+const nonFoodBrands = [
+  "harpic", "dettol", "vim", "lizol", "colin", "aveeno", "aquaphor", "mcaffeine", "chicco",
+  "benadryl", "mangaldeep", "presto", "rixtec", "himalaya", "nivea", "pampers", "huggies",
+];
+
+/**
+ * Words meaning "this is a manufactured product, not the raw ingredient it names".
+ *
+ * A raw-ingredient match is refused when one of these appears, because the macros of
+ * banana oat cookies, oat beverage, or cream-onion crisps have nothing to do with the
+ * macros of a banana, dry rolled oats, or a raw onion. Without this guard the importer
+ * assigned raw-produce nutrition to processed snacks.
+ */
+const processedFormTerms = [
+  "cookie", "cookies", "biscuit", "biscuits", "cracker", "crackers", "rusk", "wafer",
+  "chips", "crisps", "namkeen", "snack", "snacks", "mixture", "murukku", "sev", "nachos",
+  "popcorn", "laddoo", "barfi", "halwa", "cake", "brownie", "pastry", "muffin", "cupcake",
+  "beverage", "drink", "shake", "milkshake", "smoothie", "juice", "soda", "cola", "kombucha",
+  "syrup", "sauce", "ketchup", "dip", "spread", "jam", "pickle", "chutney", "paste",
+  "powder", "flour", "atta", "rava", "suji", "batter", "premix", "mix",
+  "bar", "candy", "toffee", "chocolate", "ice cream", "icecream", "custard",
+  "noodles", "pasta", "vermicelli", "bread", "bun", "kulcha", "roti", "paratha", "pizza",
+  "flavour", "flavoured", "flavor", "flavored", "extract", "essence", "seasoning", "masala",
+  "oil", "ghee", "butter", "cream",
+];
+
+/**
+ * Raw ingredients whose reference nutrition is safe to reuse when the purchase is
+ * unambiguously that ingredient in its raw form.
+ */
+const referenceMatches: Array<[string, string[]]> = [
+  ["banana", ["banana", "bananas", "kela"]],
+  ["carrot", ["carrot", "carrots", "gajar"]],
+  ["sweet-potato", ["sweet potato", "shakarkandi", "sihi genasu"]],
+  ["cucumber", ["cucumber", "kheera", "soutekaayi"]],
+  ["tomato", ["tomato", "tomatoes", "tamatar"]],
+  ["capsicum", ["capsicum", "bell pepper", "bell peppers", "shimla mirch"]],
+  ["spinach", ["spinach", "palak"]],
+  ["onion", ["onion", "onions", "pyaaz", "eerulli"]],
+  ["bottle-gourd", ["bottle gourd", "doodhi", "lauki", "sorekaayi"]],
+  ["broccoli", ["broccoli"]],
+  ["pumpkin", ["pumpkin", "kaddu"]],
+  ["whole-egg", ["egg", "eggs", "anda"]],
+  ["oats", ["oat", "oats", "rolled oats"]],
+  ["chia", ["chia", "chia seeds"]],
+  ["peanut-butter", ["peanut butter"]],
+  ["green-peas-cooked", ["green peas", "matar"]],
+  ["mango", ["mango", "mangoes", "aam"]],
+  ["strawberries", ["strawberry", "strawberries"]],
+  ["pomegranate", ["pomegranate", "anar"]],
+  ["green-beans", ["french beans", "green beans"]],
+  ["cauliflower", ["cauliflower", "gobi"]],
+];
+
+/**
+ * Exact products, matched against the name with all separators removed so retailer
+ * spelling differences do not matter. Amazon writes "Nandini Good Life" and Instamart
+ * writes "Nandini GoodLife"; both must resolve to the same product.
+ *
+ * Every fragment must be present, which keeps "Nandini Pasteurised Toned Milk" from
+ * matching the GoodLife entry.
+ */
+const exactProducts: Array<{ foodId: string; fragments: string[] }> = [
+  { foodId: "nandini-goodlife-toned", fragments: ["nandini", "goodlife", "toned"] },
+  { foodId: "amul-high-protein-paneer", fragments: ["amul", "highprotein", "paneer"] },
+  { foodId: "amul-high-protein-buttermilk", fragments: ["amul", "highprotein", "buttermilk"] },
+  { foodId: "muscleblaze-biozyme-whey", fragments: ["muscleblaze", "biozyme"] },
+  { foodId: "epigamia-natural-greek", fragments: ["epigamia", "greek"] },
+];
 
 function normalized(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
+/** Separator-free form, so "good life" and "goodlife" compare equal. */
+function compacted(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
 function containsWholeTerm(value: string, term: string) {
-  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\\ /g, "\\s+");
+  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/ /g, "\\s+");
   return new RegExp(`(?:^|\\s)${escaped}(?:$|\\s)`).test(value);
 }
 
@@ -50,23 +155,69 @@ function storeFor(order: CardIqOrder): CardIqFoodItem["store"] | null {
   return null;
 }
 
+const amazonFoodTerms = [
+  "milk", "yogurt", "yoghurt", "curd", "dahi", "skyr", "paneer", "tofu", "cheese", "butter",
+  "ghee", "cream", "whey", "protein", "bread", "oat", "oats", "rice", "dal", "chana", "rajma",
+  "besan", "atta", "flour", "poha", "vermicelli", "noodle", "noodles", "pasta", "peanut",
+  "peanuts", "makhana", "almond", "almonds", "cashew", "nuts", "seeds", "fruit", "vegetable",
+  "carrot", "potato", "gourd", "onion", "tomato", "capsicum", "spinach", "cucumber",
+  "broccoli", "pumpkin", "banana", "avocado", "mango", "lemon", "ginger", "coriander",
+  "lettuce", "beetroot", "brinjal", "sprout", "sprouts", "egg", "eggs", "chicken", "mutton",
+  "fish", "prawn", "sugar", "jaggery", "sweetener", "salt", "tea", "coffee", "cocoa",
+  "chocolate", "cookie", "cookies", "biscuit", "snack", "namkeen", "popcorn", "chips",
+  "soda", "cola", "kombucha", "juice", "drink", "beverage", "shake", "water", "chilli",
+  "masala", "tamarind", "oil", "pickle", "sauce", "jam", "honey", "murukku", "mixture",
+  "electrolyte", "formula",
+];
+
+export function isNonFood(name: string) {
+  const value = normalized(name);
+  if (!value) return true;
+  if (nonFoodBrands.some((brand) => containsWholeTerm(value, brand))) return true;
+  return nonFoodTerms.some((term) => containsWholeTerm(value, term));
+}
+
 export function isFoodLike(name: string, store: CardIqFoodItem["store"]) {
   const value = normalized(name);
-  if (!value || nonFoodTerms.some((term) => containsWholeTerm(value, term))) return false;
-  return store === "Instamart" || store === "BigBasket" || foodTerms.some((term) => value.includes(term));
+  if (!value) return false;
+  if (isNonFood(name)) return false;
+  // Grocery-only retailers are trusted for the remainder; Amazon sells everything, so a
+  // positive food signal is still required there.
+  if (store === "Instamart" || store === "BigBasket") return true;
+  // Inclusion is deliberately lenient (substring, not whole word) so compound names like
+  // "cornflour" and "Sauces" still register as food. Precision is not needed here because
+  // non-food has already been excluded, and being listed in Purchases assigns no nutrition.
+  // Whole-word matching is reserved for the decisions that do assign macros.
+  return amazonFoodTerms.some((term) => value.includes(term));
+}
+
+/**
+ * A processed-form word only disqualifies a raw-ingredient match when it is not part of
+ * the matched term itself. "Peanut butter" legitimately contains "butter"; "banana oat
+ * cookies" does not legitimately contain "cookies" as part of "banana".
+ */
+function hasForeignProcessedForm(value: string, matchedTerm: string) {
+  return processedFormTerms.some((form) => containsWholeTerm(value, form) && !containsWholeTerm(matchedTerm, form));
 }
 
 export function matchCardIqFood(name: string): Pick<CardIqFoodItem, "matchedFoodId" | "matchKind"> {
+  if (isNonFood(name)) return {};
+
+  const compact = compacted(name);
+  for (const product of exactProducts) {
+    if (product.fragments.every((fragment) => compact.includes(fragment))) {
+      return { matchedFoodId: product.foodId, matchKind: "Exact product" };
+    }
+  }
+
+  // A manufactured product never inherits raw-ingredient nutrition. Better to show
+  // "needs label" than to log a cookie as a banana.
   const value = normalized(name);
-  const referenceMatches: Array<[string, string[]]> = [
-    ["banana", ["banana"]], ["carrot", ["carrot"]], ["sweet-potato", ["sweet potato"]], ["cucumber", ["cucumber"]],
-    ["tomato", ["tomato"]], ["capsicum", ["capsicum", "bell pepper"]], ["spinach", ["spinach"]], ["onion", ["onion"]],
-    ["bottle-gourd", ["bottle gourd", "doodhi", "sorekaayi"]], ["broccoli", ["broccoli"]], ["pumpkin", ["pumpkin"]],
-    ["whole-egg", ["white eggs", "eggs pack"]], ["oats", ["oat"]], ["chia", ["chia"]], ["peanut-butter", ["peanut butter"]],
-  ];
-  if (value.includes("nandini goodlife")) return { matchedFoodId: "nandini-goodlife-toned", matchKind: "Exact product" };
   for (const [matchedFoodId, terms] of referenceMatches) {
-    if (terms.some((term) => value.includes(term))) return { matchedFoodId, matchKind: "Reference ingredient" };
+    const matchedTerm = terms.find((term) => containsWholeTerm(value, term));
+    if (!matchedTerm) continue;
+    if (hasForeignProcessedForm(value, matchedTerm)) return {};
+    return { matchedFoodId, matchKind: "Reference ingredient" };
   }
   return {};
 }
@@ -101,6 +252,28 @@ export function makeCardIqFoodImport(orders: CardIqOrder[], generatedAt: string,
     orderCount,
     items: [...grouped.values()].sort((a, b) => b.lastOrdered.localeCompare(a.lastOrdered) || b.orderCount - a.orderCount || a.name.localeCompare(b.name)),
   };
+}
+
+/**
+ * Re-applies classification and matching to a stored snapshot.
+ *
+ * Matching lives in the app rather than in the saved file so that improving the matcher
+ * immediately improves what KP sees, with no cardIQ re-import. The snapshot stays a record
+ * of what was purchased; this function decides what it means.
+ */
+export function refineCardIqImport(snapshot: CardIqFoodImport): CardIqFoodImport {
+  const items = snapshot.items
+    .filter((item) => isFoodLike(item.name, item.store))
+    .map((item) => {
+      const { matchedFoodId, matchKind } = matchCardIqFood(item.name);
+      const refined: CardIqFoodItem = { name: item.name, store: item.store, orderCount: item.orderCount, units: item.units, lastOrdered: item.lastOrdered };
+      if (matchedFoodId) {
+        refined.matchedFoodId = matchedFoodId;
+        refined.matchKind = matchKind;
+      }
+      return refined;
+    });
+  return { ...snapshot, items };
 }
 
 export function isCardIqFoodImport(value: unknown): value is CardIqFoodImport {

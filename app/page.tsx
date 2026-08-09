@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { isCardIqFoodImport, type CardIqFoodImport } from "./cardiq-food";
+import { isCardIqFoodImport, refineCardIqImport, type CardIqFoodImport } from "./cardiq-food";
 import { LOCAL_NUTRITION_STORAGE_KEY, parseSavedNutritionState, shouldRestoreSavedNutritionState, stringifySavedNutritionState, type SavedNutritionState } from "./local-nutrition-state";
 import { getBangaloreClock, getEnergyRunway, getQuantityLimit, isQuantityValid, matchesRecipe, scaleNutrition, sumLoggedNutrition, type DashboardClock } from "./prototype-logic";
 import { meals, nutritionItems, SOURCE_LINKS, type Meal, type NutritionItem } from "./nutrition-data";
@@ -290,7 +290,14 @@ function PurchasesView({ onAdd, cardIqImport }: { onAdd: (food: Food) => void; c
     <>
       <SectionHeading eyebrow="Track · Purchases" title="Your food shelf, already waiting" description={cardIqImport ? `Your actual food products from the last year of cardIQ orders. Matched foods are ready to log; the rest wait for an exact nutrition label.` : "Run the local cardIQ import to bring your real orders here. No order history is stored in Git."} action={<span className="prototype-badge">{cardIqImport ? `Synced ${cardIqImport.generatedAt.slice(0, 10)}` : "Local import needed"}</span>} />
       <div className="purchase-summary">
-        {stores.map((name, index) => { const items = purchaseItems.filter((item) => item.store === name); const ready = items.filter((item) => item.food).length; return <section className={`source-card dark-card ${["lime", "orange", "cream"][index]}`} key={name}><span>{name}</span><strong>{items.length}</strong><small>food products in the last year</small><i>{ready} nutrition-ready</i></section>; })}
+        {stores.map((name, index) => {
+          const items = purchaseItems.filter((item) => item.store === name);
+          const ready = items.filter((item) => item.food).length;
+          // SPEC §4.7: Amazon's export does not identify the Now channel, so the app must
+          // say so rather than imply a certainty the data does not support.
+          const label = name === "Amazon" ? "Amazon — channel unconfirmed" : name;
+          return <section className={`source-card dark-card ${["lime", "orange", "cream"][index]}`} key={name}><span>{label}</span><strong>{items.length}</strong><small>food products in the last year</small><i>{ready} nutrition-ready</i></section>;
+        })}
       </div>
       <section className="surface-card purchase-table-card">
         <div className="section-title-row"><div><span className="eyebrow">Personal catalogue</span><h2>Recently purchased foods</h2></div><div className="table-actions"><button className={`chip ${filter === "All" ? "active" : ""}`} onClick={() => setFilter("All")}>All</button><button className={`chip ${filter === "Needs review" ? "active" : ""}`} onClick={() => setFilter("Needs review")}>Needs review</button></div></div>
@@ -501,7 +508,9 @@ export default function Home() {
     let active = true;
     fetch("/cardiq-food-import.json")
       .then((response) => response.ok ? response.json() : null)
-      .then((value: unknown) => { if (active && isCardIqFoodImport(value)) setCardIqImport(value); })
+      // Classification and matching are re-applied here rather than trusted from the file,
+      // so a matcher fix reaches KP without re-running the cardIQ import.
+      .then((value: unknown) => { if (active && isCardIqFoodImport(value)) setCardIqImport(refineCardIqImport(value)); })
       .catch(() => undefined);
     return () => { active = false; };
   }, []);
