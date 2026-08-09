@@ -26,11 +26,24 @@ Requires Node.js 22.13 or newer.
 
 ```bash
 npm install
-npm run dev
+npm run build
+npm run start
 npm run import:cardiq
 ```
 
-The preview is normally available at `http://localhost:3000`.
+Nourish always uses port **4317**. It will stop with a plain-English error if another app owns that port; it will never silently choose a different one. Open it at `http://localhost:4317` on its host Mac, or at `http://mac-mini.tail8f99cb.ts.net:4317` from another device signed in to KP’s Tailscale network.
+
+## Always-on Mac Mini
+
+The checked-in macOS service definition is [ops/com.kanwar.nourish.plist](./ops/com.kanwar.nourish.plist). On the Mac Mini, after pulling the current `main` branch and running `npm ci && npm run build`, install it once:
+
+```bash
+cp ~/Code/Nourish/ops/com.kanwar.nourish.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.kanwar.nourish.plist
+launchctl kickstart -k gui/$(id -u)/com.kanwar.nourish
+```
+
+`launchd` restarts Nourish after a restart or crash. Check it with `npm run health` or `launchctl print gui/$(id -u)/com.kanwar.nourish`.
 
 ## Quality checks
 
