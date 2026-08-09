@@ -51,6 +51,15 @@ export const SOURCE_LINKS = {
 };
 
 const usdaSource: NutritionSource = { label: "USDA FoodData Central", url: SOURCE_LINKS.usda, trust: "Reference" };
+const ifctSource: NutritionSource = { label: "ICMR–NIN Indian Food Composition Tables 2017", url: SOURCE_LINKS.ifct, trust: "Reference" };
+
+/**
+ * Indian dairy grades are legally defined by fat and solids-not-fat minimums, so a
+ * category reference is genuinely accurate for any brand's toned, double-toned, skimmed,
+ * or full-cream milk. It is still weaker than the pack in front of KP, so it is labelled
+ * Reference rather than Official label.
+ */
+const fssaiGradeSource: NutritionSource = { label: "FSSAI milk-grade standard · confirm your pack", url: SOURCE_LINKS.fssai, trust: "Reference" };
 
 export const nutritionItems: NutritionItem[] = [
   {
@@ -162,7 +171,9 @@ export const nutritionItems: NutritionItem[] = [
   { id: "bottle-gourd", name: "Bottle gourd · raw", amount: 100, unit: "g", calories: 14, protein: 0.6, carbs: 3.4, fat: 0.1, fiber: 0.5, category: "Ingredient", availability: "Bengaluru produce", aliases: ["lauki", "doodhi", "sorekaayi"], source: usdaSource },
   { id: "broccoli", name: "Broccoli · raw", amount: 100, unit: "g", calories: 34, protein: 2.8, carbs: 6.6, fat: 0.4, fiber: 2.6, category: "Ingredient", availability: "Bengaluru produce / quick commerce", aliases: ["broccoli", "vegetable"], source: usdaSource },
   { id: "pumpkin", name: "Pumpkin · raw", amount: 100, unit: "g", calories: 26, protein: 1, carbs: 6.5, fat: 0.1, fiber: 0.5, category: "Ingredient", availability: "Bengaluru produce", aliases: ["kaddu", "squash"], source: usdaSource },
-  { id: "whole-egg", name: "Whole egg · reference", amount: 50, unit: "g", calories: 72, protein: 6.3, carbs: 0.4, fat: 4.8, fiber: 0, category: "Ingredient", availability: "Bengaluru staple", aliases: ["egg", "anda"], source: usdaSource },
+  // Counted in pieces, not grams: "how many calories in one egg" should not require KP to
+  // know that a large egg is about 50 g of edible portion.
+  { id: "whole-egg", name: "Whole egg · large", amount: 1, unit: "piece", calories: 72, protein: 6.3, carbs: 0.4, fat: 4.8, fiber: 0, category: "Ingredient", availability: "1 large egg · about 50 g edible", common: true, aliases: ["egg", "anda", "eggs", "boiled egg"], source: usdaSource },
   { id: "oil", name: "Cooking oil · reference", amount: 5, unit: "g", calories: 45, protein: 0, carbs: 0, fat: 5, fiber: 0, category: "Ingredient", availability: "Bengaluru staple", aliases: ["measured oil", "fat"], source: usdaSource },
   { id: "peanut-butter", name: "Peanut butter · smooth", amount: 32, unit: "g", calories: 188, protein: 8, carbs: 6, fat: 16, fiber: 1.9, category: "Ingredient", availability: "Widely available in India", aliases: ["groundnut butter", "spread"], source: usdaSource },
   { id: "almonds", name: "Almonds", amount: 28, unit: "g", calories: 164, protein: 6, carbs: 6.1, fat: 14.2, fiber: 3.5, category: "Ingredient", availability: "Bengaluru staple", aliases: ["badam", "nuts"], source: usdaSource },
@@ -170,6 +181,50 @@ export const nutritionItems: NutritionItem[] = [
   { id: "sweet-potato", name: "Sweet potato · cooked", amount: 200, unit: "g", calories: 180, protein: 4, carbs: 41.4, fat: 0.3, fiber: 6.6, category: "Ingredient", availability: "Bengaluru produce", aliases: ["shakarkandi", "root vegetable"], source: usdaSource },
   { id: "brown-rice", name: "Brown rice · cooked", amount: 150, unit: "g", calories: 185, protein: 3.9, carbs: 38.4, fat: 1.6, fiber: 2.4, category: "Ingredient", availability: "Widely available in India", aliases: ["whole grain rice", "chawal"], source: usdaSource },
   { id: "greek-yogurt-nonfat", name: "Greek yogurt · non-fat reference", amount: 200, unit: "g", calories: 118, protein: 20.4, carbs: 7.2, fat: 0.8, fiber: 0, category: "Ingredient", availability: "Use exact local pack when available", aliases: ["strained yogurt", "hung curd", "dahi"], source: usdaSource },
+
+  // --- Milk grades. KP's history contains 17 milk SKUs across Amul, Nandini, Sid's Farm,
+  // Akshayakalpa, Country Delight and Milky Mist; all of them are one of these grades.
+  { id: "milk-toned", name: "Toned milk · any brand", amount: 100, unit: "ml", calories: 59, protein: 3.2, carbs: 4.8, fat: 3.0, fiber: 0, category: "Ingredient", availability: "3.0% fat, 8.5% SNF minimum", common: true, aliases: ["milk", "doodh", "amul taaza", "nandini", "lactose free"], source: fssaiGradeSource },
+  { id: "milk-double-toned", name: "Double toned milk · any brand", amount: 100, unit: "ml", calories: 47, protein: 3.4, carbs: 5.1, fat: 1.5, fiber: 0, category: "Ingredient", availability: "1.5% fat, 9.0% SNF minimum", aliases: ["milk", "doodh", "low fat milk"], source: fssaiGradeSource },
+  { id: "milk-skimmed", name: "Skimmed milk · any brand", amount: 100, unit: "ml", calories: 36, protein: 3.5, carbs: 5.0, fat: 0.2, fiber: 0, category: "Ingredient", availability: "0.5% fat maximum", aliases: ["milk", "skim", "slim n trim", "fat free milk"], source: fssaiGradeSource },
+  { id: "milk-full-cream", name: "Full cream milk · any brand", amount: 100, unit: "ml", calories: 88, protein: 3.4, carbs: 5.1, fat: 6.0, fiber: 0, category: "Ingredient", availability: "6.0% fat, 9.0% SNF minimum", aliases: ["milk", "doodh", "whole milk"], source: fssaiGradeSource },
+  { id: "milk-cow-whole", name: "Whole cow milk · farm fresh", amount: 100, unit: "ml", calories: 73, protein: 3.3, carbs: 4.8, fat: 4.5, fiber: 0, category: "Ingredient", availability: "About 4.5% fat, unstandardised", aliases: ["milk", "cow milk", "sids farm", "akshayakalpa", "country delight"], source: ifctSource },
+
+  // --- Curd, paneer, cheese
+  { id: "curd-dahi", name: "Curd · dahi, set from toned milk", amount: 100, unit: "g", calories: 57, protein: 3.1, carbs: 4.5, fat: 3.0, fiber: 0, category: "Ingredient", availability: "Bengaluru staple", common: true, aliases: ["dahi", "yogurt", "yoghurt", "nandini curd", "sids farm curd"], source: ifctSource },
+  { id: "paneer-whole-milk", name: "Paneer · whole milk", amount: 100, unit: "g", calories: 296, protein: 18.9, carbs: 1.2, fat: 24.0, fiber: 0, category: "Ingredient", availability: "Bengaluru staple", aliases: ["cottage cheese", "malai paneer", "heritage", "nandini paneer"], source: ifctSource },
+  { id: "tofu", name: "Tofu · firm", amount: 100, unit: "g", calories: 83, protein: 8.1, carbs: 1.9, fat: 4.8, fiber: 0.3, category: "Ingredient", availability: "Quick commerce Bengaluru", aliases: ["soya paneer", "bean curd", "vegan paneer", "soyarich"], source: usdaSource },
+  { id: "cheese-processed", name: "Processed cheese · block or cube", amount: 100, unit: "g", calories: 313, protein: 20.0, carbs: 2.0, fat: 25.0, fiber: 0, category: "Ingredient", availability: "Amul / D'lecta style", aliases: ["cheese", "cheddar", "cheese cube", "cheese block"], source: usdaSource },
+  { id: "cheese-slice", name: "Cheese slice", amount: 1, unit: "piece", calories: 63, protein: 4.0, carbs: 0.4, fat: 5.0, fiber: 0, category: "Ingredient", availability: "About 20 g per slice", aliases: ["cheese", "laughing cow", "sandwich cheese"], source: usdaSource },
+  { id: "dairy-cream", name: "Dairy cream · 25% fat", amount: 100, unit: "ml", calories: 247, protein: 2.1, carbs: 3.5, fat: 25.0, fiber: 0, category: "Ingredient", availability: "UHT cream, Bengaluru", aliases: ["cream", "malai", "dlecta", "milky mist cream"], source: usdaSource },
+
+  // --- Grains and flours. Atta is the base for chapati.
+  { id: "atta-whole-wheat", name: "Whole wheat atta · flour", amount: 100, unit: "g", calories: 321, protein: 12.1, carbs: 69.4, fat: 1.7, fiber: 11.4, category: "Ingredient", availability: "Chakki atta, Bengaluru staple", common: true, aliases: ["atta", "wheat flour", "gehu", "chapati flour", "roti flour"], source: ifctSource },
+  { id: "rice-white-cooked", name: "White rice · cooked", amount: 150, unit: "g", calories: 195, protein: 4.0, carbs: 42.3, fat: 0.3, fiber: 0.6, category: "Ingredient", availability: "Bengaluru staple", aliases: ["chawal", "rice", "steamed rice"], source: usdaSource },
+  { id: "poha-dry", name: "Poha · flattened rice, dry", amount: 100, unit: "g", calories: 346, protein: 6.6, carbs: 77.3, fat: 1.2, fiber: 2.5, category: "Ingredient", availability: "Bengaluru staple", aliases: ["poha", "avalakki", "flattened rice"], source: ifctSource },
+  { id: "vermicelli-dry", name: "Vermicelli · roasted, dry", amount: 100, unit: "g", calories: 356, protein: 12.4, carbs: 71.5, fat: 1.5, fiber: 3.0, category: "Ingredient", availability: "Bengaluru staple", aliases: ["semiya", "sevai", "vermicelli"], source: ifctSource },
+  { id: "bread-whole-wheat", name: "Whole wheat bread · 1 slice", amount: 1, unit: "piece", calories: 74, protein: 3.6, carbs: 12.3, fat: 1.0, fiber: 2.0, category: "Ingredient", availability: "About 30 g per slice", aliases: ["bread", "brown bread", "atta bread", "zero maida"], source: usdaSource },
+  { id: "bread-white", name: "White or sourdough bread · 1 slice", amount: 1, unit: "piece", calories: 80, protein: 2.9, carbs: 15.0, fat: 0.7, fiber: 0.8, category: "Ingredient", availability: "About 30 g per slice", aliases: ["bread", "sourdough", "sandwich bread", "pav"], source: usdaSource },
+
+  // --- Pulses. Dry and cooked are kept separate because the difference is roughly 3x.
+  { id: "moong-dal-dry", name: "Moong dal · dry", amount: 100, unit: "g", calories: 348, protein: 24.5, carbs: 59.0, fat: 1.2, fiber: 16.3, category: "Ingredient", availability: "Bengaluru staple", aliases: ["moong", "mung", "green gram", "dal"], source: ifctSource },
+  { id: "moong-dal-cooked", name: "Moong dal · cooked", amount: 100, unit: "g", calories: 105, protein: 7.0, carbs: 19.1, fat: 0.4, fiber: 7.6, category: "Ingredient", availability: "Bengaluru staple", aliases: ["moong", "mung", "dal", "cooked dal"], source: ifctSource },
+  { id: "toor-dal-cooked", name: "Toor dal · cooked", amount: 100, unit: "g", calories: 116, protein: 6.8, carbs: 20.6, fat: 0.4, fiber: 6.7, category: "Ingredient", availability: "Bengaluru staple", aliases: ["arhar", "tur", "dal", "sambar dal"], source: ifctSource },
+  { id: "chana-dal-cooked", name: "Chana dal · cooked", amount: 100, unit: "g", calories: 121, protein: 6.8, carbs: 21.0, fat: 1.9, fiber: 5.8, category: "Ingredient", availability: "Bengaluru staple", aliases: ["chana", "bengal gram", "dal"], source: ifctSource },
+  { id: "besan", name: "Besan · gram flour", amount: 100, unit: "g", calories: 387, protein: 22.4, carbs: 57.8, fat: 6.7, fiber: 10.8, category: "Ingredient", availability: "Bengaluru staple", aliases: ["besan", "gram flour", "chickpea flour"], source: ifctSource },
+  { id: "chickpeas-dry", name: "Chickpeas · dry, uncooked", amount: 100, unit: "g", calories: 378, protein: 20.5, carbs: 62.9, fat: 6.0, fiber: 12.2, category: "Ingredient", availability: "Bengaluru staple", aliases: ["chana", "kabuli chana", "garbanzo", "chickpea"], source: usdaSource },
+  { id: "sprouts-moong", name: "Moong sprouts · raw", amount: 100, unit: "g", calories: 30, protein: 3.0, carbs: 5.9, fat: 0.2, fiber: 1.8, category: "Ingredient", availability: "Bengaluru quick commerce", aliases: ["sprouts", "mixed sprouts", "moong sprouts"], source: usdaSource },
+
+  // --- Produce and snacks appearing in KP's orders
+  { id: "potato", name: "Potato · raw", amount: 100, unit: "g", calories: 77, protein: 2.0, carbs: 17.5, fat: 0.1, fiber: 2.2, category: "Ingredient", availability: "Bengaluru produce", aliases: ["aloo", "aloo gadde", "potato"], source: usdaSource },
+  { id: "beetroot", name: "Beetroot · raw", amount: 100, unit: "g", calories: 43, protein: 1.6, carbs: 9.6, fat: 0.2, fiber: 2.8, category: "Ingredient", availability: "Bengaluru produce", aliases: ["chukandar", "beet"], source: usdaSource },
+  { id: "brinjal", name: "Brinjal · raw", amount: 100, unit: "g", calories: 25, protein: 1.0, carbs: 5.9, fat: 0.2, fiber: 3.0, category: "Ingredient", availability: "Bengaluru produce", aliases: ["baingan", "eggplant", "badanekaayi", "aubergine"], source: usdaSource },
+  { id: "lettuce", name: "Lettuce · raw", amount: 100, unit: "g", calories: 15, protein: 1.4, carbs: 2.9, fat: 0.2, fiber: 1.3, category: "Ingredient", availability: "Bengaluru quick commerce", aliases: ["lettuce", "romaine", "salad leaves"], source: usdaSource },
+  { id: "avocado", name: "Avocado · raw", amount: 100, unit: "g", calories: 160, protein: 2.0, carbs: 8.5, fat: 14.7, fiber: 6.7, category: "Ingredient", availability: "Bengaluru quick commerce", aliases: ["avocado", "butter fruit", "hass"], source: usdaSource },
+  { id: "guava", name: "Guava · raw", amount: 100, unit: "g", calories: 68, protein: 2.6, carbs: 14.3, fat: 1.0, fiber: 5.4, category: "Ingredient", availability: "Bengaluru produce", aliases: ["amrood", "seebe hannu", "guava"], source: usdaSource },
+  { id: "makhana", name: "Makhana · fox nuts", amount: 30, unit: "g", calories: 104, protein: 2.9, carbs: 23.1, fat: 0.1, fiber: 4.5, category: "Ingredient", availability: "Bengaluru quick commerce", aliases: ["makhana", "phool makhana", "fox nuts", "lotus seeds"], source: ifctSource },
+  { id: "peanuts-raw", name: "Peanuts · raw", amount: 30, unit: "g", calories: 170, protein: 7.7, carbs: 4.8, fat: 14.7, fiber: 2.6, category: "Ingredient", availability: "Bengaluru staple", aliases: ["moongphali", "groundnut", "peanut"], source: usdaSource },
+  { id: "chicken-curry-cut-raw", name: "Chicken · raw, curry cut skinless", amount: 100, unit: "g", calories: 143, protein: 20.5, carbs: 0, fat: 6.6, fiber: 0, category: "Ingredient", availability: "Bengaluru poultry", aliases: ["chicken", "murgh", "curry cut", "sabzi chicken"], source: usdaSource },
 ];
 
 export function calculateMealNutrition(basis: Meal["nutritionBasis"]) {

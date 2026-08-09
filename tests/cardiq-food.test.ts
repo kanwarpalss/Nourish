@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isFoodLike, isNonFood, makeCardIqFoodImport, matchCardIqFood, refineCardIqImport, type CardIqFoodImport } from "../app/cardiq-food";
+import { isFoodLike, isNonFood, makeCardIqFoodImport, matchableFoodIds, matchCardIqFood, refineCardIqImport, type CardIqFoodImport } from "../app/cardiq-food";
+import { nutritionItems } from "../app/nutrition-data";
+
+const idFor = (name: string) => matchCardIqFood(name).matchedFoodId;
 
 test("cardIQ food import keeps real grocery products and excludes obvious non-food purchases", () => {
   const snapshot = makeCardIqFoodImport([
@@ -87,8 +90,11 @@ test("retailer spelling differences resolve to the same exact product", () => {
   const amazon = matchCardIqFood("Nandini Good Life Toned Milk, 1L,Liquid");
   assert.deepEqual(instamart, { matchedFoodId: "nandini-goodlife-toned", matchKind: "Exact product" });
   assert.deepEqual(amazon, instamart, "one space must not change the product identity");
-  // A different Nandini milk must NOT borrow the GoodLife label.
-  assert.deepEqual(matchCardIqFood("Nandini Pasteurised Toned Milk, 500ml Pack"), {});
+  // A different Nandini milk must NOT borrow the GoodLife pack's label. It may still
+  // resolve to the toned-milk grade, but only as a weaker Reference match.
+  const otherNandini = matchCardIqFood("Nandini Pasteurised Toned Milk, 500ml Pack");
+  assert.notEqual(otherNandini.matchedFoodId, "nandini-goodlife-toned", "another pack must not inherit the GoodLife label");
+  assert.equal(otherNandini.matchKind, "Reference ingredient", "a grade match is never presented as an exact product");
 });
 
 test("raw produce still matches across English and Kannada retailer names", () => {
@@ -126,6 +132,70 @@ test("refining a stored snapshot drops non-food and re-matches without a re-impo
   assert.equal(refined.items[1].matchedFoodId, "carrot");
   assert.equal(refined.orderCount, 3, "purchase facts are preserved");
   assert.equal(refined.items[1].orderCount, 8, "order counts are preserved");
+});
+
+test("every food id the matcher can return actually exists", () => {
+  const dangling = matchableFoodIds().filter((id) => !nutritionItems.some((food) => food.id === id));
+  assert.deepEqual(dangling, [], "a matcher entry points at a food that is not in the catalogue");
+});
+
+test("milk grades resolve to the right grade, not just to milk", () => {
+  assert.equal(idFor("Amul Taaza Homogenised Toned Milk 1 L Carton"), "milk-toned");
+  assert.equal(idFor("Nandini Pasteurised Toned Milk, 500ml Pack"), "milk-toned");
+  assert.equal(idFor("Milky Mist UHT Lactose Free Tonned Milk"), "milk-toned", "the retailer's 'Tonned' spelling still resolves");
+  assert.equal(idFor("Amul Slim 'N' Trim Skimmed Milk, 1 Litre"), "milk-skimmed");
+  assert.equal(idFor("Sid's Farm Skim Milk,500ml"), "milk-skimmed");
+  assert.equal(idFor("Sids Farm Cow Milk 500 ml"), "milk-cow-whole");
+  assert.equal(idFor("Akshayakalpa Organic Amrutha A2 Farm Fresh Organic Cow Milk 500 ml"), "milk-cow-whole");
+  // Skimmed milk is 36 kcal and full cream is 88; collapsing them would be a 2.4x error.
+  assert.notEqual(idFor("Amul Slim 'N' Trim Skimmed Milk"), idFor("Amul Taaza Toned Milk"));
+});
+
+test("a fragment must not match inside a longer word", () => {
+  // "cream" appears inside "creamy", "creamer" and "cream onion"; none of them is cream.
+  assert.equal(idFor("Milky Mist Greek Yogurt | 100% Natural | Low Fat | Creamy"), undefined);
+  assert.equal(idFor("Peping Strawberry Cream Prebiotic Fizz"), undefined);
+  assert.equal(idFor("Unibic SNAPPERS P C CREAM ONION 24 X 280 G"), undefined);
+  // Real cream still resolves.
+  assert.equal(idFor("D'lecta Dairy Cream"), "dairy-cream");
+  assert.equal(idFor("Milky Mist Uht Cream"), "dairy-cream");
+});
+
+test("retail packs of pulses resolve to dry, not cooked", () => {
+  // A 500 g pack of dal is dry. Cooked moong is 105 kcal/100g and dry is 348; using the
+  // cooked figure for a dry pack understates it more than threefold.
+  assert.equal(idFor("Tata Sampann Unpolished Moong Dal (Split), 500gm"), "moong-dal-dry");
+  assert.equal(idFor("Organic Tattva Moong Dal 500 gm | Organic Green Sabut Moong Dal"), "moong-dal-dry");
+  const dry = nutritionItems.find((food) => food.id === "moong-dal-dry");
+  const cooked = nutritionItems.find((food) => food.id === "moong-dal-cooked");
+  assert.ok(dry && cooked && dry.calories > cooked.calories * 3, "dry and cooked must stay distinct foods");
+});
+
+test("KP's chapati flour and staple dairy resolve", () => {
+  assert.equal(idFor("organic tattva Whole Wheat Flour Chakki Atta"), "atta-whole-wheat");
+  assert.equal(idFor("Nandini Curd - 500g Pouch"), "curd-dahi");
+  assert.equal(idFor("Heritage Fresh Paneer - 200g"), "paneer-whole-milk");
+  assert.equal(idFor("Amul Cheese Block, 200 g"), "cheese-processed");
+  // "Soya paneer / bean curd" describes tofu, not dairy paneer or dairy curd.
+  assert.equal(idFor("Soyarich - Tofu Premium - 200gm l Plant Based/Soya Paneer/Bean Curd/Vegan Paneer"), "tofu");
+});
+
+test("a staple word inside a snack or spice blend does not carry the staple's nutrition", () => {
+  assert.equal(idFor("Lay's (India's Magic Masala) Crunchy Potato Chips"), undefined);
+  assert.equal(idFor("Catch Dal Makhani Masala, 100g"), undefined);
+  assert.equal(idFor("Get-A-Way Chocolate Brownie Fudge Ice Cream Tub"), undefined);
+  assert.equal(idFor("Theobroma cheese crackers (No Preservatives , No Palm Oil)"), undefined);
+  assert.equal(idFor("ACT II Ready To Eat Popcorn | Sour Cream & Cheese Flavour"), undefined);
+  // The plain staples still resolve.
+  assert.equal(idFor("Fresh Potato, 1kg"), "potato");
+  assert.equal(idFor("Amul Cheese Cubes"), "cheese-processed");
+});
+
+test("sweet potato is not filed as potato", () => {
+  // Amazon writes it as "Potato - Sweet", which a plain "potato" rule would swallow.
+  assert.equal(idFor("Fresh Potato - Sweet, 500 g"), "sweet-potato");
+  assert.equal(idFor("Sweet Potato (Sihi Genasu)"), "sweet-potato");
+  assert.equal(idFor("Fresh Potato, 1kg"), "potato");
 });
 
 test("failure injection: a stale wrong match in a stored snapshot is corrected, not trusted", () => {

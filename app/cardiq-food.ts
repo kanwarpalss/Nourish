@@ -128,6 +128,65 @@ const exactProducts: Array<{ foodId: string; fragments: string[] }> = [
   { foodId: "epigamia-natural-greek", fragments: ["epigamia", "greek"] },
 ];
 
+/**
+ * Category matches for KP's real purchases.
+ *
+ * Indian milk grades, curd, paneer and atta are legally standardised, so the category
+ * reference is accurate for any brand at that grade. These are deliberately weaker than
+ * an exact pack and surface as "Reference ingredient".
+ *
+ * Order matters: the first entry whose fragments all appear wins, so the more specific
+ * grade must come before the more general one ("skimmed" before plain "milk").
+ */
+const categoryProducts: Array<{ foodId: string; fragments: string[] }> = [
+  // Milk grades, most specific first.
+  { foodId: "milk-skimmed", fragments: ["skim"] },
+  { foodId: "milk-double-toned", fragments: ["doubletoned"] },
+  { foodId: "milk-full-cream", fragments: ["fullcream"] },
+  { foodId: "milk-toned", fragments: ["tonedmilk"] },
+  { foodId: "milk-toned", fragments: ["tonnedmilk"] },
+  { foodId: "milk-toned", fragments: ["lactosefree", "milk"] },
+  { foodId: "milk-cow-whole", fragments: ["cowmilk"] },
+  // Curd, paneer, cheese, cream. Tofu first: it is often described as "soya paneer /
+  // bean curd", which would otherwise resolve to dairy curd.
+  { foodId: "tofu", fragments: ["tofu"] },
+  { foodId: "paneer-whole-milk", fragments: ["paneer"] },
+  { foodId: "curd-dahi", fragments: ["curd"] },
+  { foodId: "cheese-slice", fragments: ["cheeseslices"] },
+  { foodId: "cheese-processed", fragments: ["cheese"] },
+  // Fragments are matched against the separator-free name, so a bare "cream" would also
+  // hit "creamy", "creamer" and "cream onion". Only explicit cream products qualify.
+  { foodId: "dairy-cream", fragments: ["dairycream"] },
+  { foodId: "dairy-cream", fragments: ["uhtcream"] },
+  { foodId: "dairy-cream", fragments: ["freshcream"] },
+  { foodId: "dairy-cream", fragments: ["cookingcream"] },
+  // Grains and flours.
+  { foodId: "atta-whole-wheat", fragments: ["chakkiatta"] },
+  { foodId: "atta-whole-wheat", fragments: ["wholewheatflour"] },
+  { foodId: "bread-whole-wheat", fragments: ["wholewheat", "bread"] },
+  { foodId: "bread-whole-wheat", fragments: ["multigrain", "bread"] },
+  { foodId: "bread-white", fragments: ["sourdough"] },
+  { foodId: "bread-white", fragments: ["sandwichbread"] },
+  { foodId: "poha-dry", fragments: ["poha"] },
+  { foodId: "vermicelli-dry", fragments: ["vermicelli"] },
+  // Pulses. Retail packs are dry, which is roughly three times the cooked value.
+  { foodId: "besan", fragments: ["besan"] },
+  { foodId: "moong-dal-dry", fragments: ["moongdal"] },
+  { foodId: "moong-dal-dry", fragments: ["moong", "dal"] },
+  // Produce and snacks. Sweet potato before potato: Amazon lists it as "Potato - Sweet".
+  { foodId: "sweet-potato", fragments: ["sweetpotato"] },
+  { foodId: "sweet-potato", fragments: ["potatosweet"] },
+  { foodId: "potato", fragments: ["potato"] },
+  { foodId: "beetroot", fragments: ["beetroot"] },
+  { foodId: "brinjal", fragments: ["brinjal"] },
+  { foodId: "lettuce", fragments: ["lettuce"] },
+  { foodId: "avocado", fragments: ["avocado"] },
+  { foodId: "guava", fragments: ["guava"] },
+  { foodId: "makhana", fragments: ["makhana"] },
+  { foodId: "peanuts-raw", fragments: ["rawpeanut"] },
+  { foodId: "sprouts-moong", fragments: ["sprouts"] },
+];
+
 function normalized(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
@@ -200,6 +259,28 @@ function hasForeignProcessedForm(value: string, matchedTerm: string) {
   return processedFormTerms.some((form) => containsWholeTerm(value, form) && !containsWholeTerm(matchedTerm, form));
 }
 
+/**
+ * Words that turn a staple into a different product: a snack, dessert, drink, or spice
+ * blend. Dairy cream is food, but "ice cream" is not dairy cream; potato is food, but
+ * "potato chips" is not potato; dal is food, but "dal makhani masala" is a spice mix.
+ *
+ * This is narrower than processedFormTerms because category staples legitimately carry
+ * words like "bread", "flour", "atta" and "cream" in their own names.
+ */
+const categoryConflictTerms = [
+  "cookie", "cookies", "biscuit", "biscuits", "cracker", "crackers", "rusk", "chips",
+  "crisps", "namkeen", "popcorn", "nachos", "murukku", "mixture", "laddoo", "sev",
+  "cake", "brownie", "pastry", "muffin", "ice cream", "icecream", "candy", "toffee",
+  "shake", "milkshake", "smoothie", "juice", "soda", "cola", "kombucha", "bar",
+  "flavour", "flavoured", "flavor", "flavored", "dip", "sauce", "pickle", "jam",
+  "syrup", "masala", "seasoning", "nuggets", "fries", "sticks", "batter", "premix",
+  "beverage", "drink", "fizz", "yogurt", "yoghurt", "skyr",
+];
+
+function hasCategoryConflict(value: string) {
+  return categoryConflictTerms.some((term) => containsWholeTerm(value, term));
+}
+
 export function matchCardIqFood(name: string): Pick<CardIqFoodItem, "matchedFoodId" | "matchKind"> {
   if (isNonFood(name)) return {};
 
@@ -210,9 +291,17 @@ export function matchCardIqFood(name: string): Pick<CardIqFoodItem, "matchedFood
     }
   }
 
+  const value = normalized(name);
+  if (!hasCategoryConflict(value)) {
+    for (const product of categoryProducts) {
+      if (product.fragments.every((fragment) => compact.includes(fragment))) {
+        return { matchedFoodId: product.foodId, matchKind: "Reference ingredient" };
+      }
+    }
+  }
+
   // A manufactured product never inherits raw-ingredient nutrition. Better to show
   // "needs label" than to log a cookie as a banana.
-  const value = normalized(name);
   for (const [matchedFoodId, terms] of referenceMatches) {
     const matchedTerm = terms.find((term) => containsWholeTerm(value, term));
     if (!matchedTerm) continue;
@@ -274,6 +363,11 @@ export function refineCardIqImport(snapshot: CardIqFoodImport): CardIqFoodImport
       return refined;
     });
   return { ...snapshot, items };
+}
+
+/** Every food id the matcher can return. Used to prove none of them dangle. */
+export function matchableFoodIds(): string[] {
+  return [...new Set([...exactProducts, ...categoryProducts].map((entry) => entry.foodId), ...referenceMatches.map(([id]) => id))];
 }
 
 export function isCardIqFoodImport(value: unknown): value is CardIqFoodImport {
