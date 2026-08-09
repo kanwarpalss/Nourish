@@ -13,6 +13,31 @@ export type SearchableRecipe = {
   totalMinutes: number;
 };
 
+export type DashboardClock = {
+  dayKey: string;
+  dateLabel: string;
+  greeting: "Good morning" | "Good afternoon" | "Good evening" | "Good night";
+};
+
+export function getBangaloreClock(date: Date): DashboardClock {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) throw new RangeError("Dashboard clock needs a valid date");
+  const timeZone = "Asia/Kolkata";
+  const hour = Number(new Intl.DateTimeFormat("en-GB", { timeZone, hour: "2-digit", hourCycle: "h23" }).format(date));
+  const dateParts = new Intl.DateTimeFormat("en-GB", { timeZone, weekday: "long", day: "numeric", month: "long", year: "numeric" }).formatToParts(date);
+  const part = (type: Intl.DateTimeFormatPartTypes) => dateParts.find((item) => item.type === type)?.value ?? "";
+  const keyParts = new Intl.DateTimeFormat("en-GB", { timeZone, day: "2-digit", month: "2-digit", year: "numeric" }).formatToParts(date);
+  const keyPart = (type: Intl.DateTimeFormatPartTypes) => keyParts.find((item) => item.type === type)?.value ?? "";
+  const greeting = hour >= 5 && hour < 12 ? "Good morning"
+    : hour >= 12 && hour < 17 ? "Good afternoon"
+      : hour >= 17 && hour < 22 ? "Good evening"
+        : "Good night";
+  return {
+    dayKey: `${keyPart("year")}-${keyPart("month")}-${keyPart("day")}`,
+    dateLabel: `${part("weekday")} · ${part("day")} ${part("month")}`,
+    greeting,
+  };
+}
+
 const macroRanges: Record<keyof MacroTargets, [number, number]> = {
   protein: [10, 60],
   carbs: [10, 70],

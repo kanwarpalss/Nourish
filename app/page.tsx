@@ -2,8 +2,8 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { isCardIqFoodImport, type CardIqFoodImport } from "./cardiq-food";
-import { LOCAL_NUTRITION_STORAGE_KEY, parseSavedNutritionState, stringifySavedNutritionState, type SavedNutritionState } from "./local-nutrition-state";
-import { getEnergyRunway, getQuantityLimit, isQuantityValid, matchesRecipe, scaleNutrition, sumLoggedNutrition } from "./prototype-logic";
+import { LOCAL_NUTRITION_STORAGE_KEY, parseSavedNutritionState, shouldRestoreSavedNutritionState, stringifySavedNutritionState, type SavedNutritionState } from "./local-nutrition-state";
+import { getBangaloreClock, getEnergyRunway, getQuantityLimit, isQuantityValid, matchesRecipe, scaleNutrition, sumLoggedNutrition, type DashboardClock } from "./prototype-logic";
 import { meals, nutritionItems, SOURCE_LINKS, type Meal, type NutritionItem } from "./nutrition-data";
 
 type Area = "plan" | "track";
@@ -53,7 +53,8 @@ function planEntryFromMeal(meal: Recipe): PlannedEntry {
   return { id: meal.id, kind: "meal", name: meal.name, serving: meal.serving, calories: meal.calories, protein: meal.protein, carbs: meal.carbs, fat: meal.fat, fiber: meal.fiber };
 }
 
-function restoreNutritionState(saved: SavedNutritionState) {
+function restoreNutritionState(saved: SavedNutritionState, dayKey: string) {
+  if (!shouldRestoreSavedNutritionState(saved, dayKey)) return { extras: [] as Food[], planned: [] as PlannedEntry[] };
   const extras = saved.logs.flatMap((entry): Food[] => {
     const food = logFoods.find((candidate) => candidate.id === entry.foodId);
     return food && isQuantityValid(food.unit, entry.amount) ? [scaleNutrition(food, entry.amount)] : [];
@@ -69,14 +70,15 @@ function restoreNutritionState(saved: SavedNutritionState) {
   return { extras, planned };
 }
 
-const weekCalories = [1980, 2140, 2050, 2210, 1890, 2070, 1280];
-const monthDays = Array.from({ length: 31 }, (_, index) => ({
+const sampleWeekCalories = [1980, 2140, 2050, 2210, 1890, 2070, 1280];
+const sampleWeekAverage = Math.round(sampleWeekCalories.reduce((sum, value) => sum + value, 0) / sampleWeekCalories.length);
+const sampleMonthDays = Array.from({ length: 31 }, (_, index) => ({
   day: index + 1,
   calories: [2080, 2180, 1970, 2250, 2060, 1910, 2120][index % 7] + ((index % 3) - 1) * 35,
   protein: 118 + (index % 5) * 7,
 }));
 
-const baseMeals = [
+const sampleMeals = [
   { type: "Breakfast", time: "8:10", name: "Masala oats + dahi", calories: 420, macro: "24P · 58C · 12F" },
   { type: "Lunch", time: "1:25", name: "Rajma chawal bowl", calories: 610, macro: "31P · 72C · 17F" },
   { type: "Snack", time: "4:40", name: "Banana + whey", calories: 250, macro: "29P · 31C · 3F" },
@@ -110,7 +112,8 @@ function SectionHeading({ eyebrow, title, description, action }: { eyebrow: stri
   );
 }
 
-function TodayView({ calories, macros, extras, quickFoods, hasCardIqImport, onLog, onAdd, onEdit, notify }: {
+function TodayView({ clock, calories, macros, extras, quickFoods, hasCardIqImport, onLog, onAdd, onEdit, onOpenMeals }: {
+  clock: DashboardClock;
   calories: number;
   macros: Record<MacroKey, number>;
   extras: Food[];
@@ -119,38 +122,42 @@ function TodayView({ calories, macros, extras, quickFoods, hasCardIqImport, onLo
   onLog: () => void;
   onAdd: (food: Food) => void;
   onEdit: (index: number) => void;
-  notify: (message: string) => void;
+  onOpenMeals: () => void;
 }) {
   const target = 2150;
   const runway = getEnergyRunway(calories, target);
   const circleProgress = Math.min(100, runway.percentage);
   const circleStyle = { "--energy-progress": `${circleProgress * 3.6}deg` } as CSSProperties;
+  const description = calories === 0
+    ? "Nothing is assumed. Start by logging what you actually ate today."
+    : `You’ve logged ${Math.round(calories).toLocaleString("en-IN")} kcal today. Add or edit foods whenever you need.`;
 
   return (
     <>
       <SectionHeading
-        eyebrow="Saturday · 8 August"
-        title="Good morning, KP"
-        description="You’re in a comfortable spot. A protein-forward dinner keeps today beautifully balanced."
+        eyebrow={clock.dateLabel}
+        title={`${clock.greeting}, KP`}
+        description={description}
         action={<button className="button primary" onClick={onLog}><span>＋</span> Log food</button>}
       />
 
       <div className="today-layout">
         <section className="energy-card dark-card">
-          <div className="card-kicker"><span>Daily energy</span><span className={`status-pill ${runway.isOver ? "over" : ""}`}>{runway.isOver ? "Over target" : "On plan"}</span></div>
+          <div className="card-kicker"><span>Daily energy</span><span className={`status-pill ${runway.isOver ? "over" : ""}`}>{runway.isOver ? "Over sample target" : "Sample target"}</span></div>
           <div className="energy-main">
             <div className="energy-ring" style={circleStyle} role="progressbar" aria-label={`${calories} of ${target} calories eaten`} aria-valuenow={calories} aria-valuemin={0} aria-valuemax={target}>
               <div><strong>{Math.round(calories).toLocaleString("en-IN")}</strong><span>kcal eaten</span></div>
             </div>
             <div className="runway">
-              <span>{runway.isOver ? "Today’s overage" : "Your runway"}</span>
+              <span>{runway.isOver ? "Above sample target" : "To sample target"}</span>
               <strong>{runway.amount.toLocaleString("en-IN")}</strong>
-              <small>{runway.isOver ? "kcal over" : "kcal left"}</small>
-              <p>{runway.percentage}% of today’s {target.toLocaleString("en-IN")} kcal target</p>
+              <small>{runway.isOver ? "kcal over" : "kcal remaining"}</small>
+              <p>{runway.percentage}% of the sample {target.toLocaleString("en-IN")} kcal target</p>
               <button className="button orange" onClick={onLog}>＋ Log food</button>
             </div>
           </div>
           <div className="macro-stack dark-macros">
+            <span className="sample-context">Sample macro targets · replace during onboarding</span>
             <MacroBar label="Protein" value={macros.protein} target={150} tone="protein" />
             <MacroBar label="Carbs" value={macros.carbs} target={215} tone="carbs" />
             <MacroBar label="Fat" value={macros.fat} target={72} tone="fat" />
@@ -160,28 +167,16 @@ function TodayView({ calories, macros, extras, quickFoods, hasCardIqImport, onLo
         <section className="timeline-panel">
           <div className="section-title-row">
             <div><span className="eyebrow">Food diary</span><h2>Today’s timeline</h2></div>
-            <span className="soft-badge">{baseMeals.length + extras.length} logged</span>
+            <span className="soft-badge">{extras.length} {extras.length === 1 ? "item" : "items"} logged</span>
           </div>
-          <div className="meal-timeline">
-            {baseMeals.map((meal) => (
-              <article className="meal-entry" key={meal.type}>
-                <i className="timeline-dot" />
-                <div className="meal-meta"><span>{meal.time} · {meal.type}</span><strong>{meal.name}</strong><small>{meal.macro}</small></div>
-                <b>{meal.calories} kcal</b>
-              </article>
-            ))}
-            {extras.map((food, index) => (
+          <div className={`meal-timeline ${extras.length > 1 ? "connected" : ""}`}>
+            {extras.length === 0 ? <div className="timeline-empty"><strong>No food logged yet</strong><span>Your actual entries—and only your actual entries—will appear here.</span><button className="text-button" onClick={onLog}>Log your first food</button></div> : extras.map((food, index) => (
               <article className="meal-entry added" key={`${food.name}-${index}`}>
                 <i className="timeline-dot" />
-                <div className="meal-meta"><span>Just now · {food.amount} {food.unit}</span><strong>{food.name}</strong><small>{food.protein.toFixed(1)}P · {food.carbs.toFixed(1)}C · {food.fat.toFixed(1)}F</small></div>
+                <div className="meal-meta"><span>Logged today · {food.amount} {food.unit}</span><strong>{food.name}</strong><small>{food.protein.toFixed(1)}P · {food.carbs.toFixed(1)}C · {food.fat.toFixed(1)}F</small></div>
                 <div className="entry-actions"><b>{Math.round(food.calories)} kcal</b><button onClick={() => onEdit(index)}>Edit quantity</button></div>
               </article>
             ))}
-            <article className="meal-entry suggested">
-              <i className="timeline-dot" />
-              <div className="meal-meta"><span>Dinner suggestion</span><strong>Pepper chicken cauliflower rice</strong><small>56P · 27C · 8.7F · 10.8 fibre</small><em>Researched meal</em></div>
-              <b>406 kcal</b>
-            </article>
           </div>
         </section>
 
@@ -195,15 +190,15 @@ function TodayView({ calories, macros, extras, quickFoods, hasCardIqImport, onLo
             </div>
           </section>
           <section className="nudge-card dark-card">
-            <span className="eyebrow bright">Next best move</span>
-            <h2>Make dinner do the protein work.</h2>
-            <p>The cauliflower-rice chicken bowl adds 56 g protein and 10.8 g fibre for 406 kcal.</p>
-            <button className="button lime" onClick={() => notify("Dinner added to tonight’s plan")}>Add to dinner <span>→</span></button>
+            <span className="eyebrow bright">Sample meal idea · not logged</span>
+            <h2>Pepper chicken cauliflower rice</h2>
+            <p>A researched example with 56 g protein and 10.8 g fibre for 406 kcal. Browse it before choosing anything.</p>
+            <button className="button lime" onClick={onOpenMeals}>Browse meals <span>→</span></button>
           </section>
           <section className="week-card surface-card">
-            <div className="section-title-row"><div><span className="eyebrow">Last 7 days</span><h2>Energy rhythm</h2></div><strong>2,031 <small>avg</small></strong></div>
-            <div className="mini-bars" role="img" aria-label="Seven-day calorie intake chart">
-              {weekCalories.map((value, index) => <span key={`${value}-${index}`} className={index === 6 ? "active" : ""} style={{ height: `${Math.round((value / 2300) * 100)}%` }}><i>{["S", "M", "T", "W", "T", "F", "S"][index]}</i></span>)}
+            <div className="section-title-row"><div><span className="eyebrow">Sample data · 7 days</span><h2>Energy rhythm preview</h2></div><strong>{sampleWeekAverage.toLocaleString("en-IN")} <small>sample avg</small></strong></div>
+            <div className="mini-bars" role="img" aria-label="Sample seven-day calorie chart, not your real history">
+              {sampleWeekCalories.map((value, index) => <span key={`${value}-${index}`} className={index === 6 ? "active" : ""} style={{ height: `${Math.round((value / 2300) * 100)}%` }}><i>{["S", "M", "T", "W", "T", "F", "S"][index]}</i></span>)}
             </div>
           </section>
         </aside>
@@ -214,23 +209,23 @@ function TodayView({ calories, macros, extras, quickFoods, hasCardIqImport, onLo
 
 function HistoryView() {
   const [selected, setSelected] = useState(8);
-  const day = monthDays[selected - 1];
+  const day = sampleMonthDays[selected - 1];
   return (
     <>
-      <SectionHeading eyebrow="Track · History" title="August at a glance" description="Patterns are more useful than perfect days. Select any date to inspect what shaped it." action={<button className="button secondary">‹ July</button>} />
+      <SectionHeading eyebrow="Track · History · Sample preview" title="What your history will look like" description="Everything in this view is illustrative until Nourish has enough of your real dated logs." action={<span className="prototype-badge">Sample data</span>} />
       <div className="history-layout">
         <section className="surface-card calendar-card">
-          <div className="section-title-row"><div><span className="eyebrow">August 2026</span><h2>Calorie consistency</h2></div><div className="legend"><i /> Within range <i /> Over range</div></div>
+          <div className="section-title-row"><div><span className="eyebrow">Sample month · August 2026</span><h2>Example calorie consistency</h2></div><span className="prototype-badge">Not your data</span></div>
           <div className="calendar-weekdays">{["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => <span key={d}>{d}</span>)}</div>
           <div className="month-grid">
-            {monthDays.map((item) => {
+            {sampleMonthDays.map((item) => {
               const state = item.calories > 2180 ? "over" : item.calories < 1950 ? "under" : "within";
               return <button key={item.day} className={`${state} ${selected === item.day ? "selected" : ""}`} onClick={() => setSelected(item.day)} aria-pressed={selected === item.day}><span>{item.day}</span><b>{item.calories}</b><small>kcal</small></button>;
             })}
           </div>
         </section>
         <aside className="history-detail dark-card">
-          <span className="eyebrow bright">{selected} August · Saturday</span>
+          <span className="eyebrow bright">Sample day · {selected} August</span>
           <h2>{day.calories.toLocaleString("en-IN")} <small>kcal</small></h2>
           <p className="history-message">A steady day with a strong lunch and room left for an intentional dinner.</p>
           <div className="history-metrics">
@@ -239,9 +234,9 @@ function HistoryView() {
             <div><span>Fat</span><strong>68 g</strong></div>
           </div>
           <div className="history-meals">
-            {baseMeals.map((meal) => <div key={meal.type}><span>{meal.type}</span><strong>{meal.name}</strong><b>{meal.calories}</b></div>)}
+            {sampleMeals.map((meal) => <div key={meal.type}><span>{meal.type}</span><strong>{meal.name}</strong><b>{meal.calories}</b></div>)}
           </div>
-          <button className="button lime">Open full day →</button>
+          <span className="sample-note">Sample only · real dated history is not available yet.</span>
         </aside>
       </div>
     </>
@@ -249,34 +244,33 @@ function HistoryView() {
 }
 
 function TrendsView() {
-  const [range, setRange] = useState("30D");
-  const bars = [72, 84, 68, 91, 77, 82, 73, 88, 79, 86, 69, 76, 90, 83];
+  const range = "30D";
+  const sampleBars = [72, 84, 68, 91, 77, 82, 73, 88, 79, 86, 69, 76, 90, 83];
   return (
     <>
-      <SectionHeading eyebrow="Track · Trends" title="Your rhythm, not a report card" description="See what is changing across weeks—without letting one unusual meal hijack the story." action={<div className="segmented compact">{["7D", "30D", "90D"].map((r) => <button key={r} className={range === r ? "active" : ""} onClick={() => setRange(r)}>{r}</button>)}</div>} />
+      <SectionHeading eyebrow="Track · Trends · Sample preview" title="What your trends will look like" description="These charts demonstrate the future experience; none of the values or insights below are based on your food diary yet." action={<span className="prototype-badge">Sample data</span>} />
       <div className="trends-grid">
         <section className="surface-card calorie-trend">
-          <div className="section-title-row"><div><span className="eyebrow">Daily energy · {range}</span><h2>Average 2,064 kcal</h2></div><span className="positive">2.1% steadier</span></div>
-          <div className="trend-chart" role="img" aria-label={`${range} calorie trend, average 2064 calories`}>
-            <i className="target-line"><span>2,150 target</span></i>
-            {bars.map((height, index) => <span key={`${height}-${index}`} className={index > 10 ? "recent" : ""} style={{ height: `${height}%` }} />)}
+          <div className="section-title-row"><div><span className="eyebrow">Sample daily energy · {range}</span><h2>Illustrative calorie pattern</h2></div><span className="prototype-badge">Not your data</span></div>
+          <div className="trend-chart" role="img" aria-label={`${range} sample calorie trend, not your real data`}>
+            <i className="target-line"><span>Sample target</span></i>
+            {sampleBars.map((height, index) => <span key={`${height}-${index}`} className={index > 10 ? "recent" : ""} style={{ height: `${height}%` }} />)}
           </div>
           <div className="chart-axis"><span>10 Jul</span><span>24 Jul</span><span>8 Aug</span></div>
         </section>
         <section className="trend-insight dark-card">
-          <span className="eyebrow bright">Most useful insight</span>
-          <h2>Your protein misses happen before 4 pm.</h2>
-          <p>On 8 of the last 12 lower-protein days, breakfast and lunch together contributed under 55 g.</p>
-          <div className="insight-number"><strong>＋18 g</strong><span>Adding this much before lunch would close most gaps.</span></div>
-          <button className="button lime">Show breakfast ideas →</button>
+          <span className="eyebrow bright">Sample insight · not yours</span>
+          <h2>Nourish will surface patterns after enough real logs.</h2>
+          <p>For example, it could notice when protein tends to be missed earlier in the day—without pretending that pattern exists yet.</p>
+          <div className="insight-number"><strong>Example</strong><span>Real insights will cite the days and meals behind them.</span></div>
         </section>
         <section className="surface-card macro-average">
-          <span className="eyebrow">Macro average</span><h2>Close to plan</h2>
-          <div className="macro-donut" role="img" aria-label="Average energy split: 29 percent protein, 42 percent carbs, 29 percent fat"><div><strong>29%</strong><span>protein</span></div></div>
+          <span className="eyebrow">Sample macro split</span><h2>Illustrative only</h2>
+          <div className="macro-donut" role="img" aria-label="Sample energy split, not your real data"><div><strong>29%</strong><span>sample</span></div></div>
           <div className="macro-legend"><span><i className="protein" />Protein <b>29%</b></span><span><i className="carbs" />Carbs <b>42%</b></span><span><i className="fat" />Fat <b>29%</b></span></div>
         </section>
         <section className="surface-card consistency-card">
-          <span className="eyebrow">Consistency</span><h2>18 of 30 days</h2><p>landed within ±8% of your calorie target.</p>
+          <span className="eyebrow">Sample consistency</span><h2>Example month</h2><p>Real consistency appears after you have enough dated logs.</p>
           <div className="dot-field">{Array.from({ length: 30 }, (_, i) => <i key={i} className={i < 18 ? "hit" : i < 26 ? "near" : "miss"} />)}</div>
         </section>
       </div>
@@ -455,6 +449,7 @@ function RecipeDrawer({ recipe, onClose, onPlan }: { recipe: Recipe | null; onCl
 }
 
 export default function Home() {
+  const [clock, setClock] = useState(() => getBangaloreClock(new Date()));
   const [area, setArea] = useState<Area>("track");
   const [trackView, setTrackView] = useState<TrackView>("today");
   const [planView, setPlanView] = useState<PlanView>("items");
@@ -478,16 +473,17 @@ export default function Home() {
   };
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      const restored = restoreNutritionState(parseSavedNutritionState(window.localStorage.getItem(LOCAL_NUTRITION_STORAGE_KEY)));
+      const restored = restoreNutritionState(parseSavedNutritionState(window.localStorage.getItem(LOCAL_NUTRITION_STORAGE_KEY)), clock.dayKey);
       setExtras(restored.extras);
       setPlanned(restored.planned);
       setStorageLoaded(true);
     }, 0);
     return () => window.clearTimeout(timer);
-  }, []);
+  }, [clock.dayKey]);
   useEffect(() => {
     if (!storageLoaded) return;
     const saved: SavedNutritionState = {
+      dayKey: clock.dayKey,
       logs: extras.map((food) => ({ foodId: food.id, amount: food.amount })),
       planned: planned.map((entry) => ({ id: entry.id, kind: entry.kind })),
     };
@@ -496,7 +492,11 @@ export default function Home() {
     } catch {
       window.setTimeout(() => notify("Nourish could not save on this browser"), 0);
     }
-  }, [extras, planned, storageLoaded]);
+  }, [clock.dayKey, extras, planned, storageLoaded]);
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(getBangaloreClock(new Date())), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
   useEffect(() => {
     let active = true;
     fetch("/cardiq-food-import.json")
@@ -510,7 +510,7 @@ export default function Home() {
     return food ? [food] : [];
   }).filter((food, index, all) => all.findIndex((candidate) => candidate.id === food.id) === index);
   const quickFoods = cardIqQuickFoods.length ? cardIqQuickFoods : foods.filter((food) => food.common);
-  const totals = sumLoggedNutrition(extras, { calories: 1280, protein: 84, carbs: 161, fat: 32 });
+  const totals = sumLoggedNutrition(extras, { calories: 0, protein: 0, carbs: 0, fat: 0 });
   const calories = totals.calories;
   const macros = { protein: totals.protein, carbs: totals.carbs, fat: totals.fat };
 
@@ -550,7 +550,7 @@ export default function Home() {
 
   const renderContent = () => {
     if (area === "track") {
-      if (trackView === "today") return <TodayView calories={calories} macros={macros} extras={extras} quickFoods={quickFoods} hasCardIqImport={cardIqImport !== null} onLog={() => openFoodLogger()} onAdd={(food) => openFoodLogger(food)} onEdit={(index) => openFoodLogger(extras[index], index)} notify={notify} />;
+      if (trackView === "today") return <TodayView clock={clock} calories={calories} macros={macros} extras={extras} quickFoods={quickFoods} hasCardIqImport={cardIqImport !== null} onLog={() => openFoodLogger()} onAdd={(food) => openFoodLogger(food)} onEdit={(index) => openFoodLogger(extras[index], index)} onOpenMeals={() => { setArea("plan"); setPlanView("meals"); window.scrollTo({ top: 0, behavior: "smooth" }); }} />;
       if (trackView === "history") return <HistoryView />;
       if (trackView === "trends") return <TrendsView />;
       return <PurchasesView cardIqImport={cardIqImport} onAdd={(food) => openFoodLogger(food)} />;
@@ -565,7 +565,7 @@ export default function Home() {
         <div className="brand"><span>N</span><div><strong>Nourish</strong><small>Personal nutrition</small></div></div>
         <div className="area-switch" aria-label="Main sections"><button className={area === "plan" ? "active" : ""} onClick={() => switchArea("plan")}><span>PLAN</span><small>Decide what to eat</small></button><button className={area === "track" ? "active" : ""} onClick={() => switchArea("track")}><span>TRACK</span><small>See how you’re doing</small></button></div>
         <nav className="side-nav" aria-label={`${area} navigation`}>{nav.map((item) => <button key={item.id} className={activeView === item.id ? "active" : ""} onClick={() => switchView(item.id)}><i>{item.icon}</i><span>{item.label}</span></button>)}</nav>
-        <div className="sidebar-footer"><span className="kp-avatar">KP</span><div><strong>Kanwar</strong><small>2,150 kcal plan</small></div><button aria-label="Open settings">•••</button></div>
+        <div className="sidebar-footer"><span className="kp-avatar">KP</span><div><strong>Kanwar</strong><small>Sample target · 2,150 kcal</small></div><button aria-label="Open settings">•••</button></div>
       </aside>
       <div className="mobile-topbar"><div className="brand"><span>N</span><strong>Nourish</strong></div><div className="mobile-area"><button className={area === "plan" ? "active" : ""} onClick={() => switchArea("plan")}>Plan</button><button className={area === "track" ? "active" : ""} onClick={() => switchArea("track")}>Track</button></div><span className="kp-avatar">KP</span></div>
       <div className="mobile-subnav">{nav.map((item) => <button key={item.id} className={activeView === item.id ? "active" : ""} onClick={() => switchView(item.id)}>{item.label}</button>)}</div>

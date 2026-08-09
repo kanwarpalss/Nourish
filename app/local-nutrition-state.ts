@@ -11,11 +11,12 @@ export type SavedPlanEntry = {
 };
 
 export type SavedNutritionState = {
+  dayKey: string | null;
   logs: SavedLogEntry[];
   planned: SavedPlanEntry[];
 };
 
-const emptyState = (): SavedNutritionState => ({ logs: [], planned: [] });
+const emptyState = (): SavedNutritionState => ({ dayKey: null, logs: [], planned: [] });
 
 export function parseSavedNutritionState(raw: string | null): SavedNutritionState {
   if (!raw) return emptyState();
@@ -23,7 +24,8 @@ export function parseSavedNutritionState(raw: string | null): SavedNutritionStat
   try {
     const parsed: unknown = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return emptyState();
-    const value = parsed as { logs?: unknown; planned?: unknown };
+    const value = parsed as { dayKey?: unknown; logs?: unknown; planned?: unknown };
+    const dayKey = typeof value.dayKey === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value.dayKey) ? value.dayKey : null;
     const logs = Array.isArray(value.logs) ? value.logs.flatMap((entry): SavedLogEntry[] => {
       if (!entry || typeof entry !== "object") return [];
       const candidate = entry as { foodId?: unknown; amount?: unknown };
@@ -34,7 +36,7 @@ export function parseSavedNutritionState(raw: string | null): SavedNutritionStat
       const candidate = entry as { id?: unknown; kind?: unknown };
       return typeof candidate.id === "string" && candidate.id.length > 0 && (candidate.kind === "food" || candidate.kind === "meal") ? [{ id: candidate.id, kind: candidate.kind }] : [];
     }) : [];
-    return { logs, planned };
+    return { dayKey, logs, planned };
   } catch {
     return emptyState();
   }
@@ -42,4 +44,8 @@ export function parseSavedNutritionState(raw: string | null): SavedNutritionStat
 
 export function stringifySavedNutritionState(state: SavedNutritionState) {
   return JSON.stringify(state);
+}
+
+export function shouldRestoreSavedNutritionState(state: SavedNutritionState, dayKey: string) {
+  return state.dayKey === null || state.dayKey === dayKey;
 }

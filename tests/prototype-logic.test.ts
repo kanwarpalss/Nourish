@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { calculateMealNutrition, meals, nutritionItems } from "../app/nutrition-data";
-import { parseSavedNutritionState, stringifySavedNutritionState } from "../app/local-nutrition-state";
-import { getEnergyRunway, getNutritionDelta, getQuantityLimit, isQuantityValid, matchesRecipe, scaleNutrition, sumLoggedNutrition } from "../app/prototype-logic";
+import { parseSavedNutritionState, shouldRestoreSavedNutritionState, stringifySavedNutritionState } from "../app/local-nutrition-state";
+import { getBangaloreClock, getEnergyRunway, getNutritionDelta, getQuantityLimit, isQuantityValid, matchesRecipe, scaleNutrition, sumLoggedNutrition } from "../app/prototype-logic";
 
 test("quantity edits scale every displayed nutrient from the same serving basis", () => {
   const milk = nutritionItems.find((food) => food.id === "nandini-goodlife-toned");
@@ -137,13 +137,34 @@ test("failure injection: changing one low-fat meal above its threshold is detect
 
 test("local on-device nutrition state accepts only well-formed entries", () => {
   const saved = parseSavedNutritionState(JSON.stringify({
+    dayKey: "2026-08-09",
     logs: [{ foodId: "nandini-goodlife-toned", amount: 250 }, { foodId: "", amount: 10 }, { foodId: "chia", amount: "25" }],
     planned: [{ id: "cauli-chicken", kind: "meal" }, { id: "chia", kind: "food" }, { id: "oops", kind: "unknown" }],
   }));
   assert.deepEqual(saved, {
+    dayKey: "2026-08-09",
     logs: [{ foodId: "nandini-goodlife-toned", amount: 250 }],
     planned: [{ id: "cauli-chicken", kind: "meal" }, { id: "chia", kind: "food" }],
   });
-  assert.deepEqual(parseSavedNutritionState("{not json"), { logs: [], planned: [] });
+  assert.deepEqual(parseSavedNutritionState("{not json"), { dayKey: null, logs: [], planned: [] });
   assert.deepEqual(parseSavedNutritionState(stringifySavedNutritionState(saved)), saved);
+  assert.equal(shouldRestoreSavedNutritionState(saved, "2026-08-09"), true);
+  assert.equal(shouldRestoreSavedNutritionState(saved, "2026-08-10"), false);
+  assert.equal(shouldRestoreSavedNutritionState({ ...saved, dayKey: null }, "2026-08-10"), true, "legacy same-session logs migrate once");
+});
+
+test("Bangalore greeting and day key follow local time boundaries", () => {
+  const cases = [
+    ["2026-08-08T23:29:00.000Z", "Good night"],
+    ["2026-08-08T23:30:00.000Z", "Good morning"],
+    ["2026-08-09T06:29:00.000Z", "Good morning"],
+    ["2026-08-09T06:30:00.000Z", "Good afternoon"],
+    ["2026-08-09T11:29:00.000Z", "Good afternoon"],
+    ["2026-08-09T11:30:00.000Z", "Good evening"],
+    ["2026-08-09T16:29:00.000Z", "Good evening"],
+    ["2026-08-09T16:30:00.000Z", "Good night"],
+  ] as const;
+  for (const [iso, greeting] of cases) assert.equal(getBangaloreClock(new Date(iso)).greeting, greeting, iso);
+  assert.deepEqual(getBangaloreClock(new Date("2026-08-09T15:30:00.000Z")), { dayKey: "2026-08-09", dateLabel: "Sunday · 9 August", greeting: "Good evening" });
+  assert.throws(() => getBangaloreClock(new Date("invalid")), /valid date/i);
 });

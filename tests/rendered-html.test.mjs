@@ -28,12 +28,15 @@ function assertPrototypeShell(html) {
   assert.match(html, /aria-label="Main sections"/);
   assert.match(html, />PLAN</);
   assert.match(html, />TRACK</);
-  assert.match(html, /Good morning, KP/);
+  assert.match(html, /Good (morning|afternoon|evening|night), KP/);
   assert.match(html, /Daily energy/);
   assert.match(html, /Today’s timeline/);
   assert.match(html, /Log food/);
+  assert.match(html, /Sample target/);
+  assert.doesNotMatch(html, /Masala oats \+ dahi|Rajma chawal bowl|Banana \+ whey/);
   assert.match(html, /role="progressbar"/);
   assert.match(html, /aria-live="polite"/);
+  assert.doesNotMatch(html, /\/Users\/kanwar\/Documents\/Health/);
   assert.doesNotMatch(html, /codex-preview|SkeletonPreview|react-loading-skeleton/i);
 }
 
@@ -70,7 +73,13 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
   assert.match(page, /30 min or less/);
   assert.doesNotMatch(page, /Number\.parseInt\(recipe\.time/);
   assert.match(page, /needs nutrition review/);
-  assert.match(page, /runway\.isOver \? "Over target" : "On plan"/);
+  assert.match(page, /getBangaloreClock\(new Date\(\)\)/);
+  assert.match(page, /sumLoggedNutrition\(extras, \{ calories: 0, protein: 0, carbs: 0, fat: 0 \}\)/);
+  assert.match(page, /Sample data · 7 days/);
+  assert.match(page, /Track · History · Sample preview/);
+  assert.match(page, /Track · Trends · Sample preview/);
+  assert.match(page, /Sample meal idea · not logged/);
+  assert.doesNotMatch(page, /Just now ·/);
   assert.doesNotMatch(page, /Meal studio|Week plan|DiscoverView|LibraryView/);
   assert.match(nutrition, /Fudgy banana protein brownies/);
   assert.match(nutrition, /Pepper chicken cauliflower rice/);
@@ -84,10 +93,17 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
   assert.match(css, /prefers-reduced-motion: reduce/);
   assert.match(css, /--lime:\s*#b9ed55/);
   assert.match(css, /--orange:\s*#ff6b32/);
+  assert.match(css, /\.meal-timeline\.connected::before[^}]*left:\s*8\.5px/);
+  assert.match(css, /\.timeline-dot[^}]*left:\s*0/);
+  const lineLeft = Number(css.match(/\.meal-timeline\.connected::before[^}]*left:\s*(-?\d+(?:\.\d+)?)px/)?.[1]);
+  const dotLeft = Number(css.match(/\.timeline-dot[^}]*left:\s*(-?\d+(?:\.\d+)?)(?:px)?[;}]/)?.[1]);
+  const dotWidth = Number(css.match(/\.timeline-dot[^}]*width:\s*(\d+(?:\.\d+)?)px/)?.[1]);
+  assert.equal(lineLeft, dotLeft + dotWidth / 2, "timeline line must pass through the dot centres");
   assert.match(layout, /title:\s*"Nourish — Plan well\. Track gently\."/);
+  assert.doesNotMatch(layout, /next\/font/);
   assert.doesNotMatch(page + css + layout + packageJson, /codex-preview|_sites-preview|react-loading-skeleton/i);
   assert.match(spec, /Phase 0 — Product, design system, and researched seed catalogue \(current\)/);
-  assert.match(spec, /cardIQ should be connected only through the documented narrow import contract/);
+  assert.match(spec, /cardIQ should (?:be|remain) connected only through the documented narrow import contract/);
 
   await assert.rejects(access(new URL("../app/_sites-preview/SkeletonPreview.tsx", import.meta.url)));
 });
