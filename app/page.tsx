@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { isCardIqFoodImport, type CardIqFoodImport } from "./cardiq-food";
+import { LOCAL_NUTRITION_STORAGE_KEY, parseSavedNutritionState, stringifySavedNutritionState, type SavedNutritionState } from "./local-nutrition-state";
 import { getEnergyRunway, getQuantityLimit, isQuantityValid, matchesRecipe, scaleNutrition, sumLoggedNutrition } from "./prototype-logic";
 import { meals, nutritionItems, SOURCE_LINKS, type Meal, type NutritionItem } from "./nutrition-data";
 
@@ -11,7 +12,7 @@ type TrackView = "today" | "history" | "trends" | "purchases";
 type MacroKey = "protein" | "carbs" | "fat";
 type Food = NutritionItem;
 type Recipe = Meal;
-type PlannedEntry = Pick<Meal, "id" | "name" | "calories" | "protein" | "carbs" | "fat" | "fiber"> & { serving: string };
+type PlannedEntry = Pick<Meal, "id" | "name" | "calories" | "protein" | "carbs" | "fat" | "fiber"> & { serving: string; kind: "food" | "meal" };
 
 const trackNav: Array<{ id: TrackView; label: string; icon: string }> = [
   { id: "today", label: "Today", icon: "●" },
@@ -43,6 +44,30 @@ const loggableMeals: Food[] = recipes.map((meal) => ({
   source: { label: "Calculated recipe", url: SOURCE_LINKS.ifct, trust: "Reference" },
 }));
 const logFoods = [...foods, ...loggableMeals];
+
+function planEntryFromFood(food: Food): PlannedEntry {
+  return { id: food.id, kind: "food", name: food.brand ? `${food.brand} · ${food.name}` : food.name, serving: `${food.amount} ${food.unit}`, calories: food.calories, protein: food.protein, carbs: food.carbs, fat: food.fat, fiber: food.fiber };
+}
+
+function planEntryFromMeal(meal: Recipe): PlannedEntry {
+  return { id: meal.id, kind: "meal", name: meal.name, serving: meal.serving, calories: meal.calories, protein: meal.protein, carbs: meal.carbs, fat: meal.fat, fiber: meal.fiber };
+}
+
+function restoreNutritionState(saved: SavedNutritionState) {
+  const extras = saved.logs.flatMap((entry): Food[] => {
+    const food = logFoods.find((candidate) => candidate.id === entry.foodId);
+    return food && isQuantityValid(food.unit, entry.amount) ? [scaleNutrition(food, entry.amount)] : [];
+  });
+  const planned = saved.planned.flatMap((entry): PlannedEntry[] => {
+    if (entry.kind === "meal") {
+      const meal = recipes.find((candidate) => candidate.id === entry.id);
+      return meal ? [planEntryFromMeal(meal)] : [];
+    }
+    const food = foods.find((candidate) => candidate.id === entry.id);
+    return food ? [planEntryFromFood(food)] : [];
+  });
+  return { extras, planned };
+}
 
 const weekCalories = [1980, 2140, 2050, 2210, 1890, 2070, 1280];
 const monthDays = Array.from({ length: 31 }, (_, index) => ({
@@ -441,7 +466,37 @@ export default function Home() {
   const [toast, setToast] = useState("");
   const toastTimer = useRef<number | null>(null);
   const [extras, setExtras] = useState<Food[]>([]);
+  const [storageLoaded, setStorageLoaded] = useState(false);
   const [cardIqImport, setCardIqImport] = useState<CardIqFoodImport | null>(null);
+  const notify = (message: string) => {
+    if (toastTimer.current !== null) window.clearTimeout(toastTimer.current);
+    setToast(message);
+    toastTimer.current = window.setTimeout(() => {
+      setToast("");
+      toastTimer.current = null;
+    }, 2600);
+  };
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const restored = restoreNutritionState(parseSavedNutritionState(window.localStorage.getItem(LOCAL_NUTRITION_STORAGE_KEY)));
+      setExtras(restored.extras);
+      setPlanned(restored.planned);
+      setStorageLoaded(true);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+  useEffect(() => {
+    if (!storageLoaded) return;
+    const saved: SavedNutritionState = {
+      logs: extras.map((food) => ({ foodId: food.id, amount: food.amount })),
+      planned: planned.map((entry) => ({ id: entry.id, kind: entry.kind })),
+    };
+    try {
+      window.localStorage.setItem(LOCAL_NUTRITION_STORAGE_KEY, stringifySavedNutritionState(saved));
+    } catch {
+      window.setTimeout(() => notify("Nourish could not save on this browser"), 0);
+    }
+  }, [extras, planned, storageLoaded]);
   useEffect(() => {
     let active = true;
     fetch("/cardiq-food-import.json")
@@ -461,14 +516,6 @@ export default function Home() {
 
   const nav = area === "track" ? trackNav : planNav;
   const activeView = area === "track" ? trackView : planView;
-  const notify = (message: string) => {
-    if (toastTimer.current !== null) window.clearTimeout(toastTimer.current);
-    setToast(message);
-    toastTimer.current = window.setTimeout(() => {
-      setToast("");
-      toastTimer.current = null;
-    }, 2600);
-  };
   const addFood = (food: Food) => {
     const previous = editingFoodIndex === null ? null : extras[editingFoodIndex];
     setExtras((value) => editingFoodIndex === null ? [...value, food] : value.map((entry, index) => index === editingFoodIndex ? food : entry));
@@ -483,11 +530,11 @@ export default function Home() {
     setFoodDialog(true);
   };
   const addItemToPlan = (food: Food) => {
-    setPlanned((value) => [...value, { id: food.id, name: food.brand ? `${food.brand} · ${food.name}` : food.name, serving: `${food.amount} ${food.unit}`, calories: food.calories, protein: food.protein, carbs: food.carbs, fat: food.fat, fiber: food.fiber }]);
+    setPlanned((value) => [...value, planEntryFromFood(food)]);
     notify(`${food.name} added to today’s draft`);
   };
   const addMealToPlan = (meal: Recipe) => {
-    setPlanned((value) => [...value, { id: meal.id, name: meal.name, serving: meal.serving, calories: meal.calories, protein: meal.protein, carbs: meal.carbs, fat: meal.fat, fiber: meal.fiber }]);
+    setPlanned((value) => [...value, planEntryFromMeal(meal)]);
     notify(`${meal.name} added to today’s draft`);
   };
   const removeFromPlan = (index: number) => setPlanned((value) => value.filter((_, itemIndex) => itemIndex !== index));

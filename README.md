@@ -14,9 +14,9 @@ The prototype has two top-level areas:
 - Quantity-aware logging and post-log editing for grams, millilitres, scoops, packs, and servings.
 - One shared Plan draft accepting either individual items or complete meals.
 - Responsive desktop/mobile interface.
-- Session-only state; reloads reset logs and plan selections.
+- Food logs and Plan selections survive refresh in this browser on the Mac Mini. They remain local to this browser profile; clearing browser data will clear them.
 - A read-only local cardIQ food snapshot: actual purchases appear in Purchases, while only matched foods become one-tap shortcuts.
-- No Nourish database or Mac Mini service yet; logs remain session-only.
+- No Nourish database or Mac Mini service yet; browser-local storage is the first durable layer, with a backed-up local database planned next.
 
 See [SPEC.md](./SPEC.md) for the complete roadmap and [data/NUTRITION_SOURCES.md](./data/NUTRITION_SOURCES.md) for the nutrition evidence hierarchy.
 

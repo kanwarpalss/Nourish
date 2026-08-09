@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { calculateMealNutrition, meals, nutritionItems } from "../app/nutrition-data";
+import { parseSavedNutritionState, stringifySavedNutritionState } from "../app/local-nutrition-state";
 import { getEnergyRunway, getNutritionDelta, getQuantityLimit, isQuantityValid, matchesRecipe, scaleNutrition, sumLoggedNutrition } from "../app/prototype-logic";
 
 test("quantity edits scale every displayed nutrient from the same serving basis", () => {
@@ -132,4 +133,17 @@ test("failure injection: changing one low-fat meal above its threshold is detect
   assert.ok(lowFatMeal);
   const broken = { ...lowFatMeal, fat: 10.1 };
   assert.equal(broken.fat <= 10, false);
+});
+
+test("local on-device nutrition state accepts only well-formed entries", () => {
+  const saved = parseSavedNutritionState(JSON.stringify({
+    logs: [{ foodId: "nandini-goodlife-toned", amount: 250 }, { foodId: "", amount: 10 }, { foodId: "chia", amount: "25" }],
+    planned: [{ id: "cauli-chicken", kind: "meal" }, { id: "chia", kind: "food" }, { id: "oops", kind: "unknown" }],
+  }));
+  assert.deepEqual(saved, {
+    logs: [{ foodId: "nandini-goodlife-toned", amount: 250 }],
+    planned: [{ id: "cauli-chicken", kind: "meal" }, { id: "chia", kind: "food" }],
+  });
+  assert.deepEqual(parseSavedNutritionState("{not json"), { logs: [], planned: [] });
+  assert.deepEqual(parseSavedNutritionState(stringifySavedNutritionState(saved)), saved);
 });

@@ -200,12 +200,13 @@ Amazon’s export does not reliably identify the Now channel by itself, so that 
 | 2026-08-08 | Filter badges use visible numeric rules | Unexplained “healthy” labels | A meal only earns High protein (25 g+), Low fat (≤10 g), or High fibre (8 g+) when its displayed serving meets the rule |
 | 2026-08-08 | Quantity is edited before a log is committed | One-tap fixed-serving logging only | Grams, millilitres, scoops, packs, and servings all update nutrition from the same evidence-backed basis |
 | 2026-08-09 | cardIQ imports create an ignored local food snapshot | Embed cardIQ credentials or raw orders in Nourish/Git | Keeps cardIQ the source of truth, prevents a second live database dependency, and never commits purchase history |
+| 2026-08-09 | Persist the active food diary and Plan draft in browser-local storage | Reset logs and plan entries on reload | Lets KP start using the local app immediately while a backed-up Mac Mini database remains a separate, deliberate phase |
 
 ## §6 Current State
 
 As of 2026-08-09, the repository lives at `/Users/kanwar/Code/Nourish`. Plan is split into Items and Meals. The seed catalogue contains 38 researched products/ingredients and 10 original meals recalculated from structured, weighed ingredient records. Source strength and links are visible; the evidence register lives in `data/NUTRITION_SOURCES.md`. Track has the approved Today/History/Trends/Purchases structure plus a quantity-first logger with live nutrition recalculation.
 
-The local cardIQ importer now reads the last year of deduplicated orders and writes an ignored snapshot to `public/cardiq-food-import.json`. On 2026-08-09 it produced 209 food products from 131 cardIQ orders, with 43 safely matched to the Nourish catalogue. Historical Track data and daily targets are still preview data. The prototype remains session-only, so logs and Plan selections reset when the page reloads. The working product name Nourish is not yet approved as permanent.
+The local cardIQ importer now reads the last year of deduplicated orders and writes an ignored snapshot to `public/cardiq-food-import.json`. On 2026-08-09 it produced 209 food products from 131 cardIQ orders, with 43 safely matched to the Nourish catalogue. Food logs and Plan selections now survive refresh in the current browser profile on the Mac Mini; malformed stored entries are rejected during restore. Historical Track data and daily targets are still preview data. This is intentionally browser-local persistence, not the backed-up local database planned for Phase 1. The working product name Nourish is not yet approved as permanent.
 
 ## §7 Known Issues and deferred scope
 
@@ -214,7 +215,7 @@ The local cardIQ importer now reads the last year of deduplicated orders and wri
 | Permanent product name | Open | Confirm during design review |
 | Exact calorie/macro target and personal dietary constraints | Dummy | Onboarding design before persistence |
 | Nandini and Epigamia seed entries rely on current label mirrors | Needs exact-pack confirmation | Reconcile barcode/variant and pack photo during cardIQ import before promotion |
-| Starter dependency audit reports four high-severity advisories | Open | Upgrade the core framework stack and rerun the audit before persistence, private-network access, or deployment |
+| Starter dependency audit reports four high-severity advisories | Open | Upgrade the core framework stack and rerun the audit before private-network access or deployment |
 | Recipe photography and curated source catalogue | Deferred | After interaction/design approval |
 | Exact product nutrition for unmatched cardIQ foods | In progress | Reconcile exact pack label before enabling one-tap logging |
 | Amazon Now channel identification | Known ambiguity | Secondary evidence + review queue |
