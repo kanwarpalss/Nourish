@@ -259,3 +259,80 @@ test("failure injection: a badge cannot survive an ingredient change that breaks
   // derived, the hand-typed tag stayed and silently disagreed with the number beside it.
   assert.equal(numericTags({ protein: lowFat.protein, fat: 10.1, fiber: lowFat.fiber }).includes("Low fat"), false);
 });
+
+/**
+ * Foods whose published energy legitimately disagrees with the general 4/4/9 factors.
+ * USDA applies food-specific Atwater factors to cocoa, which are materially lower than the
+ * general ones, so the general calculation overstates it by design.
+ */
+const ENERGY_CHECK_EXEMPT = new Set(["cocoa"]);
+
+/** protein x4 + available carbs x4 + fat x9 + fibre x2, the general Atwater calculation. */
+function calculatedEnergy(food: { protein: number; carbs: number; fat: number; fiber: number }) {
+  return food.protein * 4 + Math.max(0, food.carbs - food.fiber) * 4 + food.fat * 9 + food.fiber * 2;
+}
+
+/**
+ * A packaged product's panel is one manufacturer's own arithmetic and should agree with
+ * itself closely. A raw food's published energy comes from a composition table that may use
+ * food-specific factors, and low-calorie vegetables swing wildly in percentage terms over a
+ * 2 kcal difference, so those get a much looser bound.
+ */
+function energyTolerance(food: { calories: number; source: { trust: string } }) {
+  const packaged = food.source.trust === "Official label" || food.source.trust === "Label mirror";
+  return packaged ? Math.max(10, food.calories * 0.1) : Math.max(15, food.calories * 0.25);
+}
+
+test("no catalogue food's calories contradict its own macros", () => {
+  // This is what makes it safe to transcribe a panel found online: a value that does not
+  // agree with itself never reaches KP. It is a smell test, not a precision instrument.
+  const offenders: string[] = [];
+  for (const food of nutritionItems) {
+    if (ENERGY_CHECK_EXEMPT.has(food.id) || food.calories === 0) continue;
+    const calculated = calculatedEnergy(food);
+    if (Math.abs(calculated - food.calories) > energyTolerance(food)) {
+      offenders.push(`${food.id} [${food.source.trust}]: states ${food.calories} kcal, macros compute to ${calculated.toFixed(1)}`);
+    }
+  }
+  assert.deepEqual(offenders, [], `implausible catalogue entries:\n${offenders.join("\n")}`);
+});
+
+test("failure injection: bad transcribed values are caught at the tier they arrive in", () => {
+  const paneer = nutritionItems.find((food) => food.id === "paneer-whole-milk");
+  assert.ok(paneer);
+  const passes = (food: { calories: number; protein: number; carbs: number; fat: number; fiber: number; source: { trust: string } }) =>
+    Math.abs(calculatedEnergy(food) - food.calories) <= energyTolerance(food);
+
+  assert.equal(passes(paneer), true, "the real entry must pass");
+  // A dropped or added digit, the most likely transcription slip.
+  assert.equal(passes({ ...paneer, calories: 29.6 }), false);
+  assert.equal(passes({ ...paneer, calories: 2960 }), false);
+
+  // The Yogabar figures found while researching: 210 kcal against macros computing to 238.5.
+  // At 13.6% they clear the loose bound for raw foods but fail the packaged bound, which is
+  // the tier such a value would actually arrive in. This is why it was not entered.
+  const yogabar = { calories: 210, protein: 26, carbs: 28, fat: 2.5, fiber: 0 };
+  assert.equal(passes({ ...yogabar, source: { trust: "Label mirror" } }), false, "a packaged panel that disagrees with itself must be rejected");
+  assert.equal(passes({ ...yogabar, source: { trust: "Reference" } }), true, "and the raw-food bound is deliberately looser, which is why tier matters");
+});
+
+test("an unverified product variant does not borrow a verified one's numbers", () => {
+  const ids = nutritionItems.map((food) => food.id);
+  // Only the unsweetened So Good panel was confirmed; Barista and the flavoured versions
+  // differ and must stay without macros rather than inherit it.
+  assert.ok(ids.includes("so-good-oat-unsweetened"));
+  assert.equal(nutritionItems.some((food) => food.id.includes("barista")), false);
+  // Zero-sugar cola exists; full-sugar cola does not, so it cannot be matched to 0 kcal.
+  const cola = nutritionItems.find((food) => food.id === "cola-zero-sugar");
+  assert.ok(cola && cola.calories === 0);
+});
+
+test("every transcribed panel is marked as a mirror, never as an official label", () => {
+  // A panel found online is not the pack in KP's hand, however good the source.
+  for (const id of ["milkymist-greek-yogurt", "health-factory-protein-bread", "epigamia-turbo-shake", "cosmix-plant-protein", "so-good-oat-unsweetened"]) {
+    const food = nutritionItems.find((item) => item.id === id);
+    assert.ok(food, id);
+    assert.equal(food.source.trust, "Label mirror", `${id} must not claim to be an official label`);
+    assert.match(food.source.url, /^https:\/\//);
+  }
+});

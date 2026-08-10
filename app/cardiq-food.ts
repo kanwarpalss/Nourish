@@ -126,6 +126,21 @@ const exactProducts: Array<{ foodId: string; fragments: string[] }> = [
   { foodId: "amul-high-protein-buttermilk", fragments: ["amul", "highprotein", "buttermilk"] },
   { foodId: "muscleblaze-biozyme-whey", fragments: ["muscleblaze", "biozyme"] },
   { foodId: "epigamia-natural-greek", fragments: ["epigamia", "greek"] },
+  // Products whose panels were sourced online. Exact-product matching runs before the
+  // processed-form guard, so "bread", "milkshake" and "beverage" in the name are fine here.
+  { foodId: "epigamia-turbo-shake", fragments: ["epigamia", "turbo"] },
+  { foodId: "milkymist-greek-yogurt", fragments: ["milkymist", "greek"] },
+  { foodId: "milkymist-greek-yogurt", fragments: ["milkymistgreek"] },
+  { foodId: "health-factory-protein-bread", fragments: ["healthfactory", "proteinbread"] },
+  { foodId: "cosmix-plant-protein", fragments: ["cosmix"] },
+  // Only the unsweetened So Good variant has a verified panel. Barista and the flavoured
+  // versions differ and stay unmatched rather than borrowing this one's numbers.
+  { foodId: "so-good-oat-unsweetened", fragments: ["sogood", "oat", "unsweetened"] },
+  { foodId: "cola-zero-sugar", fragments: ["cocacola", "zero"] },
+  { foodId: "cola-zero-sugar", fragments: ["cokezero"] },
+  { foodId: "cola-zero-sugar", fragments: ["pepsizero"] },
+  { foodId: "cola-zero-sugar", fragments: ["spritezero"] },
+  { foodId: "cola-zero-sugar", fragments: ["cocacoladiet"] },
 ];
 
 /**

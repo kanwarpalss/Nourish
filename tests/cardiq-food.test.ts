@@ -67,8 +67,7 @@ test("word boundaries stop flavour and substring collisions", () => {
 test("manufactured products never inherit raw-ingredient nutrition", () => {
   const processed: Array<[string, string]> = [
     ["Slurrp Farm No Maida No Refined Sugar Banana Oat Cookies", "a cookie is not a banana"],
-    ["So Good Plant Based Oat Beverage Unsweetened 200ml", "oat drink is not dry rolled oats"],
-    ["So Good Oat Barista Edition Beverage 200ml", "oat drink is not dry rolled oats"],
+    ["So Good Oat Barista Edition Beverage 200ml", "the barista panel was never verified"],
     ["Only Earth Cold Coffee Oats Shake", "an oat shake is not dry rolled oats"],
     ["Unibic SNAPPERS P C CREAM ONION 24 X 280 G", "a fried snack is not a raw onion"],
     ["Lay's (India's Magic Masala) Crunchy Potato Chips", "crisps are not potatoes"],
@@ -153,7 +152,9 @@ test("milk grades resolve to the right grade, not just to milk", () => {
 
 test("a fragment must not match inside a longer word", () => {
   // "cream" appears inside "creamy", "creamer" and "cream onion"; none of them is cream.
-  assert.equal(idFor("Milky Mist Greek Yogurt | 100% Natural | Low Fat | Creamy"), undefined);
+  // The Milky Mist yogurt now has a verified panel of its own, so it must resolve to that
+  // rather than to dairy cream.
+  assert.equal(idFor("Milky Mist Greek Yogurt | 100% Natural | Low Fat | Creamy"), "milkymist-greek-yogurt");
   assert.equal(idFor("Peping Strawberry Cream Prebiotic Fizz"), undefined);
   assert.equal(idFor("Unibic SNAPPERS P C CREAM ONION 24 X 280 G"), undefined);
   // Real cream still resolves.

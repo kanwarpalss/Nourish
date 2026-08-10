@@ -65,6 +65,18 @@ const ifctSource: NutritionSource = { label: "ICMR–NIN Indian Food Composition
  */
 const fssaiGradeSource: NutritionSource = { label: "FSSAI milk-grade standard · confirm your pack", url: SOURCE_LINKS.fssai, trust: "Reference" };
 
+/**
+ * Values transcribed from a published nutrition panel found online rather than from the
+ * pack in KP's hand. Open Food Facts entries carry a barcode and a photograph of the
+ * actual label, which is the strongest of these; brand and aggregator pages are weaker.
+ *
+ * Every one of these was cross-checked against its own macros before being accepted: if
+ * protein x4 + available carbs x4 + fat x9 + fibre x2 disagreed with the stated energy by
+ * more than about 6%, the value was rejected rather than entered. See
+ * data/NUTRITION_SOURCES.md for what was rejected and why.
+ */
+const labelMirror = (label: string, url: string): NutritionSource => ({ label, url, trust: "Label mirror" });
+
 export const nutritionItems: NutritionItem[] = [
   {
     id: "nandini-goodlife-toned",
@@ -229,6 +241,14 @@ export const nutritionItems: NutritionItem[] = [
   { id: "makhana", name: "Makhana · fox nuts", amount: 30, unit: "g", calories: 104, protein: 2.9, carbs: 23.1, fat: 0.1, fiber: 4.5, category: "Ingredient", availability: "Bengaluru quick commerce", aliases: ["makhana", "phool makhana", "fox nuts", "lotus seeds"], source: ifctSource },
   { id: "peanuts-raw", name: "Peanuts · raw", amount: 30, unit: "g", calories: 170, protein: 7.7, carbs: 4.8, fat: 14.7, fiber: 2.6, category: "Ingredient", availability: "Bengaluru staple", aliases: ["moongphali", "groundnut", "peanut"], source: usdaSource },
   { id: "chicken-curry-cut-raw", name: "Chicken · raw, curry cut skinless", amount: 100, unit: "g", calories: 143, protein: 20.5, carbs: 0, fat: 6.6, fiber: 0, category: "Ingredient", availability: "Bengaluru poultry", aliases: ["chicken", "murgh", "curry cut", "sabzi chicken"], source: usdaSource },
+
+  // --- Branded products KP repeatedly buys, transcribed from published nutrition panels.
+  { id: "milkymist-greek-yogurt", name: "Greek yogurt · plain", brand: "Milky Mist", amount: 100, unit: "g", calories: 77, protein: 8, carbs: 6.5, fat: 2.2, fiber: 0, category: "Ordered", availability: "Instamart / Amazon · 100 g and 700 g packs", common: true, aliases: ["greek yogurt", "greek yoghurt", "milky mist", "milkymist", "curd", "dahi"], source: labelMirror("Open Food Facts · label photo, barcode 8904083302292", "https://world.openfoodfacts.org/product/8904083302292/greek-yogurt-milky-mist") },
+  { id: "health-factory-protein-bread", name: "Zero Maida Protein Bread", brand: "The Health Factory", amount: 100, unit: "g", calories: 242, protein: 15.24, carbs: 41.5, fat: 1.68, fiber: 4.88, category: "Ordered", availability: "Amazon · 250 g loaf", aliases: ["protein bread", "zero maida", "health factory", "bread"], source: labelMirror("Open Food Facts · label photo, barcode 8908009059246", "https://world.openfoodfacts.org/product/8908009059246/zero-maida-protein-bread-the-health-factory") },
+  { id: "epigamia-turbo-shake", name: "Turbo 25 g protein milkshake", brand: "Epigamia", amount: 1, unit: "pack", calories: 141, protein: 25, carbs: 9, fat: 0.2, fiber: 0, category: "Ordered", availability: "Amazon · 250 ml bottle", aliases: ["epigamia turbo", "protein shake", "milkshake", "protein drink"], source: labelMirror("Published panel · 250 ml bottle, cookies and cream", "https://www.fatsecret.co.in/calories-nutrition/epigamia/epigamia-turbo-protein-milkshake-chocolate/1-serving") },
+  { id: "cosmix-plant-protein", name: "No-Nonsense Plant Protein", brand: "Cosmix", amount: 1, unit: "scoop", calories: 145, protein: 23.5, carbs: 11.7, fat: 0.2, fiber: 0, category: "Ordered", availability: "Amazon · 38 g scoop · panel is for the unflavoured variant", aliases: ["cosmix", "plant protein", "vegan protein", "pea protein"], source: labelMirror("Published panel · 38 g scoop, classic unflavoured", "https://www.fatsecret.co.in/calories-nutrition/cosmix/no-nonsense-plant-protein/1-serving") },
+  { id: "so-good-oat-unsweetened", name: "Oat beverage · unsweetened", brand: "So Good", amount: 100, unit: "ml", calories: 59, protein: 1, carbs: 6.9, fat: 3, fiber: 0, category: "Ordered", availability: "Amazon · 200 ml and 1 L · unsweetened variant only", aliases: ["oat milk", "oat beverage", "so good", "plant milk", "dairy free milk"], source: labelMirror("Published panel · unsweetened variant", "https://www.amazon.in/So-Good-Unsweetened-Preservatives-Cholesterol/dp/B0BR3RPBS5") },
+  { id: "cola-zero-sugar", name: "Zero-sugar cola · any brand", amount: 100, unit: "ml", calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, category: "Product", availability: "Coke Zero, Diet Coke, Pepsi Zero, Sprite Zero", aliases: ["coke zero", "diet coke", "pepsi zero", "sprite zero", "cola", "soft drink", "soda"], source: { label: "Coca-Cola India · Zero Sugar product page", url: "https://www.coca-cola.com/in/en/brands/coca-cola/products-coca-cola-zero-sugar", trust: "Reference" } },
 ];
 
 type MealSeed = Omit<Meal, "calories" | "protein" | "carbs" | "fat" | "fiber">;
