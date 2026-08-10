@@ -31,6 +31,15 @@ Local-only, single user, no cloud backend.
    must state their rule (protein >= 25 g, fat <= 10 g, fibre >= 8 g).
 8. **Illustrative data must be visibly labelled Sample** wherever it appears.
    Today's totals must only ever contain food KP actually logged.
+9. **The diary keeps every day; only today's slice is ever rewritten.**
+   `withDayLogs()` is the only sanctioned way to write a day. Never reintroduce
+   a single-day store — that shape silently deleted the previous day at every
+   Bangalore midnight (fixed 2026-08-10, regression-tested in
+   `tests/day-history.test.ts`).
+10. **A logged entry can always be renamed and macro-corrected by hand**
+    (`override` on `SavedLogEntry`), and the result is tagged provenance tier
+    "Estimated." The edit lives on the log entry only — it must never write
+    back into the shared catalogue in `nutrition-data.ts`.
 
 ## Critical files (read before modifying)
 
@@ -38,8 +47,11 @@ Local-only, single user, no cloud backend.
 |---|---|
 | `app/nutrition-data.ts` | The seed catalogue. A wrong number here silently propagates into every meal total and log entry. |
 | `app/cardiq-food.ts` | Purchase classification and matching. A loose match assigns real macros to the wrong product. |
-| `app/prototype-logic.ts` | Scaling, quantity guards, Bangalore clock. All nutrition arithmetic funnels through here. |
-| `data/NUTRITION_SOURCES.md` | Evidence register. Every macro must trace back to an entry here. |
+| `app/prototype-logic.ts` | Scaling, quantity guards, Bangalore clock, satiety estimate. All nutrition arithmetic funnels through here. |
+| `app/composite-foods.ts` | Everyday dishes (chapati, sabzi) built from editable component weights. |
+| `app/local-nutrition-state.ts` | The diary schema (schemaVersion 2, multi-day) and its parsing/validation. Getting this wrong is how the diary got silently deleted every midnight before 2026-08-10. |
+| `app/day-history.ts` | Turns stored days into History/Trends totals. Overrides, composites and plain foods all resolve through `resolveLoggedFood()` here. |
+| `data/NUTRITION_SOURCES.md` | Evidence register. Every macro must trace back to an entry here, including why a value was rejected. |
 | `scripts/require-nourish-port.mjs` | The 4317 guard. Do not soften. |
 | `ops/com.kanwar.nourish.plist` | launchd service definition for the Mac Mini. |
 
