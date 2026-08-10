@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { calculateMealNutrition, meals, nutritionItems } from "../app/nutrition-data";
 import { parseSavedNutritionState, shouldRestoreSavedNutritionState, stringifySavedNutritionState } from "../app/local-nutrition-state";
-import { getBangaloreClock, getEnergyRunway, getNutritionDelta, getQuantityLimit, isQuantityValid, matchesRecipe, scaleNutrition, sumLoggedNutrition } from "../app/prototype-logic";
+import { estimateSatiety, getBangaloreClock, getEnergyRunway, getNutritionDelta, getQuantityLimit, hasNutritionTarget, isQuantityValid, matchesNutritionTarget, matchesRecipe, satietyLabel, scaleNutrition, sumLoggedNutrition } from "../app/prototype-logic";
 
 test("quantity edits scale every displayed nutrient from the same serving basis", () => {
   const milk = nutritionItems.find((food) => food.id === "nandini-goodlife-toned");
@@ -167,4 +167,78 @@ test("Bangalore greeting and day key follow local time boundaries", () => {
   for (const [iso, greeting] of cases) assert.equal(getBangaloreClock(new Date(iso)).greeting, greeting, iso);
   assert.deepEqual(getBangaloreClock(new Date("2026-08-09T15:30:00.000Z")), { dayKey: "2026-08-09", dateLabel: "Sunday · 9 August", greeting: "Good evening" });
   assert.throws(() => getBangaloreClock(new Date("invalid")), /valid date/i);
+});
+
+test("a calorie ceiling and protein window select the right meals", () => {
+  // KP's scenario: something within 500 kcal carrying 50-70 g protein.
+  const target = { maxCalories: 500, minProtein: 50, maxProtein: 70 };
+  const fitting = meals.filter((meal) => matchesNutritionTarget(meal, target));
+  assert.ok(fitting.length > 0, "no meal fits 500 kcal with 50-70 g protein");
+  for (const meal of fitting) {
+    assert.ok(meal.calories <= 500, `${meal.name} is ${meal.calories} kcal`);
+    assert.ok(meal.protein >= 50 && meal.protein <= 70, `${meal.name} has ${meal.protein} g protein`);
+  }
+  // Everything excluded must genuinely breach a bound, so nothing useful is hidden.
+  for (const meal of meals.filter((meal) => !fitting.includes(meal))) {
+    assert.ok(meal.calories > 500 || meal.protein < 50 || meal.protein > 70, `${meal.name} was excluded but fits`);
+  }
+});
+
+test("an unset bound is ignored rather than treated as zero", () => {
+  const meal = { calories: 400, protein: 30, fiber: 5 };
+  assert.equal(matchesNutritionTarget(meal, {}), true);
+  assert.equal(matchesNutritionTarget(meal, { maxCalories: undefined, minProtein: 25 }), true);
+  assert.equal(matchesNutritionTarget(meal, { minProtein: Number.NaN }), true, "a non-numeric bound must not filter everything out");
+  assert.equal(matchesNutritionTarget(meal, { maxCalories: 399 }), false);
+  assert.equal(matchesNutritionTarget(meal, { minProtein: 31 }), false);
+  assert.equal(matchesNutritionTarget(meal, { maxProtein: 29 }), false);
+  assert.equal(matchesNutritionTarget(meal, { minFiber: 6 }), false);
+  // Boundaries are inclusive: "at most 500" includes 500.
+  assert.equal(matchesNutritionTarget({ calories: 500, protein: 50, fiber: 0 }, { maxCalories: 500, minProtein: 50 }), true);
+  assert.equal(hasNutritionTarget({}), false);
+  assert.equal(hasNutritionTarget({ maxCalories: Number.NaN }), false);
+  assert.equal(hasNutritionTarget({ maxCalories: 500 }), true);
+});
+
+test("fullness ranks protein and fibre above calorie-dense foods", () => {
+  const score = (id: string) => {
+    const food = nutritionItems.find((item) => item.id === id);
+    assert.ok(food, id);
+    return estimateSatiety(food);
+  };
+  // Lean protein and high-fibre volume beat oil and nuts, which is the whole point.
+  assert.ok(score("egg-whites") > score("almonds"), "egg whites should outrank almonds");
+  assert.ok(score("greek-yogurt-nonfat") > score("peanut-butter"), "non-fat yogurt should outrank peanut butter");
+  assert.ok(score("cucumber") > score("oil"), "cucumber should outrank cooking oil");
+  assert.equal(score("oil"), 0, "pure fat has no protein, no fibre and maximum energy density");
+  for (const food of nutritionItems) {
+    const value = estimateSatiety(food);
+    assert.ok(Number.isFinite(value) && value >= 0 && value <= 100, `${food.id} scored ${value}`);
+  }
+});
+
+test("fullness degrades safely on corrupt or unusual foods", () => {
+  assert.equal(estimateSatiety({ calories: 0, protein: 10, fiber: 5 }), 0, "zero calories cannot be scored");
+  assert.equal(estimateSatiety({ calories: Number.NaN, protein: 10, fiber: 5 }), 0);
+  assert.equal(estimateSatiety({ calories: -100, protein: 10, fiber: 5 }), 0);
+  // Negative macros must not produce a negative or inflated score.
+  const negative = estimateSatiety({ calories: 100, protein: -50, fiber: -50, amount: 100, unit: "g" });
+  assert.ok(negative >= 0 && negative <= 100, `scored ${negative}`);
+  // A piece/scoop serving has no computable energy density; the score must still use the
+  // full 0-100 range rather than silently losing 30 points.
+  const scoop = estimateSatiety({ calories: 131.68, protein: 25, fiber: 0, amount: 1, unit: "scoop" });
+  assert.ok(scoop > 45, `whey scored only ${scoop}; the missing density term was not rescaled`);
+  assert.equal(satietyLabel(75), "Very filling");
+  assert.equal(satietyLabel(55), "Filling");
+  assert.equal(satietyLabel(35), "Moderate");
+  assert.equal(satietyLabel(5), "Easy to overeat");
+});
+
+test("failure injection: an unfilling food must not pass as filling", () => {
+  const oil = nutritionItems.find((food) => food.id === "oil");
+  assert.ok(oil);
+  assert.equal(satietyLabel(estimateSatiety(oil)), "Easy to overeat");
+  // If the model ever scored fat highly, this comparison would break first.
+  const chicken = nutritionItems.find((food) => food.id === "chicken-breast");
+  assert.ok(chicken && estimateSatiety(chicken) > estimateSatiety(oil) + 40);
 });

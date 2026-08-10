@@ -157,6 +157,88 @@ export function getNutritionDelta(next: MacroNutrition, previous: MacroNutrition
   };
 }
 
+export type SatietyInput = {
+  calories: number;
+  protein: number;
+  fiber: number;
+  /** Serving size and unit. Energy density is only used when the serving is a real mass or volume. */
+  amount?: number;
+  unit?: string;
+};
+
+const SATIETY_PROTEIN_WEIGHT = 45;
+const SATIETY_FIBRE_WEIGHT = 25;
+const SATIETY_DENSITY_WEIGHT = 30;
+/** Roughly the highest protein and fibre densities any real food reaches, used to cap each term. */
+const PROTEIN_PER_100KCAL_CEILING = 12;
+const FIBRE_PER_100KCAL_CEILING = 5;
+/** Energy density in kcal/100 g: at or below this scores full marks, at or above the ceiling scores nothing. */
+const ENERGY_DENSITY_FLOOR = 40;
+const ENERGY_DENSITY_CEILING = 300;
+
+/**
+ * A 0–100 estimate of how filling a food is per calorie.
+ *
+ * This is an estimate, never a measurement, and is labelled as one wherever it is shown.
+ * It is computed rather than hand-assigned so it can never drift away from the macros it
+ * claims to describe, and so a corrected macro immediately corrects the score.
+ *
+ * The three drivers are protein density, fibre density, and low energy density — the
+ * factors that consistently separate filling foods from easily-overeaten ones. Energy
+ * density needs a mass or volume serving; for a scoop, pack, piece or serving it is
+ * dropped and the remaining weights are rescaled rather than assumed.
+ */
+export function estimateSatiety(food: SatietyInput): number {
+  if (!Number.isFinite(food.calories) || food.calories <= 0) return 0;
+  const protein = Number.isFinite(food.protein) ? Math.max(0, food.protein) : 0;
+  const fiber = Number.isFinite(food.fiber) ? Math.max(0, food.fiber) : 0;
+
+  const proteinPer100kcal = (protein / food.calories) * 100;
+  const fibrePer100kcal = (fiber / food.calories) * 100;
+  const proteinTerm = SATIETY_PROTEIN_WEIGHT * Math.min(1, proteinPer100kcal / PROTEIN_PER_100KCAL_CEILING);
+  const fibreTerm = SATIETY_FIBRE_WEIGHT * Math.min(1, fibrePer100kcal / FIBRE_PER_100KCAL_CEILING);
+
+  const massBased = (food.unit === "g" || food.unit === "ml") && Number.isFinite(food.amount) && (food.amount ?? 0) > 0;
+  if (!massBased) {
+    // Rescale the two available terms to the full 0–100 range instead of pretending the
+    // missing energy-density term scored zero.
+    const available = SATIETY_PROTEIN_WEIGHT + SATIETY_FIBRE_WEIGHT;
+    return Math.round(((proteinTerm + fibreTerm) / available) * 100);
+  }
+
+  const energyDensity = (food.calories / (food.amount as number)) * 100;
+  const densityFraction = Math.min(1, Math.max(0, (ENERGY_DENSITY_CEILING - energyDensity) / (ENERGY_DENSITY_CEILING - ENERGY_DENSITY_FLOOR)));
+  return Math.round(proteinTerm + fibreTerm + SATIETY_DENSITY_WEIGHT * densityFraction);
+}
+
+export function satietyLabel(score: number) {
+  if (score >= 70) return "Very filling";
+  if (score >= 50) return "Filling";
+  if (score >= 30) return "Moderate";
+  return "Easy to overeat";
+}
+
+export type NutritionTarget = {
+  maxCalories?: number;
+  minProtein?: number;
+  maxProtein?: number;
+  minFiber?: number;
+};
+
+/** True when every supplied bound is satisfied. Blank or invalid bounds are ignored. */
+export function matchesNutritionTarget(entry: { calories: number; protein: number; fiber: number }, target: NutritionTarget) {
+  const within = (value: number, bound: number | undefined, compare: (a: number, b: number) => boolean) =>
+    bound === undefined || !Number.isFinite(bound) ? true : compare(value, bound);
+  return within(entry.calories, target.maxCalories, (a, b) => a <= b)
+    && within(entry.protein, target.minProtein, (a, b) => a >= b)
+    && within(entry.protein, target.maxProtein, (a, b) => a <= b)
+    && within(entry.fiber, target.minFiber, (a, b) => a >= b);
+}
+
+export function hasNutritionTarget(target: NutritionTarget) {
+  return [target.maxCalories, target.minProtein, target.maxProtein, target.minFiber].some((value) => value !== undefined && Number.isFinite(value));
+}
+
 export function sumLoggedNutrition(entries: MacroNutrition[], base: MacroNutrition) {
   const totals = entries.reduce((sum, food) => ({
     calories: sum.calories + food.calories,
