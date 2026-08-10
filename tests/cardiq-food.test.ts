@@ -79,9 +79,13 @@ test("manufactured products never inherit raw-ingredient nutrition", () => {
     assert.notEqual(matchCardIqFood(name).matchedFoodId, forbidden, `${why}: ${name}`);
   }
   // These have no verified panel of their own either, so they carry nothing at all.
-  for (const name of ["So Good Oat Barista Edition Beverage 200ml", "Only Earth Cold Coffee Oats Shake", "Unibic SNAPPERS P C CREAM ONION 24 X 280 G", "NOICE Jeera Coriander Kulcha (Freshly made)", "Kurkure Namkeen (Masala Munch) Crunchy Snacks", "Cadbury Nutties Chocolate"]) {
+  for (const name of ["So Good Oat Barista Edition Beverage 200ml", "Only Earth Cold Coffee Oats Shake", "Unibic SNAPPERS P C CREAM ONION 24 X 280 G", "NOICE Jeera Coriander Kulcha (Freshly made)"]) {
     assert.deepEqual(matchCardIqFood(name), {}, name);
   }
+  // Kurkure and Cadbury Nutties gained their own verified panels in the third research pass;
+  // they must resolve to those, not to nothing and not to any raw ingredient in their name.
+  assert.equal(idFor("Kurkure Namkeen (Masala Munch) Crunchy Snacks"), "kurkure-masala-munch");
+  assert.equal(idFor("Cadbury Nutties Chocolate"), "cadbury-nutties");
 });
 
 test("a processed word belonging to the matched term does not block the match", () => {
@@ -191,9 +195,12 @@ test("KP's chapati flour and staple dairy resolve", () => {
 test("a staple word inside a snack or spice blend does not carry the staple's nutrition", () => {
   assert.notEqual(idFor("Lay's (India's Magic Masala) Crunchy Potato Chips"), "potato");
   assert.equal(idFor("Catch Dal Makhani Masala, 100g"), undefined);
-  assert.equal(idFor("Get-A-Way Chocolate Brownie Fudge Ice Cream Tub"), undefined);
+  // Theobroma has no verified panel and stays unmatched.
   assert.equal(idFor("Theobroma cheese crackers (No Preservatives , No Palm Oil)"), undefined);
-  assert.equal(idFor("ACT II Ready To Eat Popcorn | Sour Cream & Cheese Flavour"), undefined);
+  // Get-A-Way and ACT II gained their own verified panels; they must resolve to those, not to
+  // "brownie" or "cheese" pulling in an unrelated raw ingredient.
+  assert.equal(idFor("Get-A-Way Chocolate Brownie Fudge Ice Cream Tub"), "getaway-choc-brownie-fudge-icecream");
+  assert.equal(idFor("ACT II Ready To Eat Popcorn | Sour Cream & Cheese Flavour"), "act2-popcorn-sour-cream-cheese");
   // The plain staples still resolve.
   assert.equal(idFor("Fresh Potato, 1kg"), "potato");
   assert.equal(idFor("Amul Cheese Cubes"), "cheese-processed");

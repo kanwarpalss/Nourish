@@ -155,6 +155,21 @@ const exactProducts: Array<{ foodId: string; fragments: string[] }> = [
   { foodId: "murukku", fragments: ["murukku"] },
   { foodId: "murukku", fragments: ["madrasmixture"] },
   { foodId: "coconut-water", fragments: ["coconutwater"] },
+  // Third research pass (2026-08-10).
+  { foodId: "sids-farm-high-protein-milk", fragments: ["sidsfarm", "highprotein"] },
+  { foodId: "act2-popcorn-sour-cream-cheese", fragments: ["actii", "popcorn"] },
+  { foodId: "cadbury-nutties", fragments: ["cadbury", "nutties"] },
+  { foodId: "weikfield-custard-powder", fragments: ["weikfield", "custard"] },
+  { foodId: "kurkure-masala-munch", fragments: ["kurkure", "masala"] },
+  { foodId: "kinley-strong-soda", fragments: ["kinley", "strongsoda"] },
+  { foodId: "getaway-choc-brownie-fudge-icecream", fragments: ["getaway", "browniefudge"] },
+  { foodId: "health-factory-pizza-base", fragments: ["healthfactory", "pizzabase"] },
+  { foodId: "tang-orange-drink-mix", fragments: ["tang", "drinkmix"] },
+  // Not a specific brand's own pack — a real published panel borrowed as a category
+  // reference, the same pattern already used for murukku and rusk-toast above.
+  { foodId: "monk-fruit-sweetener", fragments: ["monkfruit"] },
+  { foodId: "pav-bread", fragments: ["pavbuns"] },
+  { foodId: "chana-jor-namkeen", fragments: ["chanajor"] },
 ];
 
 /**

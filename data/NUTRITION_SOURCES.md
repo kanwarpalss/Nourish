@@ -68,6 +68,35 @@ This rule is now enforced by the test suite rather than left to judgement. Packa
 
 Generic reference values were used, and labelled Reference rather than Label mirror, for rusk, murukku, coconut water, and the aromatics and spices (lemon, lemongrass, ginger, coriander leaf and powder, mint, cumin, chilli powder, tamarind, sugar, rice flour, corn starch, kala chana, tea). These are composition-table figures for the food in general, not a specific brand's pack.
 
+### Third research pass (2026-08-10)
+
+Twelve more panels found and cross-checked, taking coverage of KP's imported purchase history to 163 of 194 food items (163/194 = 84% of items; 88% of purchase events, since these skew toward things he buys more than once).
+
+| Product | Basis | Source strength |
+|---|---|---|
+| Sid's Farm High Protein Milk | 63.2 kcal / 100 ml | Published panel, 250 ml pack |
+| ACT II Sour Cream & Cheese popcorn | 496 kcal / 100 g | Published panel |
+| Cadbury Nutties | 511 kcal / 100 g | Open Food Facts, barcode 7622202031618 |
+| Weikfield Custard Powder (dry) | 342 kcal / 100 g | Published panel |
+| Kurkure Masala Munch | 555 kcal / 100 g | Published panel |
+| Kinley Strong Soda Original | 0 kcal / 100 ml | Published panel, this exact variant |
+| Get-A-Way Chocolate Brownie Fudge ice cream | 182 kcal / 100 g | Published panel |
+| The Health Factory Zero Maida Pizza Base | 239.7 kcal / 100 g | Published panel |
+| Tang orange drink mix (dry powder) | 380 kcal / 100 g | Published panel |
+| Monk fruit sweetener (Sweetmate, Zeeero) | 0 kcal / 100 g | Manufacturer zero-calorie claim, both brands |
+| Pav / soft bread roll | 288 kcal / 100 g | Published panel — **Britannia's pack, not SMOOR's**; marked Reference, not Label mirror |
+| Chana jor namkeen | 517 kcal / 100 g | Published panel — **Haldiram's pack, not Bhujialalji's**; marked Reference, not Label mirror |
+
+The last two are a different kind of entry from everything above: a real published panel, but for a different manufacturer's pack than the one KP actually bought. They are deliberately tagged **Reference**, not Label mirror — the same tier already used for murukku and rusk-toast — because "Label mirror" is reserved for a panel that is genuinely close to being the product's own label. A generic pav or a generic chana jor snack is close enough across brands to be useful; it is not the same claim as "this is Britannia's/Haldiram's own number for KP's SMOOR/Bhujialalji pack."
+
+### Rejected in this pass, and why
+
+- **So Good Barista and Caramel variants** — re-searched directly against Open Food Facts by product name; confirmed no Indian "So Good" entry exists there at all. Every result for "So Good oat" is Sanitarium's Australian/NZ product line, a different manufacturer despite the shared brand name. Only the unsweetened variant (already entered) has a verified Indian-market panel.
+- **Yogabar Cold Coffee protein shake** — two more figures found (207 kcal and 220 kcal per 250 ml) neither with a complete macro breakdown to cross-check, on top of the double-chocolate figure already rejected for 13.6% self-inconsistency. Three different numbers for the same product line with no way to verify any of them.
+- **Right Shift Roasted Navrattan Mix** — its own retailer pages (BigBasket, Blinkit) block automated fetches; no complete panel found elsewhere.
+- **HERSHEY'S Chocolate Syrup** — sources disagreed by 16% (237 kcal vs 276 kcal per 100g) with no way to tell which is current.
+- **Veeba Salsa Dip, Tata Sampann Chhole Masala, Theobroma cheese crackers, DRIX Better Cola, RAW POP sodas, NOICE kulcha/nachos/batter/kombucha, Eat Better Co laddoo, Supply6 electrolyte mix, Baker's Dozen breadsticks/garlic bread, Aptamil infant formula** — no reliable brand-specific panel found. Generic garlic-breadstick estimates ranged 150–500 kcal/100g depending on brand, too wide to use as a stand-in.
+
 Anything not listed here stays **needs label** with quick-add disabled. A missing number is recoverable; a wrong one silently corrupts every total it touches.
 
 ## Recipe method
