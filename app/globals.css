@@ -544,7 +544,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
   .mobile-topbar { position: sticky; top: 0; z-index: 50; display: grid; grid-template-columns: 1fr auto auto; gap: 18px; align-items: center; padding: 12px 18px; border-bottom: 1px solid var(--line); background: rgb(238 241 231 / 0.92); backdrop-filter: blur(16px); }
   .mobile-topbar .brand > span { width: 34px; height: 34px; border-radius: 11px 11px 4px 11px; font-size: 16px; }
   .mobile-area { display: flex; gap: 4px; padding: 3px; border-radius: 11px; background: #dfe4d8; }
-  .mobile-area button { padding: 7px 12px; border: 0; border-radius: 8px; color: var(--muted); background: transparent; font-size: 10px; font-weight: 750; }
+  .mobile-area button { min-height: 44px; padding: 7px 14px; border: 0; border-radius: 8px; color: var(--muted); background: transparent; font-size: 10px; font-weight: 750; }
   .mobile-area button.active { color: white; background: var(--forest); }
   .mobile-subnav { display: flex; gap: 6px; overflow-x: auto; padding: 10px 18px 0; scrollbar-width: none; }
   .mobile-subnav button { flex: 0 0 auto; padding: 8px 12px; border: 1px solid var(--line); border-radius: 99px; color: var(--muted); background: transparent; font-size: 10px; }
@@ -622,4 +622,42 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
+}
+
+
+/*
+ * Touch targets. On a phone every control must be comfortably tappable: the inline text
+ * buttons ("Edit", "See all", "Edit quantity") rendered at 12–18px tall, which is far below
+ * a usable target and easy to miss while holding a plate in the other hand.
+ */
+@media (max-width: 700px) {
+  .text-button,
+  .entry-actions button,
+  .table-actions button,
+  .legend button {
+    min-height: 44px;
+    padding: 0 10px;
+  }
+  .text-button.inline { padding: 0 8px; }
+  .entry-actions { align-items: center; }
+  /* Anything still smaller keeps a 44px hit area without changing how it looks. */
+  .meal-entry button,
+  .quick-grid button,
+  .month-grid button {
+    min-height: 44px;
+  }
+
+  /* Logger controls. The dish component steppers are dense by design on desktop; on a
+     phone they get room, because these are the buttons used most while cooking. */
+  .dialog-tabs button { min-height: 44px; }
+  .component-control > button,
+  .component-control input { min-height: 40px; }
+  .component-row { grid-template-columns: 1fr auto; grid-template-areas: "name kcal" "control control"; row-gap: 8px; }
+  .component-name { grid-area: name; }
+  .component-row > b { grid-area: kcal; }
+  .component-control { grid-area: control; grid-template-columns: 44px 1fr 44px; }
+  .quantity-editor > a { display: inline-flex; min-height: 44px; align-items: center; }
+
+  /* Quick-add from Purchases. */
+  .purchase-row button { min-height: 44px; min-width: 44px; }
 }

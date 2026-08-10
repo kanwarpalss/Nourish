@@ -762,10 +762,26 @@ export default function Home() {
       .catch(() => undefined);
     return () => { active = false; };
   }, []);
-  const cardIqQuickFoods = (cardIqImport?.items ?? []).flatMap((item) => {
-    const food = item.matchedFoodId ? foods.find((candidate) => candidate.id === item.matchedFoodId) : null;
-    return food ? [food] : [];
-  }).filter((food, index, all) => all.findIndex((candidate) => candidate.id === food.id) === index);
+  // Quick add is ordered by how often KP actually buys the thing, then by how recently.
+  // The snapshot's own order is by purchase date, which surfaced whatever happened to be
+  // bought last — sugar ahead of milk — rather than what he reaches for.
+  const cardIqQuickFoods = (cardIqImport?.items ?? [])
+    .flatMap((item) => {
+      const food = item.matchedFoodId ? foods.find((candidate) => candidate.id === item.matchedFoodId) : null;
+      return food ? [{ food, orderCount: item.orderCount, lastOrdered: item.lastOrdered }] : [];
+    })
+    // Repeat buys of the same food across stores are one entry, keeping the combined count.
+    .reduce((unique: Array<{ food: Food; orderCount: number; lastOrdered: string }>, entry) => {
+      const existing = unique.find((candidate) => candidate.food.id === entry.food.id);
+      if (existing) {
+        existing.orderCount += entry.orderCount;
+        if (entry.lastOrdered > existing.lastOrdered) existing.lastOrdered = entry.lastOrdered;
+        return unique;
+      }
+      return [...unique, { ...entry }];
+    }, [])
+    .sort((a, b) => b.orderCount - a.orderCount || b.lastOrdered.localeCompare(a.lastOrdered))
+    .map((entry) => entry.food);
   const quickFoods = cardIqQuickFoods.length ? cardIqQuickFoods : foods.filter((food) => food.common);
   const extras = restoreDayLogs(saved, clock.dayKey);
   const planned = restorePlanEntries(saved);
