@@ -3,6 +3,11 @@ export const LOCAL_NUTRITION_STORAGE_KEY = "nourish.nutrition.v1";
 export type SavedLogEntry = {
   foodId: string;
   amount: number;
+  /**
+   * Only set for composite dishes. The edited component weights must be saved, otherwise a
+   * chapati rolled from 45 g of atta would come back after a refresh as the 30 g default.
+   */
+  components?: Array<{ foodId: string; amount: number }>;
 };
 
 export type SavedPlanEntry = {
@@ -28,8 +33,18 @@ export function parseSavedNutritionState(raw: string | null): SavedNutritionStat
     const dayKey = typeof value.dayKey === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value.dayKey) ? value.dayKey : null;
     const logs = Array.isArray(value.logs) ? value.logs.flatMap((entry): SavedLogEntry[] => {
       if (!entry || typeof entry !== "object") return [];
-      const candidate = entry as { foodId?: unknown; amount?: unknown };
-      return typeof candidate.foodId === "string" && candidate.foodId.length > 0 && Number.isFinite(candidate.amount) ? [{ foodId: candidate.foodId, amount: candidate.amount }] : [];
+      const candidate = entry as { foodId?: unknown; amount?: unknown; components?: unknown };
+      if (typeof candidate.foodId !== "string" || candidate.foodId.length === 0 || !Number.isFinite(candidate.amount)) return [];
+      const components = Array.isArray(candidate.components) ? candidate.components.flatMap((part): Array<{ foodId: string; amount: number }> => {
+        if (!part || typeof part !== "object") return [];
+        const component = part as { foodId?: unknown; amount?: unknown };
+        return typeof component.foodId === "string" && component.foodId.length > 0 && Number.isFinite(component.amount) && (component.amount as number) > 0
+          ? [{ foodId: component.foodId, amount: component.amount as number }]
+          : [];
+      }) : [];
+      const saved: SavedLogEntry = { foodId: candidate.foodId, amount: candidate.amount as number };
+      if (components.length > 0) saved.components = components;
+      return [saved];
     }) : [];
     const planned = Array.isArray(value.planned) ? value.planned.flatMap((entry): SavedPlanEntry[] => {
       if (!entry || typeof entry !== "object") return [];

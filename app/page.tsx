@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { isCardIqFoodImport, refineCardIqImport, type CardIqFoodImport } from "./cardiq-food";
+import { buildCompositeItem, componentNutrition, defaultCompositeItems, findCompositeByLogId, findComponentFood, type CompositeComponent } from "./composite-foods";
 import { LOCAL_NUTRITION_STORAGE_KEY, parseSavedNutritionState, shouldRestoreSavedNutritionState, stringifySavedNutritionState, type SavedNutritionState } from "./local-nutrition-state";
 import { getBangaloreClock, getEnergyRunway, getQuantityLimit, isQuantityValid, matchesRecipe, scaleNutrition, sumLoggedNutrition, type DashboardClock } from "./prototype-logic";
 import { meals, nutritionItems, SOURCE_LINKS, type Meal, type NutritionItem } from "./nutrition-data";
@@ -43,7 +44,8 @@ const loggableMeals: Food[] = recipes.map((meal) => ({
   aliases: meal.tags,
   source: { label: "Calculated recipe", url: SOURCE_LINKS.ifct, trust: "Reference" },
 }));
-const logFoods = [...foods, ...loggableMeals];
+const compositeItems = defaultCompositeItems();
+const logFoods = [...compositeItems, ...foods, ...loggableMeals];
 
 function planEntryFromFood(food: Food): PlannedEntry {
   return { id: food.id, kind: "food", name: food.brand ? `${food.brand} · ${food.name}` : food.name, serving: `${food.amount} ${food.unit}`, calories: food.calories, protein: food.protein, carbs: food.carbs, fat: food.fat, fiber: food.fiber };
@@ -56,7 +58,11 @@ function planEntryFromMeal(meal: Recipe): PlannedEntry {
 function restoreNutritionState(saved: SavedNutritionState, dayKey: string) {
   if (!shouldRestoreSavedNutritionState(saved, dayKey)) return { extras: [] as Food[], planned: [] as PlannedEntry[] };
   const extras = saved.logs.flatMap((entry): Food[] => {
-    const food = logFoods.find((candidate) => candidate.id === entry.foodId);
+    // A composite is rebuilt from the component weights KP actually used, not the defaults.
+    const composite = findCompositeByLogId(entry.foodId);
+    const food = composite
+      ? buildCompositeItem(composite, entry.components?.length ? entry.components : composite.components)
+      : logFoods.find((candidate) => candidate.id === entry.foodId);
     return food && isQuantityValid(food.unit, entry.amount) ? [scaleNutrition(food, entry.amount)] : [];
   });
   const planned = saved.planned.flatMap((entry): PlannedEntry[] => {
@@ -385,30 +391,97 @@ function MealsView({ onRecipe, planned, onPlan, onRemove }: { onRecipe: (recipe:
 function getShownLogFoods(tab: string, search: string) {
   const query = search.trim().toLowerCase();
   return logFoods.filter((food) => {
-    const matchesTab = query ? true : tab === "Commonly ordered" ? food.common : tab === "Products" ? food.category === "Ordered" || food.category === "Product" : tab === "Ingredients" ? food.category === "Ingredient" : food.category === "Meal";
+    const matchesTab = query ? true
+      : tab === "Commonly ordered" ? food.common
+        : tab === "Dishes" ? food.category === "Composite"
+          : tab === "Products" ? food.category === "Ordered" || food.category === "Product"
+            : tab === "Ingredients" ? food.category === "Ingredient"
+              : food.category === "Meal";
     const matchesSearch = !query || [food.name, food.brand, ...food.aliases].filter(Boolean).join(" ").toLowerCase().includes(query);
     return matchesTab && matchesSearch;
   });
 }
 
+/**
+ * The component editor for a composite dish. Each weight is prefilled and individually
+ * editable, and the dish total updates as it changes.
+ */
+function ComponentEditor({ components, onChange }: { components: CompositeComponent[]; onChange: (next: CompositeComponent[]) => void }) {
+  return (
+    <div className="component-editor">
+      {components.map((component, index) => {
+        const food = findComponentFood(component.foodId);
+        if (!food) return null;
+        const stepFor = food.unit === "ml" ? 10 : food.unit === "g" ? 5 : food.unit === "piece" ? 1 : 0.25;
+        const limit = getQuantityLimit(food.unit);
+        const value = componentNutrition(component);
+        const update = (next: number) => {
+          const clamped = Math.min(limit, Math.max(0, Number(next.toFixed(2))));
+          onChange(components.map((entry, entryIndex) => entryIndex === index ? { ...entry, amount: clamped } : entry));
+        };
+        return (
+          <div className="component-row" key={`${component.foodId}-${index}`}>
+            <span className="component-name">{food.name.split(" · ")[0]}</span>
+            <div className="component-control">
+              <button onClick={() => update(component.amount - stepFor)} aria-label={`Less ${food.name}`}>−</button>
+              <label>
+                <input type="number" min={0} max={limit} step={stepFor} value={component.amount} onChange={(event) => update(Number(event.target.value))} aria-label={`${food.name} amount in ${food.unit}`} />
+                <span>{food.unit === "piece" ? (component.amount === 1 ? "pc" : "pcs") : food.unit}</span>
+              </label>
+              <button onClick={() => update(component.amount + stepFor)} aria-label={`More ${food.name}`}>＋</button>
+            </div>
+            <b>{Math.round(value.calories)}<small> kcal</small></b>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function FoodDialog({ initialFood, editing, onClose, onAdd }: { initialFood: Food | null; editing: boolean; onClose: () => void; onAdd: (food: Food) => void }) {
   const initial = initialFood ?? foods.find((food) => food.common) ?? foods[0];
   const [search, setSearch] = useState("");
-  const [tab, setTab] = useState(initialFood?.category === "Meal" ? "Meals" : initialFood && !initialFood.common ? (initialFood.category === "Ingredient" ? "Ingredients" : "Products") : "Commonly ordered");
+  const [tab, setTab] = useState(
+    initialFood?.category === "Composite" ? "Dishes"
+      : initialFood?.category === "Meal" ? "Meals"
+        : initialFood && !initialFood.common ? (initialFood.category === "Ingredient" ? "Ingredients" : "Products") : "Commonly ordered",
+  );
   const [selectedId, setSelectedId] = useState(initial.id);
   const [quantity, setQuantity] = useState(initial.amount);
+  // Component weights are held here so an edit survives switching tabs or searching, and so
+  // editing a logged chapati reopens with the weight KP actually used.
+  const [components, setComponents] = useState<CompositeComponent[]>(initialFood?.components ?? []);
+  // Items logged without leaving the dialog, so a chapati + sabzi + curd plate is three taps.
+  const [sessionLog, setSessionLog] = useState<Food[]>([]);
   const shown = getShownLogFoods(tab, search);
-  const selected = shown.find((food) => food.id === selectedId) ?? null;
+  const listed = shown.find((food) => food.id === selectedId) ?? null;
+  const composite = listed ? findCompositeByLogId(listed.id) : null;
+  // A composite is rebuilt from its current component weights; everything else is used as is.
+  const selected = composite && components.length > 0 ? buildCompositeItem(composite, components) : listed;
   const step = selected?.unit === "ml" ? 50 : selected?.unit === "g" ? 10 : selected?.unit === "scoop" || selected?.unit === "serving" ? 0.25 : 1;
   const maxQuantity = selected ? getQuantityLimit(selected.unit) : 0;
   const quantityValid = selected ? isQuantityValid(selected.unit, quantity) : false;
   const scaled = selected ? scaleNutrition(selected, quantityValid ? quantity : 0) : null;
   const labelBasis = selected ? selected.basis?.amount ?? selected.amount : 0;
+  const selectFood = (food: Food) => {
+    setSelectedId(food.id);
+    setQuantity(food.amount);
+    const nextComposite = findCompositeByLogId(food.id);
+    setComponents(food.components ?? nextComposite?.components ?? []);
+  };
   const keepSelectionVisible = (nextTab: string, nextSearch: string) => {
     const candidates = getShownLogFoods(nextTab, nextSearch);
     if (candidates.some((food) => food.id === selectedId)) return;
-    setSelectedId(candidates[0]?.id ?? "");
-    setQuantity(candidates[0]?.amount ?? 0);
+    if (candidates[0]) selectFood(candidates[0]);
+    else { setSelectedId(""); setQuantity(0); setComponents([]); }
+  };
+  const sessionTotals = sessionLog.reduce((sum, food) => ({ calories: sum.calories + food.calories, protein: sum.protein + food.protein }), { calories: 0, protein: 0 });
+  const commit = (food: Food) => {
+    onAdd(food);
+    // Editing replaces one entry and closes; logging keeps the dialog open for the next item.
+    if (editing) return;
+    setSessionLog((value) => [...value, food]);
+    setSearch("");
   };
   const close = () => {
     setSearch("");
@@ -419,18 +492,32 @@ function FoodDialog({ initialFood, editing, onClose, onAdd }: { initialFood: Foo
       <section className="food-dialog" role="dialog" aria-modal="true" aria-labelledby="log-food-title">
         <header><div><span className="eyebrow">Track</span><h2 id="log-food-title">Log food</h2></div><button className="close-button" onClick={close} aria-label="Close food logger">×</button></header>
         <div className="dialog-search"><span>⌕</span><input autoFocus value={search} onChange={(event) => { const next = event.target.value; setSearch(next); keepSelectionVisible(tab, next); }} placeholder="Search food, recipe or recent purchase" /></div>
-        <div className="dialog-tabs">{["Commonly ordered", "Products", "Ingredients", "Meals"].map((item) => <button className={tab === item ? "active" : ""} onClick={() => { setTab(item); keepSelectionVisible(item, search); }} key={item}>{item}</button>)}</div>
+        <div className="dialog-tabs">{["Commonly ordered", "Dishes", "Products", "Ingredients", "Meals"].map((item) => <button className={tab === item ? "active" : ""} onClick={() => { setTab(item); keepSelectionVisible(item, search); }} key={item}>{item}</button>)}</div>
+        {sessionLog.length > 0 ? (
+          <div className="session-log">
+            <span className="eyebrow">Logged just now</span>
+            <div className="session-log-items">{sessionLog.map((food, index) => <span key={`${food.id}-${index}`}><b>{food.name}</b><small>{Math.round(food.calories)} kcal</small></span>)}</div>
+            <strong>{Math.round(sessionTotals.calories).toLocaleString("en-IN")} kcal · {sessionTotals.protein.toFixed(0)}g protein</strong>
+          </div>
+        ) : null}
         <div className="food-dialog-body">
-          <div className="food-results">{shown.map((food) => <button className={selected?.id === food.id ? "selected" : ""} key={food.id} onClick={() => { setSelectedId(food.id); setQuantity(food.amount); }}><span className="food-initial">{food.name.charAt(0)}</span><span><strong>{food.brand ? `${food.brand} · ${food.name}` : food.name}</strong><small>{food.amount} {food.unit} · {food.source.trust}</small></span><span><b>{Math.round(food.calories)}</b><small>kcal</small></span><i>→</i></button>)}{shown.length === 0 ? <div className="food-results-empty"><strong>No match yet</strong><span>Try the product, brand, or ingredient name.</span></div> : null}</div>
+          <div className="food-results">{shown.map((food) => <button className={selected?.id === food.id ? "selected" : ""} key={food.id} onClick={() => selectFood(food)}><span className="food-initial">{food.name.charAt(0)}</span><span><strong>{food.brand ? `${food.brand} · ${food.name}` : food.name}</strong><small>{food.category === "Composite" ? food.availability : `${food.amount} ${food.unit} · ${food.source.trust}`}</small></span><span><b>{Math.round(food.calories)}</b><small>kcal</small></span><i>→</i></button>)}{shown.length === 0 ? <div className="food-results-empty"><strong>No match yet</strong><span>Try the product, brand, or ingredient name.</span></div> : null}</div>
           {selected && scaled ? <aside className="quantity-editor dark-card">
-            <span className="eyebrow bright">Quantity</span><h3>{selected.brand ? `${selected.brand} · ` : ""}{selected.name}</h3><p>Nutrition updates while you edit.</p>
-            <div className="quantity-control"><button onClick={() => setQuantity((value) => Math.max(step, Number((value - step).toFixed(2))))} aria-label={`Decrease ${selected.name} quantity`}>−</button><label><input type="number" min={step} max={maxQuantity} step={step} value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} aria-label={`${selected.name} quantity`} /><span>{selected.unit}</span></label><button onClick={() => setQuantity((value) => Math.min(maxQuantity, Number((value + step).toFixed(2))))} aria-label={`Increase ${selected.name} quantity`}>＋</button></div>
+            <span className="eyebrow bright">{composite ? "Dish" : "Quantity"}</span><h3>{selected.brand ? `${selected.brand} · ` : ""}{selected.name}</h3><p>Nutrition updates while you edit.</p>
+            {composite ? <>
+              <ComponentEditor components={components} onChange={setComponents} />
+              <small className="component-note">{composite.note}</small>
+            </> : null}
+            <div className="quantity-control"><button onClick={() => setQuantity((value) => Math.max(step, Number((value - step).toFixed(2))))} aria-label={`Decrease ${selected.name} quantity`}>−</button><label><input type="number" min={step} max={maxQuantity} step={step} value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} aria-label={`${selected.name} quantity`} /><span>{composite ? (quantity === 1 ? composite.serving : `× ${composite.serving}`) : selected.unit}</span></label><button onClick={() => setQuantity((value) => Math.min(maxQuantity, Number((value + step).toFixed(2))))} aria-label={`Increase ${selected.name} quantity`}>＋</button></div>
             <small className={`quantity-basis ${quantityValid ? "" : "error"}`}>{quantityValid ? `Nutrition basis: ${labelBasis} ${selected.unit}` : `Enter more than 0 and no more than ${maxQuantity} ${selected.unit}`}</small>
             <div className="live-nutrition"><strong><b>{Math.round(scaled.calories)}</b><small>kcal</small></strong><span><b>{scaled.protein.toFixed(1)}g</b><small>protein</small></span><span><b>{scaled.carbs.toFixed(1)}g</b><small>carbs</small></span><span><b>{scaled.fat.toFixed(1)}g</b><small>fat</small></span><span><b>{scaled.fiber.toFixed(1)}g</b><small>fibre</small></span></div>
             <a href={selected.source.url} target="_blank" rel="noreferrer">{selected.source.label} ↗</a>
-            <button className="button lime full" disabled={!quantityValid} onClick={() => onAdd(scaled)}>{editing ? "Update" : "Add"} {Math.round(scaled.calories)} kcal {editing ? "in today" : "to today"}</button>
-          </aside> : <aside className="quantity-editor quantity-editor-empty dark-card"><span className="eyebrow bright">Quantity</span><h3>Choose a food</h3><p>The quantity editor will appear when a result is selected.</p></aside>}
+            <button className="button lime full" disabled={!quantityValid} onClick={() => commit(scaled)}>{editing ? "Update" : "Add"} {Math.round(scaled.calories)} kcal {editing ? "in today" : "to today"}</button>
+          </aside> : <aside className="quantity-editor quantity-editor-empty dark-card"><span className="eyebrow bright">Quantity</span><h3>{sessionLog.length ? "Add the next thing" : "Choose a food"}</h3><p>{sessionLog.length ? "Search for whatever else was on the plate, or finish below." : "The quantity editor will appear when a result is selected."}</p></aside>}
         </div>
+        {/* Finishing must always be reachable. Clearing the search after a log can leave no
+            selection, so this cannot live inside the quantity editor. */}
+        {editing ? null : <div className="dialog-footer"><button className="button secondary full" onClick={close}>{sessionLog.length ? `Done · ${sessionLog.length} logged` : "Done"}</button></div>}
       </section>
     </div>
   );
@@ -491,7 +578,7 @@ export default function Home() {
     if (!storageLoaded) return;
     const saved: SavedNutritionState = {
       dayKey: clock.dayKey,
-      logs: extras.map((food) => ({ foodId: food.id, amount: food.amount })),
+      logs: extras.map((food) => food.components?.length ? { foodId: food.id, amount: food.amount, components: food.components } : { foodId: food.id, amount: food.amount }),
       planned: planned.map((entry) => ({ id: entry.id, kind: entry.kind })),
     };
     try {
@@ -526,12 +613,16 @@ export default function Home() {
   const nav = area === "track" ? trackNav : planNav;
   const activeView = area === "track" ? trackView : planView;
   const addFood = (food: Food) => {
-    const previous = editingFoodIndex === null ? null : extras[editingFoodIndex];
-    setExtras((value) => editingFoodIndex === null ? [...value, food] : value.map((entry, index) => index === editingFoodIndex ? food : entry));
-    setFoodDialog(false);
-    setFoodDialogSelection(null);
-    setEditingFoodIndex(null);
-    notify(`${food.name} ${previous ? "updated" : "added"} · ${Math.round(food.calories)} kcal`);
+    const isEdit = editingFoodIndex !== null;
+    setExtras((value) => isEdit ? value.map((entry, index) => index === editingFoodIndex ? food : entry) : [...value, food]);
+    // An edit is finished when it is applied. A new entry is not: a real plate is several
+    // foods, so the logger stays open and KP closes it when the meal is fully recorded.
+    if (isEdit) {
+      setFoodDialog(false);
+      setFoodDialogSelection(null);
+      setEditingFoodIndex(null);
+    }
+    notify(`${food.name} ${isEdit ? "updated" : "added"} · ${Math.round(food.calories)} kcal`);
   };
   const openFoodLogger = (food: Food | null = null, editIndex: number | null = null) => {
     setFoodDialogSelection(food);

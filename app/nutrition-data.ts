@@ -15,12 +15,14 @@ export type NutritionItem = {
   carbs: number;
   fat: number;
   fiber: number;
-  category: "Ordered" | "Product" | "Ingredient" | "Meal";
+  category: "Ordered" | "Product" | "Ingredient" | "Meal" | "Composite";
   availability: string;
   common?: boolean;
   aliases: string[];
   source: NutritionSource;
   basis?: { amount: number; calories: number; protein: number; carbs: number; fat: number; fiber: number };
+  /** Present on composite dishes: the weighed parts this food was calculated from. */
+  components?: Array<{ foodId: string; amount: number }>;
 };
 
 export type Meal = {
