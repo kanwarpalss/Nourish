@@ -141,6 +141,20 @@ const exactProducts: Array<{ foodId: string; fragments: string[] }> = [
   { foodId: "cola-zero-sugar", fragments: ["pepsizero"] },
   { foodId: "cola-zero-sugar", fragments: ["spritezero"] },
   { foodId: "cola-zero-sugar", fragments: ["cocacoladiet"] },
+  // Full-sugar cola last, so every zero-sugar variant is claimed before this catch-all.
+  { foodId: "cola-classic", fragments: ["cocacola"] },
+  // Branded snacks. Exact matching runs before the processed-form and category-conflict
+  // guards, which is what lets a biscuit or a bag of crisps carry its own real panel.
+  { foodId: "parle-g", fragments: ["parleg"] },
+  { foodId: "maggi-masala-noodles", fragments: ["maggi"] },
+  { foodId: "milkymist-skyr", fragments: ["milkymist", "skyr"] },
+  { foodId: "cadbury-dairy-milk", fragments: ["cadbury", "dairymilk"] },
+  { foodId: "lays-potato-chips", fragments: ["lays", "potatochips"] },
+  { foodId: "slurrp-farm-cookies", fragments: ["slurrpfarm", "cookies"] },
+  { foodId: "rusk-toast", fragments: ["rusk"] },
+  { foodId: "murukku", fragments: ["murukku"] },
+  { foodId: "murukku", fragments: ["madrasmixture"] },
+  { foodId: "coconut-water", fragments: ["coconutwater"] },
 ];
 
 /**
@@ -200,6 +214,26 @@ const categoryProducts: Array<{ foodId: string; fragments: string[] }> = [
   { foodId: "makhana", fragments: ["makhana"] },
   { foodId: "peanuts-raw", fragments: ["rawpeanut"] },
   { foodId: "sprouts-moong", fragments: ["sprouts"] },
+  // Aromatics and spices. Lemongrass before lemon, and coriander leaves before the powder,
+  // so the more specific name always wins.
+  { foodId: "lemongrass", fragments: ["lemongrass"] },
+  { foodId: "lemon", fragments: ["lemon"] },
+  { foodId: "ginger", fragments: ["ginger"] },
+  { foodId: "coriander-powder", fragments: ["corianderpowder"] },
+  { foodId: "coriander-leaves", fragments: ["corianderleaves"] },
+  { foodId: "mint-leaves", fragments: ["mintleaves"] },
+  { foodId: "chilli-powder", fragments: ["chillipowder"] },
+  { foodId: "chilli-powder", fragments: ["redchilli"] },
+  { foodId: "cumin-seed", fragments: ["jeerapowder"] },
+  { foodId: "cumin-seed", fragments: ["jeerawhole"] },
+  { foodId: "tea-brewed", fragments: ["leaftea"] },
+  { foodId: "tamarind-pulp", fragments: ["tamarind"] },
+  { foodId: "rice-flour", fragments: ["riceflour"] },
+  { foodId: "corn-starch", fragments: ["cornstarch"] },
+  { foodId: "kala-chana-dry", fragments: ["kala", "chana"] },
+  // "Sugar" appears in "no added sugar" and "zero sugar" all over the catalogue, so the
+  // brand must be present too.
+  { foodId: "sugar-white", fragments: ["parrys", "sugar"] },
 ];
 
 function normalized(value: string) {

@@ -41,6 +41,13 @@ Sources are ranked. An [Open Food Facts](https://world.openfoodfacts.org/) entry
 | Cosmix No-Nonsense Plant Protein | 145 kcal / 38 g scoop | Published panel, unflavoured variant |
 | So Good oat beverage, unsweetened | 59 kcal / 100 ml | Published panel, unsweetened variant only |
 | Zero-sugar cola | 0 kcal / 100 ml | Coca-Cola India product page |
+| Coca-Cola classic (full sugar) | 44 kcal / 100 ml | Coca-Cola India product page — manufacturer's own, so Official label |
+| Parle-G glucose biscuits | 454 kcal / 100 g | Published panel |
+| MAGGI 2-Minute masala noodles | 443 kcal / 100 g | Published panel |
+| Milky Mist Skyr | 100 kcal / 100 g | Published panel |
+| Cadbury Dairy Milk | 531 kcal / 100 g | Open Food Facts |
+| Lay's India's Magic Masala | 555 kcal / 100 g | Published panel |
+| Slurrp Farm multigrain cookies | 492 kcal / 100 g | Published panel, banana oat variant |
 
 ### The acceptance rule
 
@@ -53,7 +60,13 @@ This rule is now enforced by the test suite rather than left to judgement. Packa
 - **Yogabar 26 g protein shake** — the published figures state 210 kcal against macros computing to 238.5, a 13.6% disagreement. One of the two numbers is wrong and there is no way to tell which.
 - **So Good Barista Edition** — the figure found (112 kcal/100 ml) has no fat value and is roughly double every comparable oat beverage; the results also mixed the Indian product with Sanitarium's Australian one of the same brand name. Only the unsweetened variant was accepted.
 - **Slurrp Farm cookies** — no nutrition panel found in any source.
-- **Regular Coca-Cola** — not researched in this pass, and it must never inherit the zero-sugar entry.
+- **Sid's Farm High Protein Milk** — protein and energy are published but carbohydrate is not. The carb figure could be back-solved from the other two, but that is circular: the derived value would then "agree" with the energy by construction and the cross-check would prove nothing.
+- **Kurkure** — a corn puff, not a potato crisp; it must not borrow the Lay's panel.
+- **Cadbury Nutties** — chocolate-coated peanuts, not a solid bar.
+- **NOICE Jeera Coriander Kulcha** — a bread named after its flavouring. An early version of the spice rule matched it to cumin at 375 kcal/100 g, which is why spice matches now require the spice form ("jeera powder", "jeera whole") rather than the bare word.
+- **Whole chillies with stem** — fresh and dried chillies differ several-fold; only an explicit "chilli powder" resolves.
+
+Generic reference values were used, and labelled Reference rather than Label mirror, for rusk, murukku, coconut water, and the aromatics and spices (lemon, lemongrass, ginger, coriander leaf and powder, mint, cumin, chilli powder, tamarind, sugar, rice flour, corn starch, kala chana, tea). These are composition-table figures for the food in general, not a specific brand's pack.
 
 Anything not listed here stays **needs label** with quick-add disabled. A missing number is recoverable; a wrong one silently corrupts every total it touches.
 

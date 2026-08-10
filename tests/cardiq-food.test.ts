@@ -65,15 +65,22 @@ test("word boundaries stop flavour and substring collisions", () => {
 });
 
 test("manufactured products never inherit raw-ingredient nutrition", () => {
-  const processed: Array<[string, string]> = [
-    ["Slurrp Farm No Maida No Refined Sugar Banana Oat Cookies", "a cookie is not a banana"],
-    ["So Good Oat Barista Edition Beverage 200ml", "the barista panel was never verified"],
-    ["Only Earth Cold Coffee Oats Shake", "an oat shake is not dry rolled oats"],
-    ["Unibic SNAPPERS P C CREAM ONION 24 X 280 G", "a fried snack is not a raw onion"],
-    ["Lay's (India's Magic Masala) Crunchy Potato Chips", "crisps are not potatoes"],
+  // The rule is that a processed product must not borrow the raw ingredient it names. It
+  // may carry its own published panel, which several of these now do.
+  const mustNotResolveTo: Array<[string, string, string]> = [
+    ["Slurrp Farm No Maida No Refined Sugar Banana Oat Cookies", "banana", "a cookie is not a banana"],
+    ["Slurrp Farm No Maida No Refined Sugar Banana Oat Cookies", "oats", "a cookie is not dry oats"],
+    ["Lay's (India's Magic Masala) Crunchy Potato Chips", "potato", "crisps are not potatoes"],
+    ["Only Earth Cold Coffee Oats Shake", "oats", "an oat shake is not dry rolled oats"],
+    ["Unibic SNAPPERS P C CREAM ONION 24 X 280 G", "onion", "a fried snack is not a raw onion"],
+    ["NOICE Jeera Coriander Kulcha (Freshly made)", "cumin-seed", "a bread named after its flavouring is not the spice"],
   ];
-  for (const [name, why] of processed) {
-    assert.deepEqual(matchCardIqFood(name), {}, `${why}: ${name}`);
+  for (const [name, forbidden, why] of mustNotResolveTo) {
+    assert.notEqual(matchCardIqFood(name).matchedFoodId, forbidden, `${why}: ${name}`);
+  }
+  // These have no verified panel of their own either, so they carry nothing at all.
+  for (const name of ["So Good Oat Barista Edition Beverage 200ml", "Only Earth Cold Coffee Oats Shake", "Unibic SNAPPERS P C CREAM ONION 24 X 280 G", "NOICE Jeera Coriander Kulcha (Freshly made)", "Kurkure Namkeen (Masala Munch) Crunchy Snacks", "Cadbury Nutties Chocolate"]) {
+    assert.deepEqual(matchCardIqFood(name), {}, name);
   }
 });
 
@@ -182,7 +189,7 @@ test("KP's chapati flour and staple dairy resolve", () => {
 });
 
 test("a staple word inside a snack or spice blend does not carry the staple's nutrition", () => {
-  assert.equal(idFor("Lay's (India's Magic Masala) Crunchy Potato Chips"), undefined);
+  assert.notEqual(idFor("Lay's (India's Magic Masala) Crunchy Potato Chips"), "potato");
   assert.equal(idFor("Catch Dal Makhani Masala, 100g"), undefined);
   assert.equal(idFor("Get-A-Way Chocolate Brownie Fudge Ice Cream Tub"), undefined);
   assert.equal(idFor("Theobroma cheese crackers (No Preservatives , No Palm Oil)"), undefined);
