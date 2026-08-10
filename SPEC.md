@@ -204,12 +204,25 @@ Amazon’s export does not reliably identify the Now channel by itself, so that 
 | 2026-08-09 | Today contains only food KP actually logs | Mix illustrative meals into Today totals or its timeline | A real diary must never make sample intake look consumed |
 | 2026-08-09 | Dashboard time and diary date use `Asia/Kolkata` | Rely on server location or a fixed greeting/date | Keeps Bangalore greetings correct and prevents yesterday's entries leaking into today |
 | 2026-08-09 | Every illustrative target, trend, insight, and meal suggestion is explicitly labelled Sample | Let polished preview data resemble personal history | KP must be able to distinguish researched catalogue facts, imported purchases, and UI examples at a glance |
+| 2026-08-10 | An uncertain purchase match shows “needs label” with quick-add disabled | Show a best-guess macro at a lower confidence badge | A number next to a ＋ button will be tapped; a wrong macro is worse than a missing one |
+| 2026-08-10 | Purchase classification and matching run in the app when the snapshot loads | Trust the `matchedFoodId` stored in the import file | A matcher fix then reaches KP immediately, with no cardIQ re-import; the snapshot records what was bought, the app decides what it means |
+| 2026-08-10 | Whole-word matching for anything that assigns macros; substring matching only for listing an item in Purchases | One matching rule everywhere | Precision is required where nutrition is attached (“sore thrOAT” is not oats); leniency is safe where nothing is attached (“cornflour” is still food) |
+| 2026-08-10 | Indian dairy grades and paneer map to legally standardised category references, marked Reference | Invent per-brand label values, or leave every brand unmatched | Toned, double-toned, skimmed and full cream have statutory fat/SNF minimums, so the grade is accurate for any brand; the pack still outranks it |
+| 2026-08-10 | Everyday dishes are composites with prefilled, individually editable component weights | One fixed calorie figure per dish | A chapati is however much atta went into it and a sabzi is however much oil was used; a correctable default is more truthful than a fixed number |
+| 2026-08-10 | Dry and cooked pulses are separate foods | One entry per pulse | A retail pack is dry; using the cooked figure understates a 500 g pack of moong dal more than threefold |
+| 2026-08-10 | Adding a food keeps the logger open; editing an entry closes it | Close after every add | A real plate is several foods, so a multi-item meal should be one flow; an edit is finished when applied |
+| 2026-08-10 | Fullness is computed from protein, fibre and energy density, labelled “est.” | Hand-assign satiety-index values per food | A computed score cannot drift from the macros it describes and self-corrects when a macro is fixed; hand-typed values have partial coverage and nothing to check them against |
+| 2026-08-10 | Numeric meal badges are derived from the thresholds they advertise | Hand-typed tag strings | A typed badge silently contradicted the number beside it once an ingredient changed |
 
 ## §6 Current State
 
-As of 2026-08-09, the repository lives at `/Users/kanwar/Code/Nourish`. Plan is split into Items and Meals. The seed catalogue contains 38 researched products/ingredients and 10 original meals recalculated from structured, weighed ingredient records. Source strength and links are visible; the evidence register lives in `data/NUTRITION_SOURCES.md`. Track has the approved Today/History/Trends/Purchases structure plus a quantity-first logger with live nutrition recalculation. Today now starts at zero, totals only KP's logged entries, and shows a Bangalore-local greeting and date. Logs are date-scoped so a prior day's diary is not restored as today's intake.
+As of 2026-08-10, the repository lives at `/Users/kanwar/Code/Nourish`. Plan is split into Items and Meals. The seed catalogue contains **70** researched products/ingredients, **9 composite dishes**, and 10 original meals recalculated from structured, weighed ingredient records. Source strength and links are visible; the evidence register lives in `data/NUTRITION_SOURCES.md`, and all nine external source links were verified reachable on 2026-08-10. Track has the approved Today/History/Trends/Purchases structure plus a quantity-first logger with live nutrition recalculation. Today starts at zero, totals only KP's logged entries, and shows a Bangalore-local greeting and date. Logs are date-scoped so a prior day's diary is not restored as today's intake.
 
-The local cardIQ importer now reads the last year of deduplicated orders and writes an ignored snapshot to `public/cardiq-food-import.json`. On 2026-08-09 it produced 209 food products from 131 cardIQ orders, with 43 safely matched to the Nourish catalogue. Food logs and Plan selections survive refresh in the current browser profile; malformed stored entries are rejected during restore. Historical Track data, targets, charts, insights, and unlogged meal ideas are still preview data and are explicitly labelled Sample. This is intentionally browser-local persistence, not the backed-up local database planned for Phase 1. The working product name Nourish is not yet approved as permanent.
+**Purchase matching was rebuilt on 2026-08-10.** The previous matcher used unanchored substring matching with no non-food guard and produced 12 materially wrong matches out of 43 — kids' toothpaste logged as a banana, cough syrup and baby moisture cream as rolled oats, cream-onion crisps as raw onion, oat beverages as dry oats. Instamart and BigBasket bypassed the non-food check entirely, so toilet cleaner, antiseptic, agarbatti and a paperback novel sat in the food catalogue. Matching is now whole-word wherever it assigns macros, applies a non-food blocklist to all stores, refuses to give a manufactured product its raw ingredient's nutrition, and resolves exact products on a separator-free name so "Nandini Good Life" and "Nandini GoodLife" agree. Of the same 209 imported items, 194 are food and **97 now carry macros, all manually reviewed**, against 35 correct before. Classification runs in the app at load, so improving the matcher needs no re-import.
+
+The seed catalogue now covers KP's real pantry: five milk grades, curd, paneer, tofu, cheese, dairy cream, whole wheat atta, rice, poha, vermicelli, breads, four dals, besan, dry and cooked chickpeas, and everyday produce. Composite dishes — chapati, chapati with ghee, chicken sabzi, paneer sabzi, dal tadka, aloo sabzi, mixed veg sabzi, egg bhurji, curd katori — prefill realistic component weights that are individually editable, and the edited weights are saved with the log entry. Adding a food keeps the logger open so a multi-item plate is one flow. Plan supports a calorie ceiling and protein window, plus an estimated 0–100 fullness score computed from protein, fibre and energy density.
+
+The local cardIQ importer reads the last year of deduplicated orders and writes an ignored snapshot to `public/cardiq-food-import.json`; it now warns rather than silently truncating at 1000 orders. Food logs and Plan selections survive refresh in the current browser profile; malformed stored entries are rejected during restore. Historical Track data, targets, charts, insights, and unlogged meal ideas are still preview data and are explicitly labelled Sample. This is intentionally browser-local persistence, not the backed-up local database planned for Phase 1. The working product name Nourish is not yet approved as permanent.
 
 ## §7 Known Issues and deferred scope
 
@@ -218,7 +231,12 @@ The local cardIQ importer now reads the last year of deduplicated orders and wri
 | Permanent product name | Open | Confirm during design review |
 | Exact calorie/macro target and personal dietary constraints | Sample and clearly labelled | Onboarding design before persistence |
 | Nandini and Epigamia seed entries rely on current label mirrors | Needs exact-pack confirmation | Reconcile barcode/variant and pack photo during cardIQ import before promotion |
-| Starter dependency audit reports four high-severity advisories | Open | Upgrade the core framework stack and rerun the audit before private-network access or deployment |
+| Dependency audit reports 16 high-severity advisories (was recorded as four) | Open | All are dev tooling (vite, ws, undici, launch-editor) and several are Windows-only, so risk on a localhost Mac is low. Upgrade the stack and rerun before private-network access or deployment |
+| 112 imported purchases still carry no macros | Open | Mostly brand SKUs whose label cannot be sourced without the pack: Milky Mist Greek yogurt and SKYR, Epigamia Turbo, Yogabar, Cosmix, protein breads, sodas, snacks. Needs the "create a custom food from a package label" flow in SPEC §4.5 |
+| Fullness score is an estimate, not a measurement | By design, labelled "est." | Revisit if a measured satiety source with real Indian coverage becomes available |
+| `basis` field on `NutritionItem` is declared but never populated | Open | SPEC §4.1 wants label calories kept alongside a 4/4/9 comparison; the field exists but nothing writes it |
+| Epigamia (9.4% off) and Amul buttermilk (6.5% off) label calories disagree with their own macros | Open | Reconcile against the physical pack; both remain marked Label mirror |
+| Plan · Items cannot search imported purchases | Open | Items searches only the seed catalogue; the "Ordered" chip shows 3 entries rather than KP's real purchases |
 | Recipe photography and curated source catalogue | Deferred | After interaction/design approval |
 | Exact product nutrition for unmatched cardIQ foods | In progress | Reconcile exact pack label before enabling one-tap logging |
 | Amazon Now channel identification | Known ambiguity | Secondary evidence + review queue |
@@ -293,7 +311,15 @@ The local cardIQ importer now reads the last year of deduplicated orders and wri
 
 ### Current handoff
 
-KP can now test Today with food actually eaten: the diary starts empty, live quantities recalculate nutrition, refresh restores same-day logs, and the next Bangalore day starts separately. History, Trends, targets, insights, and unlogged meal ideas remain Sample previews. The next build phase is backed-up local persistence and exact product reconciliation; cardIQ should remain connected only through the documented narrow import contract, without importing payment or address data.
+KP can now test Today with food actually eaten: the diary starts empty, live quantities recalculate nutrition, refresh restores same-day logs, and the next Bangalore day starts separately. History, Trends, targets, insights, and unlogged meal ideas remain Sample previews.
+
+Worth reviewing next session, in this order:
+
+1. **Purchases** — confirm the 15 dropped items really are non-food and that nothing edible was lost, then spot-check a few of the 97 matched items against the packs in the kitchen.
+2. **Log Food → Dishes** — check the prefilled component weights against how KP actually cooks. The chapati defaults to 30 g of atta and the sabzis to 8–10 g of oil; these are the numbers most worth correcting, and correcting them is the point.
+3. **Plan · Meals** — try a calorie ceiling and protein window, and judge whether the estimated fullness ranking matches KP's own experience of which foods hold him.
+
+The next build phase is backed-up local persistence, the package-label entry flow for the 112 purchases still without macros, and exact product reconciliation. cardIQ should remain connected only through the documented narrow import contract, without importing payment or address data.
 
 ## §10 Deployment
 
