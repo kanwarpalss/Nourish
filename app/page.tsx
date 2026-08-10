@@ -45,6 +45,8 @@ const loggableMeals: Food[] = recipes.map((meal) => ({
   source: { label: "Calculated recipe", url: SOURCE_LINKS.ifct, trust: "Reference" },
 }));
 const compositeItems = defaultCompositeItems();
+/** The meal shown as an example on Today. Falls back to the first recipe if the id changes. */
+const suggestedMeal = recipes.find((recipe) => recipe.id === "cauli-chicken") ?? recipes[0];
 const logFoods = [...compositeItems, ...foods, ...loggableMeals];
 
 function planEntryFromFood(food: Food): PlannedEntry {
@@ -197,8 +199,11 @@ function TodayView({ clock, calories, macros, extras, quickFoods, hasCardIqImpor
           </section>
           <section className="nudge-card dark-card">
             <span className="eyebrow bright">Sample meal idea · not logged</span>
-            <h2>Pepper chicken cauliflower rice</h2>
-            <p>A researched example with 56 g protein and 10.8 g fibre for 406 kcal. Browse it before choosing anything.</p>
+            <h2>{suggestedMeal.name}</h2>
+            {/* Read from the calculated recipe rather than retyped: a hardcoded copy here
+                said 406 kcal and 56 g protein while the recipe actually calculates 397
+                and 55.4. */}
+            <p>A researched example with {suggestedMeal.protein} g protein and {suggestedMeal.fiber} g fibre for {suggestedMeal.calories} kcal. Browse it before choosing anything.</p>
             <button className="button lime" onClick={onOpenMeals}>Browse meals <span>→</span></button>
           </section>
           <section className="week-card surface-card">

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { calculateMealNutrition, meals, nutritionItems } from "../app/nutrition-data";
+import { calculateMealNutrition, meals, numericTags, nutritionItems } from "../app/nutrition-data";
 import { parseSavedNutritionState, shouldRestoreSavedNutritionState, stringifySavedNutritionState } from "../app/local-nutrition-state";
 import { estimateSatiety, getBangaloreClock, getEnergyRunway, getNutritionDelta, getQuantityLimit, hasNutritionTarget, isQuantityValid, matchesNutritionTarget, matchesRecipe, satietyLabel, scaleNutrition, sumLoggedNutrition } from "../app/prototype-logic";
 
@@ -241,4 +241,21 @@ test("failure injection: an unfilling food must not pass as filling", () => {
   // If the model ever scored fat highly, this comparison would break first.
   const chicken = nutritionItems.find((food) => food.id === "chicken-breast");
   assert.ok(chicken && estimateSatiety(chicken) > estimateSatiety(oil) + 40);
+});
+
+test("numeric badges are derived from the numbers at every boundary", () => {
+  // The catalogue test can only ever pass now that tags are computed, so the rule itself
+  // is checked directly, including each threshold and one step either side of it.
+  assert.deepEqual(numericTags({ protein: 25, fat: 10, fiber: 8 }), ["High protein", "Low fat", "High fibre"], "thresholds are inclusive");
+  assert.deepEqual(numericTags({ protein: 24.9, fat: 10.1, fiber: 7.9 }), [], "just outside every rule earns nothing");
+  assert.deepEqual(numericTags({ protein: 60, fat: 2, fiber: 20 }), ["High protein", "Low fat", "High fibre"]);
+  assert.deepEqual(numericTags({ protein: 0, fat: 0, fiber: 0 }), ["Low fat"], "a fat-free food is low fat even with no protein");
+});
+
+test("failure injection: a badge cannot survive an ingredient change that breaks its rule", () => {
+  const lowFat = meals.find((meal) => meal.tags.includes("Low fat"));
+  assert.ok(lowFat);
+  // Recomputing with the fat pushed over the line must drop the badge. Before badges were
+  // derived, the hand-typed tag stayed and silently disagreed with the number beside it.
+  assert.equal(numericTags({ protein: lowFat.protein, fat: 10.1, fiber: lowFat.fiber }).includes("Low fat"), false);
 });

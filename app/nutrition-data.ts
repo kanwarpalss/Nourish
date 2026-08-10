@@ -47,7 +47,9 @@ export type Meal = {
 
 export const SOURCE_LINKS = {
   ifct: "https://www.nin.res.in/ebooks/IFCT2017_16122024.pdf",
-  ninGuidelines: "https://www.nin.res.in/dietaryguidelines/pdfjs/locale/DGI24thJune2024fin.pdf",
+  // The versioned PDF filename rotted to a 404. This viewer page is the stable landing
+  // page for the 2024 guidelines and does not carry a build date in its URL.
+  ninGuidelines: "https://www.nin.res.in/dietaryguidelines/index.html",
   usda: "https://fdc.nal.usda.gov/",
   fssai: "https://www.fssai.gov.in/upload/uploadfiles/files/Guidelines_Nutrition_Labelling_16_08_2018.pdf",
 };
@@ -229,6 +231,8 @@ export const nutritionItems: NutritionItem[] = [
   { id: "chicken-curry-cut-raw", name: "Chicken · raw, curry cut skinless", amount: 100, unit: "g", calories: 143, protein: 20.5, carbs: 0, fat: 6.6, fiber: 0, category: "Ingredient", availability: "Bengaluru poultry", aliases: ["chicken", "murgh", "curry cut", "sabzi chicken"], source: usdaSource },
 ];
 
+type MealSeed = Omit<Meal, "calories" | "protein" | "carbs" | "fat" | "fiber">;
+
 export function calculateMealNutrition(basis: Meal["nutritionBasis"]) {
   const totals = basis.reduce((sum, ingredient) => {
     const food = nutritionItems.find((item) => item.id === ingredient.foodId);
@@ -254,19 +258,14 @@ export function calculateMealNutrition(basis: Meal["nutritionBasis"]) {
   };
 }
 
-export const meals: Meal[] = [
+const mealSeeds: MealSeed[] = [
   {
     id: "protein-brownies",
     name: "Fudgy banana protein brownies",
     serving: "¼ tray · about 3 squares",
-    calories: 254,
-    protein: 25.1,
-    carbs: 35.3,
-    fat: 3.7,
-    fiber: 6.4,
     time: "35 min",
     totalMinutes: 35,
-    tags: ["High protein", "Low fat", "Vegetarian", "Dessert"],
+    tags: ["Vegetarian", "Dessert"],
     art: "brownie",
     description: "Dark cocoa, banana and oats keep these properly fudgy; whey and Greek yogurt lift the protein without butter or refined flour.",
     ingredients: ["2 medium bananas · 236 g", "Rolled oats · 80 g", "Biozyme whey · 2 scoops / 66 g", "Unsweetened cocoa · 30 g", "Non-fat Greek yogurt · 200 g", "Egg whites · 100 g"],
@@ -278,14 +277,9 @@ export const meals: Meal[] = [
     id: "chia-cardamom-bowl",
     name: "Cardamom chia protein bowl",
     serving: "1 breakfast bowl",
-    calories: 416,
-    protein: 41,
-    carbs: 36.4,
-    fat: 12.8,
-    fiber: 11.1,
     time: "10 min + chill",
     totalMinutes: 130,
-    tags: ["High protein", "High fibre", "Vegetarian", "No cook"],
+    tags: ["Vegetarian", "No cook"],
     art: "chia",
     description: "Chia pudding meets Indian shrikhand notes: cardamom, thick yogurt, berries and half a scoop of whey.",
     ingredients: ["Chia seeds · 25 g", "Non-fat Greek yogurt · 200 g", "Nandini toned milk · 100 ml", "Strawberries · 100 g", "Biozyme whey · ½ scoop", "Cardamom + pinch of salt"],
@@ -297,14 +291,9 @@ export const meals: Meal[] = [
     id: "cauli-chicken",
     name: "Pepper chicken cauliflower rice",
     serving: "1 large bowl",
-    calories: 406,
-    protein: 56,
-    carbs: 27,
-    fat: 8.7,
-    fiber: 10.8,
     time: "30 min",
     totalMinutes: 30,
-    tags: ["High protein", "Low fat", "High fibre", "Gluten free"],
+    tags: ["Gluten free"],
     art: "cauli",
     description: "A genuinely filling cauliflower-rice bowl with pepper chicken, peas, beans, ginger and a bright lime finish.",
     ingredients: ["Cooked chicken breast · 150 g", "Cauliflower · 250 g", "Green peas · 50 g", "Green beans · 50 g", "Capsicum · 50 g", "Oil · 2 g", "Ginger, pepper, lime, coriander"],
@@ -316,14 +305,9 @@ export const meals: Meal[] = [
     id: "paneer-quinoa-tikka",
     name: "High-protein paneer tikka quinoa bowl",
     serving: "1 generous bowl",
-    calories: 565,
-    protein: 58.1,
-    carbs: 55.6,
-    fat: 13.1,
-    fiber: 10.2,
     time: "35 min",
     totalMinutes: 35,
-    tags: ["High protein", "Vegetarian"],
+    tags: ["Vegetarian"],
     art: "paneer",
     description: "Low-fat paneer, quinoa, charred vegetables and mint yogurt—tikka-shop satisfaction with every ingredient weighed.",
     ingredients: ["Amul High Protein Paneer · 150 g", "Cooked quinoa · 150 g", "Capsicum · 70 g", "Onion · 65 g", "Tomato · 65 g", "Non-fat mint yogurt · 100 g", "Tikka masala + lemon"],
@@ -335,14 +319,9 @@ export const meals: Meal[] = [
     id: "rajma-quinoa",
     name: "Rajma quinoa kachumber bowl",
     serving: "1 hearty bowl",
-    calories: 466,
-    protein: 22.6,
-    carbs: 76,
-    fat: 9.2,
-    fiber: 18.3,
     time: "25 min with cooked beans",
     totalMinutes: 25,
-    tags: ["Low fat", "High fibre", "Vegan", "Meal prep"],
+    tags: ["Vegan", "Meal prep"],
     art: "rajma",
     description: "Rajma comfort with quinoa, a large kachumber and controlled oil; unusually high fibre without feeling worthy or austere.",
     ingredients: ["Cooked rajma · 150 g", "Cooked quinoa · 150 g", "Tomato · 50 g", "Cucumber · 50 g", "Onion · 50 g", "Oil · 5 g", "Rajma masala, lemon, coriander"],
@@ -354,14 +333,9 @@ export const meals: Meal[] = [
     id: "oats-egg-uttapam",
     name: "Oats egg-white uttapam plate",
     serving: "3 small uttapams + yogurt",
-    calories: 410,
-    protein: 40.3,
-    carbs: 42.1,
-    fat: 8.9,
-    fiber: 8.5,
     time: "25 min",
     totalMinutes: 25,
-    tags: ["High protein", "Low fat", "Breakfast"],
+    tags: ["Breakfast"],
     art: "uttapam",
     description: "A crisp-edged oats batter packed with egg whites and vegetables, with cool yogurt instead of an oil-heavy chutney.",
     ingredients: ["Rolled oats · 40 g", "Egg whites · 200 g", "Onion · 50 g", "Tomato · 50 g", "Carrot · 50 g", "Non-fat Greek yogurt · 100 g", "Oil · 5 g", "Chilli, curry leaves, cumin"],
@@ -373,14 +347,9 @@ export const meals: Meal[] = [
     id: "cocoa-banana-chia",
     name: "Chocolate banana chia pudding",
     serving: "1 dessert bowl",
-    calories: 417,
-    protein: 40.1,
-    carbs: 48.2,
-    fat: 11,
-    fiber: 14.9,
     time: "10 min + chill",
     totalMinutes: 130,
-    tags: ["High protein", "High fibre", "Vegetarian", "Dessert"],
+    tags: ["Vegetarian", "Dessert"],
     art: "cocoa",
     description: "The spoonable, deeply chocolate cousin of a protein shake—banana-sweetened and loaded with chia and cocoa fibre.",
     ingredients: ["Chia seeds · 25 g", "Non-fat Greek yogurt · 200 g", "Banana · 100 g", "Unsweetened cocoa · 10 g", "Biozyme whey · ½ scoop", "Water + pinch of salt"],
@@ -392,14 +361,9 @@ export const meals: Meal[] = [
     id: "palak-paneer",
     name: "Lean palak paneer skillet",
     serving: "1 main bowl",
-    calories: 428,
-    protein: 55.5,
-    carbs: 27.8,
-    fat: 10.6,
-    fiber: 7.4,
     time: "30 min",
     totalMinutes: 30,
-    tags: ["High protein", "Vegetarian", "Gluten free"],
+    tags: ["Vegetarian", "Gluten free"],
     art: "palak",
     description: "A spinach-heavy palak paneer using high-protein paneer and yogurt for body instead of cream.",
     ingredients: ["Amul High Protein Paneer · 150 g", "Spinach · 200 g", "Onion · 75 g", "Tomato · 75 g", "Non-fat Greek yogurt · 100 g", "Oil · 2 g", "Ginger, garlic, garam masala"],
@@ -411,14 +375,9 @@ export const meals: Meal[] = [
     id: "tandoori-quinoa",
     name: "Tandoori chicken quinoa kachumber",
     serving: "1 dinner plate",
-    calories: 557,
-    protein: 67,
-    carbs: 49.5,
-    fat: 9.5,
-    fiber: 10.2,
     time: "40 min",
     totalMinutes: 40,
-    tags: ["High protein", "Low fat", "Meal prep"],
+    tags: ["Meal prep"],
     art: "tandoori",
     description: "Charred yogurt-marinated chicken, quinoa and a mountain of kachumber—big dinner energy with a lean macro shape.",
     ingredients: ["Cooked chicken breast · 150 g", "Cooked quinoa · 150 g", "Cucumber · 70 g", "Tomato · 65 g", "Onion · 65 g", "Non-fat Greek yogurt · 100 g", "Tandoori spices, lemon, coriander"],
@@ -430,14 +389,9 @@ export const meals: Meal[] = [
     id: "greek-yogurt-chaat",
     name: "Crunchy Greek-yogurt chana chaat",
     serving: "1 lunch bowl",
-    calories: 455,
-    protein: 34.6,
-    carbs: 50.6,
-    fat: 12.2,
-    fiber: 15.5,
     time: "15 min",
     totalMinutes: 15,
-    tags: ["High protein", "High fibre", "Vegetarian", "No cook"],
+    tags: ["Vegetarian", "No cook"],
     art: "chaat",
     description: "Creamy, tangy chaat built around yogurt and chickpeas, with chia for crunch and no fried sev hiding in the arithmetic.",
     ingredients: ["Natural Greek yogurt · 270 g", "Cooked chickpeas · 100 g", "Cucumber · 50 g", "Tomato · 50 g", "Onion · 50 g", "Chia seeds · 10 g", "Chaat masala, mint, lemon"],
@@ -445,4 +399,23 @@ export const meals: Meal[] = [
     method: ["Season yogurt with mint and chaat masala.", "Fold through chickpeas and chopped vegetables.", "Finish with chia, lemon and coriander."],
     sourceNote: "Calculated from product-label yogurt and USDA reference ingredients; recheck the exact yogurt pack before production use.",
   },
-].map((meal) => ({ ...meal, ...calculateMealNutrition(meal.nutritionBasis) }));
+];
+
+const NUMERIC_TAGS = ["High protein", "Low fat", "High fibre"] as const;
+
+/**
+ * The three numeric badges are derived, never typed by hand, so a badge can never
+ * disagree with the number printed beside it after an ingredient changes.
+ */
+export function numericTags(nutrition: { protein: number; fat: number; fiber: number }) {
+  return [
+    ...(nutrition.protein >= 25 ? ["High protein"] : []),
+    ...(nutrition.fat <= 10 ? ["Low fat"] : []),
+    ...(nutrition.fiber >= 8 ? ["High fibre"] : []),
+  ];
+}
+
+export const meals: Meal[] = mealSeeds.map((seed) => {
+  const nutrition = calculateMealNutrition(seed.nutritionBasis);
+  return { ...seed, ...nutrition, tags: [...numericTags(nutrition), ...seed.tags.filter((tag) => !NUMERIC_TAGS.includes(tag as typeof NUMERIC_TAGS[number]))] };
+});
