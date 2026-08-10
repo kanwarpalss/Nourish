@@ -83,3 +83,28 @@ The prototype’s filters are transparent product rules, not regulatory label cl
 | High fibre | At least 8 g fibre per displayed serving |
 
 Before persistent logging, these structured calculations will gain recipe version IDs so a later ingredient or label change never rewrites an older food log.
+
+
+## Dependency security note (2026-08-10)
+
+`npm audit` reported 16 high-severity advisories going into this session; 14 are fixed by
+upgrading next, react, react-dom, react-server-dom-webpack, vite, @cloudflare/vite-plugin,
+wrangler and eslint-config-next to their latest compatible non-major releases, plus a scoped
+`overrides` entry pinning the `esbuild` dependency inside `@esbuild-kit/core-utils` (used only
+by drizzle-kit's dev CLI) to a patched 0.25.x release without touching drizzle-kit itself.
+
+Two remain, both traced to `image-size`@2.0.2:
+- `image-size` itself (DoS via malicious ICNS/JXL/HEIF parsing)
+- `vinext`, which depends on it
+
+There is no patched `image-size` release — 2.0.2 is the latest published version and is still
+inside the vulnerable range. Every vinext release checked, including its newest 1.0.0-beta.5
+prerelease, pins `image-size` at the exact same vulnerable version. `npm audit fix --force`
+offers to "fix" this by downgrading vinext to 0.0.45 — five patch versions back — but that
+version simply predates the `@vercel/og` feature that pulls in `image-size`; it is a downgrade
+that drops functionality, not a security fix, and was rejected on that basis.
+
+The vulnerable code path is `@vercel/og` Open Graph image generation. Confirmed by
+`grep -rn "vercel/og\|ImageResponse\|next/og\|opengraph-image" app/` that Nourish's own code
+never calls it, so the vulnerable parser is never reached by anything this app actually does.
+Revisit this line when image-size ships a patch.
