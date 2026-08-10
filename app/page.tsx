@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { isCardIqFoodImport, refineCardIqImport, type CardIqFoodImport } from "./cardiq-food";
 import { buildCompositeItem, componentNutrition, defaultCompositeItems, findCompositeByLogId, findComponentFood, type CompositeComponent } from "./composite-foods";
-import { LOCAL_NUTRITION_STORAGE_KEY, parseSavedNutritionState, shouldRestoreSavedNutritionState, stringifySavedNutritionState, type SavedNutritionState } from "./local-nutrition-state";
+import { emptyNutritionState, LOCAL_NUTRITION_STORAGE_KEY, logsForDay, MAX_STORED_DAYS, parseSavedNutritionState, stringifySavedNutritionState, withDayLogs, wouldDropOldestDay, type SavedLogEntry, type SavedNutritionState } from "./local-nutrition-state";
+import { DEFAULT_TARGETS, loggableMeals, recentDayKeys, resolveLoggedFood, summariseHistory, summariseTrend, type DaySummary } from "./day-history";
 import { estimateSatiety, getBangaloreClock, getEnergyRunway, getQuantityLimit, hasNutritionTarget, isQuantityValid, matchesNutritionTarget, matchesRecipe, satietyLabel, scaleNutrition, sumLoggedNutrition, type DashboardClock, type NutritionTarget } from "./prototype-logic";
 import { meals, nutritionItems, SOURCE_LINKS, type Meal, type NutritionItem } from "./nutrition-data";
 
@@ -29,21 +30,6 @@ const planNav: Array<{ id: PlanView; label: string; icon: string }> = [
 
 const foods = nutritionItems;
 const recipes = meals;
-const loggableMeals: Food[] = recipes.map((meal) => ({
-  id: `meal-${meal.id}`,
-  name: meal.name,
-  amount: 1,
-  unit: "serving",
-  calories: meal.calories,
-  protein: meal.protein,
-  carbs: meal.carbs,
-  fat: meal.fat,
-  fiber: meal.fiber,
-  category: "Meal",
-  availability: meal.serving,
-  aliases: meal.tags,
-  source: { label: "Calculated recipe", url: SOURCE_LINKS.ifct, trust: "Reference" },
-}));
 const compositeItems = defaultCompositeItems();
 /** The meal shown as an example on Today. Falls back to the first recipe if the id changes. */
 const suggestedMeal = recipes.find((recipe) => recipe.id === "cauli-chicken") ?? recipes[0];
@@ -57,17 +43,8 @@ function planEntryFromMeal(meal: Recipe): PlannedEntry {
   return { id: meal.id, kind: "meal", name: meal.name, serving: meal.serving, calories: meal.calories, protein: meal.protein, carbs: meal.carbs, fat: meal.fat, fiber: meal.fiber };
 }
 
-function restoreNutritionState(saved: SavedNutritionState, dayKey: string) {
-  if (!shouldRestoreSavedNutritionState(saved, dayKey)) return { extras: [] as Food[], planned: [] as PlannedEntry[] };
-  const extras = saved.logs.flatMap((entry): Food[] => {
-    // A composite is rebuilt from the component weights KP actually used, not the defaults.
-    const composite = findCompositeByLogId(entry.foodId);
-    const food = composite
-      ? buildCompositeItem(composite, entry.components?.length ? entry.components : composite.components)
-      : logFoods.find((candidate) => candidate.id === entry.foodId);
-    return food && isQuantityValid(food.unit, entry.amount) ? [scaleNutrition(food, entry.amount)] : [];
-  });
-  const planned = saved.planned.flatMap((entry): PlannedEntry[] => {
+function restorePlanEntries(saved: SavedNutritionState): PlannedEntry[] {
+  return saved.planned.flatMap((entry): PlannedEntry[] => {
     if (entry.kind === "meal") {
       const meal = recipes.find((candidate) => candidate.id === entry.id);
       return meal ? [planEntryFromMeal(meal)] : [];
@@ -75,22 +52,26 @@ function restoreNutritionState(saved: SavedNutritionState, dayKey: string) {
     const food = foods.find((candidate) => candidate.id === entry.id);
     return food ? [planEntryFromFood(food)] : [];
   });
-  return { extras, planned };
 }
 
-const sampleWeekCalories = [1980, 2140, 2050, 2210, 1890, 2070, 1280];
-const sampleWeekAverage = Math.round(sampleWeekCalories.reduce((sum, value) => sum + value, 0) / sampleWeekCalories.length);
-const sampleMonthDays = Array.from({ length: 31 }, (_, index) => ({
-  day: index + 1,
-  calories: [2080, 2180, 1970, 2250, 2060, 1910, 2120][index % 7] + ((index % 3) - 1) * 35,
-  protein: 118 + (index % 5) * 7,
-}));
+function foodToLogEntry(food: Food): SavedLogEntry {
+  return food.components?.length
+    ? { foodId: food.id, amount: food.amount, components: food.components }
+    : { foodId: food.id, amount: food.amount };
+}
 
-const sampleMeals = [
-  { type: "Breakfast", time: "8:10", name: "Masala oats + dahi", calories: 420, macro: "24P · 58C · 12F" },
-  { type: "Lunch", time: "1:25", name: "Rajma chawal bowl", calories: 610, macro: "31P · 72C · 17F" },
-  { type: "Snack", time: "4:40", name: "Banana + whey", calories: 250, macro: "29P · 31C · 3F" },
-];
+function restoreDayLogs(saved: SavedNutritionState, dayKey: string): Food[] {
+  return logsForDay(saved, dayKey).flatMap((entry) => {
+    const food = resolveLoggedFood(entry, logFoods);
+    return food ? [food] : [];
+  });
+}
+
+/** "9 Aug" — used on axes and chips where a full date would crowd the layout. */
+function formatShortDate(dayKey: string | undefined) {
+  if (!dayKey) return "";
+  return new Date(`${dayKey}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+}
 
 function MacroBar({ label, value, target, tone }: { label: string; value: number; target: number; tone: MacroKey }) {
   const percent = Math.min(100, Math.round((value / target) * 100));
@@ -98,9 +79,9 @@ function MacroBar({ label, value, target, tone }: { label: string; value: number
     <div className="macro-row">
       <div className="macro-label">
         <span><i className={`macro-dot ${tone}`} />{label}</span>
-        <strong>{value}<small> / {target}g</small></strong>
+        <strong>{Math.round(value)}<small> / {target}g</small></strong>
       </div>
-      <div className="progress-track" role="progressbar" aria-label={`${label}: ${value} of ${target} grams`} aria-valuenow={value} aria-valuemin={0} aria-valuemax={target}>
+      <div className="progress-track" role="progressbar" aria-label={`${label}: ${Math.round(value)} of ${target} grams`} aria-valuenow={Math.round(value)} aria-valuemin={0} aria-valuemax={target}>
         <span className={tone} style={{ width: `${percent}%` }} />
       </div>
     </div>
@@ -120,25 +101,76 @@ function SectionHeading({ eyebrow, title, description, action }: { eyebrow: stri
   );
 }
 
-function TodayView({ clock, calories, macros, extras, quickFoods, hasCardIqImport, onLog, onAdd, onEdit, onOpenMeals }: {
+function TargetEditor({ targets, isDefault, onSave, onCancel }: { targets: typeof DEFAULT_TARGETS; isDefault: boolean; onSave: (next: typeof DEFAULT_TARGETS) => void; onCancel: () => void }) {
+  const [draft, setDraft] = useState({ calories: String(targets.calories), protein: String(targets.protein), carbs: String(targets.carbs), fat: String(targets.fat) });
+  const fields: Array<{ key: keyof typeof draft; label: string; suffix: string }> = [
+    { key: "calories", label: "Daily energy", suffix: "kcal" },
+    { key: "protein", label: "Protein", suffix: "g" },
+    { key: "carbs", label: "Carbs", suffix: "g" },
+    { key: "fat", label: "Fat", suffix: "g" },
+  ];
+  const parsed = { calories: Number(draft.calories), protein: Number(draft.protein), carbs: Number(draft.carbs), fat: Number(draft.fat) };
+  const valid = Object.values(parsed).every((value) => Number.isFinite(value) && value > 0);
+  // Shown so KP can see whether the macro grams he typed actually add up to the energy he typed.
+  const macroEnergy = parsed.protein * 4 + parsed.carbs * 4 + parsed.fat * 9;
+  const drift = valid ? Math.round(macroEnergy - parsed.calories) : 0;
+  return (
+    <section className="target-editor surface-card">
+      <div className="target-filters-head">
+        <div><span className="eyebrow">Your daily targets</span><h2>{isDefault ? "These are placeholders until you set your own" : "Saved in this browser"}</h2></div>
+        <button className="text-button" onClick={onCancel}>Cancel</button>
+      </div>
+      <div className="target-fields">
+        {fields.map((field) => (
+          <label key={field.key}>
+            <span>{field.label}</span>
+            <div><input type="number" min={1} inputMode="numeric" value={draft[field.key]} onChange={(event) => setDraft((current) => ({ ...current, [field.key]: event.target.value }))} /><i>{field.suffix}</i></div>
+          </label>
+        ))}
+      </div>
+      <p className={`target-drift ${Math.abs(drift) > 100 ? "warn" : ""}`}>
+        {valid ? `Those macros come to ${Math.round(macroEnergy).toLocaleString("en-IN")} kcal, ${drift === 0 ? "exactly matching" : `${Math.abs(drift)} kcal ${drift > 0 ? "above" : "below"}`} your energy target.` : "Every target must be a number above zero."}
+      </p>
+      <button className="button lime full" disabled={!valid} onClick={() => onSave(parsed)}>Save targets</button>
+    </section>
+  );
+}
+
+function TodayView({ clock, calories, macros, extras, quickFoods, hasCardIqImport, targets, targetsAreDefaults, history, onLog, onAdd, onEdit, onOpenMeals, onSaveTargets }: {
   clock: DashboardClock;
   calories: number;
   macros: Record<MacroKey, number>;
   extras: Food[];
   quickFoods: Food[];
   hasCardIqImport: boolean;
+  targets: typeof DEFAULT_TARGETS;
+  targetsAreDefaults: boolean;
+  history: DaySummary[];
   onLog: () => void;
   onAdd: (food: Food) => void;
   onEdit: (index: number) => void;
   onOpenMeals: () => void;
+  onSaveTargets: (next: typeof DEFAULT_TARGETS) => void;
 }) {
-  const target = 2150;
-  const runway = getEnergyRunway(calories, target);
+  const [editingTargets, setEditingTargets] = useState(false);
+  const runway = getEnergyRunway(calories, targets.calories);
   const circleProgress = Math.min(100, runway.percentage);
   const circleStyle = { "--energy-progress": `${circleProgress * 3.6}deg` } as CSSProperties;
+  const targetWord = targetsAreDefaults ? "placeholder target" : "target";
   const description = calories === 0
     ? "Nothing is assumed. Start by logging what you actually ate today."
     : `You’ve logged ${Math.round(calories).toLocaleString("en-IN")} kcal today. Add or edit foods whenever you need.`;
+
+  // The strip shows the last seven Bangalore days including today. A day with no diary is
+  // drawn as a gap, never as a zero, because not logging is not the same as not eating.
+  const weekKeys = recentDayKeys(clock.dayKey, 7);
+  const week = weekKeys.map((dayKey) => {
+    const logged = dayKey === clock.dayKey ? { dayKey, calories, entryCount: extras.length } : history.find((day) => day.dayKey === dayKey);
+    return { dayKey, calories: logged?.calories ?? null, isToday: dayKey === clock.dayKey };
+  });
+  const weekLogged = week.filter((day) => day.calories !== null);
+  const weekAverage = weekLogged.length > 0 ? Math.round(weekLogged.reduce((sum, day) => sum + (day.calories ?? 0), 0) / weekLogged.length) : null;
+  const weekPeak = Math.max(targets.calories, ...weekLogged.map((day) => day.calories ?? 0));
 
   return (
     <>
@@ -149,26 +181,28 @@ function TodayView({ clock, calories, macros, extras, quickFoods, hasCardIqImpor
         action={<button className="button primary" onClick={onLog}><span>＋</span> Log food</button>}
       />
 
+      {editingTargets ? <TargetEditor targets={targets} isDefault={targetsAreDefaults} onSave={(next) => { onSaveTargets(next); setEditingTargets(false); }} onCancel={() => setEditingTargets(false)} /> : null}
+
       <div className="today-layout">
         <section className="energy-card dark-card">
-          <div className="card-kicker"><span>Daily energy</span><span className={`status-pill ${runway.isOver ? "over" : ""}`}>{runway.isOver ? "Over sample target" : "Sample target"}</span></div>
+          <div className="card-kicker"><span>Daily energy</span><span className={`status-pill ${runway.isOver ? "over" : ""}`}>{runway.isOver ? `Over ${targetWord}` : targetsAreDefaults ? "Placeholder target" : "On plan"}</span></div>
           <div className="energy-main">
-            <div className="energy-ring" style={circleStyle} role="progressbar" aria-label={`${calories} of ${target} calories eaten`} aria-valuenow={calories} aria-valuemin={0} aria-valuemax={target}>
+            <div className="energy-ring" style={circleStyle} role="progressbar" aria-label={`${calories} of ${targets.calories} calories eaten`} aria-valuenow={calories} aria-valuemin={0} aria-valuemax={targets.calories}>
               <div><strong>{Math.round(calories).toLocaleString("en-IN")}</strong><span>kcal eaten</span></div>
             </div>
             <div className="runway">
-              <span>{runway.isOver ? "Above sample target" : "To sample target"}</span>
+              <span>{runway.isOver ? `Above ${targetWord}` : `To ${targetWord}`}</span>
               <strong>{runway.amount.toLocaleString("en-IN")}</strong>
               <small>{runway.isOver ? "kcal over" : "kcal remaining"}</small>
-              <p>{runway.percentage}% of the sample {target.toLocaleString("en-IN")} kcal target</p>
+              <p>{runway.percentage}% of your {targets.calories.toLocaleString("en-IN")} kcal {targetWord}</p>
               <button className="button orange" onClick={onLog}>＋ Log food</button>
             </div>
           </div>
           <div className="macro-stack dark-macros">
-            <span className="sample-context">Sample macro targets · replace during onboarding</span>
-            <MacroBar label="Protein" value={macros.protein} target={150} tone="protein" />
-            <MacroBar label="Carbs" value={macros.carbs} target={215} tone="carbs" />
-            <MacroBar label="Fat" value={macros.fat} target={72} tone="fat" />
+            <span className="sample-context">{targetsAreDefaults ? "Placeholder targets · set your own" : "Your targets"} <button className="text-button inline" onClick={() => setEditingTargets((value) => !value)}>Edit</button></span>
+            <MacroBar label="Protein" value={macros.protein} target={targets.protein} tone="protein" />
+            <MacroBar label="Carbs" value={macros.carbs} target={targets.carbs} tone="carbs" />
+            <MacroBar label="Fat" value={macros.fat} target={targets.fat} tone="fat" />
           </div>
         </section>
 
@@ -181,7 +215,7 @@ function TodayView({ clock, calories, macros, extras, quickFoods, hasCardIqImpor
             {extras.length === 0 ? <div className="timeline-empty"><strong>No food logged yet</strong><span>Your actual entries—and only your actual entries—will appear here.</span><button className="text-button" onClick={onLog}>Log your first food</button></div> : extras.map((food, index) => (
               <article className="meal-entry added" key={`${food.name}-${index}`}>
                 <i className="timeline-dot" />
-                <div className="meal-meta"><span>Logged today · {food.amount} {food.unit}</span><strong>{food.name}</strong><small>{food.protein.toFixed(1)}P · {food.carbs.toFixed(1)}C · {food.fat.toFixed(1)}F</small></div>
+                <div className="meal-meta"><span>Logged today · {food.amount} {food.unit}{food.amount === 1 ? "" : food.unit === "piece" ? "s" : food.unit === "serving" || food.unit === "scoop" || food.unit === "pack" ? "s" : ""}</span><strong>{food.name}</strong><small>{food.protein.toFixed(1)}P · {food.carbs.toFixed(1)}C · {food.fat.toFixed(1)}F · {food.fiber.toFixed(1)} fibre</small></div>
                 <div className="entry-actions"><b>{Math.round(food.calories)} kcal</b><button onClick={() => onEdit(index)}>Edit quantity</button></div>
               </article>
             ))}
@@ -200,17 +234,25 @@ function TodayView({ clock, calories, macros, extras, quickFoods, hasCardIqImpor
           <section className="nudge-card dark-card">
             <span className="eyebrow bright">Sample meal idea · not logged</span>
             <h2>{suggestedMeal.name}</h2>
-            {/* Read from the calculated recipe rather than retyped: a hardcoded copy here
-                said 406 kcal and 56 g protein while the recipe actually calculates 397
-                and 55.4. */}
             <p>A researched example with {suggestedMeal.protein} g protein and {suggestedMeal.fiber} g fibre for {suggestedMeal.calories} kcal. Browse it before choosing anything.</p>
             <button className="button lime" onClick={onOpenMeals}>Browse meals <span>→</span></button>
           </section>
           <section className="week-card surface-card">
-            <div className="section-title-row"><div><span className="eyebrow">Sample data · 7 days</span><h2>Energy rhythm preview</h2></div><strong>{sampleWeekAverage.toLocaleString("en-IN")} <small>sample avg</small></strong></div>
-            <div className="mini-bars" role="img" aria-label="Sample seven-day calorie chart, not your real history">
-              {sampleWeekCalories.map((value, index) => <span key={`${value}-${index}`} className={index === 6 ? "active" : ""} style={{ height: `${Math.round((value / 2300) * 100)}%` }}><i>{["S", "M", "T", "W", "T", "F", "S"][index]}</i></span>)}
-            </div>
+            <div className="section-title-row"><div><span className="eyebrow">Last 7 days · your diary</span><h2>Energy rhythm</h2></div>{weekAverage !== null ? <strong>{weekAverage.toLocaleString("en-IN")} <small>avg of {weekLogged.length}</small></strong> : null}</div>
+            {weekLogged.length === 0 ? (
+              <p className="week-empty">Nothing logged in the last seven days yet. This fills in as you log.</p>
+            ) : (
+              <>
+                <div className="mini-bars" role="img" aria-label={`Calories logged on ${weekLogged.length} of the last 7 days`}>
+                  {week.map((day) => (
+                    <span key={day.dayKey} className={`${day.isToday ? "active" : ""} ${day.calories === null ? "no-data" : ""}`} style={{ height: day.calories === null ? "4%" : `${Math.max(4, Math.round((day.calories / weekPeak) * 100))}%` }}>
+                      <i>{new Date(`${day.dayKey}T00:00:00Z`).toLocaleDateString("en-GB", { weekday: "narrow", timeZone: "UTC" })}</i>
+                    </span>
+                  ))}
+                </div>
+                {weekLogged.length < 7 ? <small className="week-note">{7 - weekLogged.length} of these days have no diary. They are shown as gaps, not as zero.</small> : null}
+              </>
+            )}
           </section>
         </aside>
       </div>
@@ -218,73 +260,136 @@ function TodayView({ clock, calories, macros, extras, quickFoods, hasCardIqImpor
   );
 }
 
-function HistoryView() {
-  const [selected, setSelected] = useState(8);
-  const day = sampleMonthDays[selected - 1];
+function HistoryView({ history, clock, targets }: { history: DaySummary[]; clock: DashboardClock; targets: typeof DEFAULT_TARGETS }) {
+  const [selectedKey, setSelectedKey] = useState<string | null>(history[0]?.dayKey ?? null);
+  const monthPrefix = clock.dayKey.slice(0, 7);
+  const [year, month] = monthPrefix.split("-").map(Number);
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const firstWeekday = (new Date(Date.UTC(year, month - 1, 1)).getUTCDay() + 6) % 7; // Monday-first
+  const monthDays = Array.from({ length: daysInMonth }, (_, index) => {
+    const dayKey = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
+    return { day: index + 1, dayKey, summary: history.find((entry) => entry.dayKey === dayKey) ?? null, isFuture: dayKey > clock.dayKey };
+  });
+  const selected = selectedKey ? history.find((day) => day.dayKey === selectedKey) ?? null : null;
+  const monthLabel = new Date(`${monthPrefix}-01T00:00:00Z`).toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
+
+  if (history.length === 0) {
+    return (
+      <>
+        <SectionHeading eyebrow="Track · History" title="Your history starts today" description="Every day you log is kept here from now on. Nothing is invented and no day is filled in for you." action={<span className="prototype-badge">0 days recorded</span>} />
+        <div className="empty-state">
+          <strong>No completed days yet.</strong>
+          <span>Today’s diary appears here once the Bangalore day rolls over. Days you don’t log stay blank rather than counting as zero.</span>
+        </div>
+      </>
+    );
+  }
+
   return (
     <>
-      <SectionHeading eyebrow="Track · History · Sample preview" title="What your history will look like" description="Everything in this view is illustrative until Nourish has enough of your real dated logs." action={<span className="prototype-badge">Sample data</span>} />
+      <SectionHeading eyebrow="Track · History" title={`${history.length} ${history.length === 1 ? "day" : "days"} recorded`} description="Only days you actually logged appear. A blank day means no diary was kept, not a day without food." action={<span className="prototype-badge">Your data</span>} />
       <div className="history-layout">
         <section className="surface-card calendar-card">
-          <div className="section-title-row"><div><span className="eyebrow">Sample month · August 2026</span><h2>Example calorie consistency</h2></div><span className="prototype-badge">Not your data</span></div>
+          <div className="section-title-row"><div><span className="eyebrow">{monthLabel}</span><h2>Days you logged</h2></div><div className="legend"><i /> Within {Math.round(targets.calories * 0.08)} kcal <i /> Outside</div></div>
           <div className="calendar-weekdays">{["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => <span key={d}>{d}</span>)}</div>
           <div className="month-grid">
-            {sampleMonthDays.map((item) => {
-              const state = item.calories > 2180 ? "over" : item.calories < 1950 ? "under" : "within";
-              return <button key={item.day} className={`${state} ${selected === item.day ? "selected" : ""}`} onClick={() => setSelected(item.day)} aria-pressed={selected === item.day}><span>{item.day}</span><b>{item.calories}</b><small>kcal</small></button>;
+            {Array.from({ length: firstWeekday }, (_, index) => <i key={`pad-${index}`} className="month-pad" />)}
+            {monthDays.map((item) => {
+              const state = !item.summary ? "no-data" : Math.abs(item.summary.calories - targets.calories) <= targets.calories * 0.08 ? "within" : item.summary.calories > targets.calories ? "over" : "under";
+              return (
+                <button key={item.dayKey} className={`${state} ${selectedKey === item.dayKey ? "selected" : ""}`} disabled={!item.summary} onClick={() => setSelectedKey(item.dayKey)} aria-pressed={selectedKey === item.dayKey} aria-label={item.summary ? `${item.day} ${monthLabel}: ${Math.round(item.summary.calories)} kcal` : `${item.day} ${monthLabel}: nothing logged`}>
+                  <span>{item.day}</span>
+                  {item.summary ? <><b>{Math.round(item.summary.calories)}</b><small>kcal</small></> : <small className="no-data-mark">{item.isFuture ? "" : "—"}</small>}
+                </button>
+              );
             })}
           </div>
         </section>
         <aside className="history-detail dark-card">
-          <span className="eyebrow bright">Sample day · {selected} August</span>
-          <h2>{day.calories.toLocaleString("en-IN")} <small>kcal</small></h2>
-          <p className="history-message">A steady day with a strong lunch and room left for an intentional dinner.</p>
-          <div className="history-metrics">
-            <div><span>Protein</span><strong>{day.protein} g</strong></div>
-            <div><span>Carbs</span><strong>204 g</strong></div>
-            <div><span>Fat</span><strong>68 g</strong></div>
-          </div>
-          <div className="history-meals">
-            {sampleMeals.map((meal) => <div key={meal.type}><span>{meal.type}</span><strong>{meal.name}</strong><b>{meal.calories}</b></div>)}
-          </div>
-          <span className="sample-note">Sample only · real dated history is not available yet.</span>
+          {selected ? (
+            <>
+              <span className="eyebrow bright">{new Date(`${selected.dayKey}T00:00:00Z`).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" })}</span>
+              <h2>{Math.round(selected.calories).toLocaleString("en-IN")} <small>kcal</small></h2>
+              <p className="history-message">{selected.entryCount} {selected.entryCount === 1 ? "item" : "items"} logged{selected.unresolvedCount > 0 ? ` · ${selected.unresolvedCount} entry could not be resolved, so this total is incomplete` : ""}.</p>
+              <div className="history-metrics">
+                <div><span>Protein</span><strong>{selected.protein.toFixed(1)} g</strong></div>
+                <div><span>Carbs</span><strong>{selected.carbs.toFixed(1)} g</strong></div>
+                <div><span>Fat</span><strong>{selected.fat.toFixed(1)} g</strong></div>
+                <div><span>Fibre</span><strong>{selected.fiber.toFixed(1)} g</strong></div>
+              </div>
+              <span className="sample-note">Against your {targets.calories.toLocaleString("en-IN")} kcal target: {selected.calories > targets.calories ? `${Math.round(selected.calories - targets.calories).toLocaleString("en-IN")} kcal over` : `${Math.round(targets.calories - selected.calories).toLocaleString("en-IN")} kcal under`}.</span>
+            </>
+          ) : (
+            <>
+              <span className="eyebrow bright">No day selected</span>
+              <h2>Pick a day</h2>
+              <p className="history-message">Days with a diary are selectable. Blank days were never logged.</p>
+            </>
+          )}
         </aside>
       </div>
     </>
   );
 }
 
-function TrendsView() {
-  const range = "30D";
-  const sampleBars = [72, 84, 68, 91, 77, 82, 73, 88, 79, 86, 69, 76, 90, 83];
+function TrendsView({ history, targets }: { history: DaySummary[]; targets: typeof DEFAULT_TARGETS }) {
+  const ranges = [7, 30, 90] as const;
+  const [range, setRange] = useState<(typeof ranges)[number]>(30);
+  const window = summariseTrend(history, range, targets.calories);
+  const bars = history.slice(0, range).reverse();
+  const peak = Math.max(targets.calories, ...bars.map((day) => day.calories));
+
   return (
     <>
-      <SectionHeading eyebrow="Track · Trends · Sample preview" title="What your trends will look like" description="These charts demonstrate the future experience; none of the values or insights below are based on your food diary yet." action={<span className="prototype-badge">Sample data</span>} />
-      <div className="trends-grid">
-        <section className="surface-card calorie-trend">
-          <div className="section-title-row"><div><span className="eyebrow">Sample daily energy · {range}</span><h2>Illustrative calorie pattern</h2></div><span className="prototype-badge">Not your data</span></div>
-          <div className="trend-chart" role="img" aria-label={`${range} sample calorie trend, not your real data`}>
-            <i className="target-line"><span>Sample target</span></i>
-            {sampleBars.map((height, index) => <span key={`${height}-${index}`} className={index > 10 ? "recent" : ""} style={{ height: `${height}%` }} />)}
-          </div>
-          <div className="chart-axis"><span>10 Jul</span><span>24 Jul</span><span>8 Aug</span></div>
-        </section>
-        <section className="trend-insight dark-card">
-          <span className="eyebrow bright">Sample insight · not yours</span>
-          <h2>Nourish will surface patterns after enough real logs.</h2>
-          <p>For example, it could notice when protein tends to be missed earlier in the day—without pretending that pattern exists yet.</p>
-          <div className="insight-number"><strong>Example</strong><span>Real insights will cite the days and meals behind them.</span></div>
-        </section>
-        <section className="surface-card macro-average">
-          <span className="eyebrow">Sample macro split</span><h2>Illustrative only</h2>
-          <div className="macro-donut" role="img" aria-label="Sample energy split, not your real data"><div><strong>29%</strong><span>sample</span></div></div>
-          <div className="macro-legend"><span><i className="protein" />Protein <b>29%</b></span><span><i className="carbs" />Carbs <b>42%</b></span><span><i className="fat" />Fat <b>29%</b></span></div>
-        </section>
-        <section className="surface-card consistency-card">
-          <span className="eyebrow">Sample consistency</span><h2>Example month</h2><p>Real consistency appears after you have enough dated logs.</p>
-          <div className="dot-field">{Array.from({ length: 30 }, (_, i) => <i key={i} className={i < 18 ? "hit" : i < 26 ? "near" : "miss"} />)}</div>
-        </section>
-      </div>
+      <SectionHeading
+        eyebrow="Track · Trends"
+        title="Your rhythm, not a report card"
+        description="Averages count only the days you actually logged. A day without a diary is never treated as a day without food."
+        action={<div className="segmented compact">{ranges.map((value) => <button key={value} className={range === value ? "active" : ""} onClick={() => setRange(value)}>{value}D</button>)}</div>}
+      />
+      {window.average === null ? (
+        <div className="empty-state">
+          <strong>Nothing logged in the last {range} days.</strong>
+          <span>Trends appear once there are real days to compare. Nourish will not draw a chart out of nothing.</span>
+        </div>
+      ) : (
+        <div className="trends-grid">
+          <section className="surface-card calorie-trend">
+            <div className="section-title-row"><div><span className="eyebrow">Daily energy · last {range} days</span><h2>Average {Math.round(window.average.calories).toLocaleString("en-IN")} kcal</h2></div><span className="soft-badge">{window.loggedDays} of {range} days logged</span></div>
+            <div className="trend-chart" role="img" aria-label={`Calories across ${window.loggedDays} logged days, averaging ${Math.round(window.average.calories)}`}>
+              <i className="target-line" style={{ bottom: `${Math.round((targets.calories / peak) * 100)}%` }}><span>{targets.calories.toLocaleString("en-IN")} target</span></i>
+              {bars.map((day) => <span key={day.dayKey} title={`${formatShortDate(day.dayKey)}: ${Math.round(day.calories).toLocaleString("en-IN")} kcal`} style={{ height: `${Math.max(3, Math.round((day.calories / peak) * 100))}%` }} />)}
+            </div>
+            <div className="chart-axis"><span>{formatShortDate(bars[0]?.dayKey)}</span><span>{formatShortDate(bars[bars.length - 1]?.dayKey)}</span></div>
+          </section>
+          <section className="trend-insight dark-card">
+            <span className="eyebrow bright">Average macros per logged day</span>
+            <h2>{Math.round(window.average.protein)} g protein</h2>
+            <p>{Math.round(window.average.carbs)} g carbs · {Math.round(window.average.fat)} g fat · {Math.round(window.average.fiber)} g fibre, averaged across {window.loggedDays} {window.loggedDays === 1 ? "day" : "days"}.</p>
+            <div className="insight-number"><strong>{window.average.protein >= targets.protein ? "On target" : `${Math.round(targets.protein - window.average.protein)} g short`}</strong><span>against your {targets.protein} g protein target.</span></div>
+          </section>
+          <section className="surface-card macro-average">
+            <span className="eyebrow">Energy split</span><h2>Where the calories came from</h2>
+            <div className="macro-legend">
+              {(() => {
+                const energy = window.average.protein * 4 + window.average.carbs * 4 + window.average.fat * 9;
+                const share = (grams: number, factor: number) => energy > 0 ? Math.round((grams * factor / energy) * 100) : 0;
+                return <>
+                  <span><i className="protein" />Protein <b>{share(window.average.protein, 4)}%</b></span>
+                  <span><i className="carbs" />Carbs <b>{share(window.average.carbs, 4)}%</b></span>
+                  <span><i className="fat" />Fat <b>{share(window.average.fat, 9)}%</b></span>
+                </>;
+              })()}
+            </div>
+          </section>
+          <section className="surface-card consistency-card">
+            <span className="eyebrow">Consistency</span>
+            <h2>{window.daysOnTarget ?? 0} of {window.loggedDays} logged days</h2>
+            <p>landed within 8% of your {targets.calories.toLocaleString("en-IN")} kcal target.</p>
+            <div className="dot-field">{bars.map((day) => <i key={day.dayKey} className={Math.abs(day.calories - targets.calories) <= targets.calories * 0.08 ? "hit" : "miss"} />)}</div>
+          </section>
+        </div>
+      )}
     </>
   );
 }
@@ -609,12 +714,12 @@ export default function Home() {
   const [foodDialogSelection, setFoodDialogSelection] = useState<Food | null>(null);
   const [editingFoodIndex, setEditingFoodIndex] = useState<number | null>(null);
   const [recipe, setRecipe] = useState<Recipe | null>(null);
-  const [planned, setPlanned] = useState<PlannedEntry[]>([]);
   const [toast, setToast] = useState("");
   const toastTimer = useRef<number | null>(null);
-  const [extras, setExtras] = useState<Food[]>([]);
   const [storageLoaded, setStorageLoaded] = useState(false);
   const [cardIqImport, setCardIqImport] = useState<CardIqFoodImport | null>(null);
+  const [saved, setSaved] = useState<SavedNutritionState>(emptyNutritionState);
+  const [saveFailed, setSaveFailed] = useState(false);
   const notify = (message: string) => {
     if (toastTimer.current !== null) window.clearTimeout(toastTimer.current);
     setToast(message);
@@ -625,26 +730,24 @@ export default function Home() {
   };
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      const restored = restoreNutritionState(parseSavedNutritionState(window.localStorage.getItem(LOCAL_NUTRITION_STORAGE_KEY)), clock.dayKey);
-      setExtras(restored.extras);
-      setPlanned(restored.planned);
+      setSaved(parseSavedNutritionState(window.localStorage.getItem(LOCAL_NUTRITION_STORAGE_KEY)));
       setStorageLoaded(true);
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [clock.dayKey]);
+  }, []);
   useEffect(() => {
+    // Pure external-system sync: the diary is the source of truth and this mirrors it to
+    // storage. Only today's slice is ever rewritten, so earlier days survive midnight.
     if (!storageLoaded) return;
-    const saved: SavedNutritionState = {
-      dayKey: clock.dayKey,
-      logs: extras.map((food) => food.components?.length ? { foodId: food.id, amount: food.amount, components: food.components } : { foodId: food.id, amount: food.amount }),
-      planned: planned.map((entry) => ({ id: entry.id, kind: entry.kind })),
-    };
     try {
       window.localStorage.setItem(LOCAL_NUTRITION_STORAGE_KEY, stringifySavedNutritionState(saved));
     } catch {
-      window.setTimeout(() => notify("Nourish could not save on this browser"), 0);
+      // A persistent banner, not a toast that disappears: if the diary has stopped being
+      // written, KP must keep seeing that until it is fixed. Deferred so the effect body
+      // does not set state synchronously.
+      window.setTimeout(() => setSaveFailed(true), 0);
     }
-  }, [clock.dayKey, extras, planned, storageLoaded]);
+  }, [saved, storageLoaded]);
   useEffect(() => {
     const timer = window.setInterval(() => setClock(getBangaloreClock(new Date())), 60_000);
     return () => window.clearInterval(timer);
@@ -664,15 +767,32 @@ export default function Home() {
     return food ? [food] : [];
   }).filter((food, index, all) => all.findIndex((candidate) => candidate.id === food.id) === index);
   const quickFoods = cardIqQuickFoods.length ? cardIqQuickFoods : foods.filter((food) => food.common);
+  const extras = restoreDayLogs(saved, clock.dayKey);
+  const planned = restorePlanEntries(saved);
   const totals = sumLoggedNutrition(extras, { calories: 0, protein: 0, carbs: 0, fat: 0 });
   const calories = totals.calories;
   const macros = { protein: totals.protein, carbs: totals.carbs, fat: totals.fat };
+  // History excludes today, which is still being written and is already shown in full on Today.
+  const history = summariseHistory(saved.days).filter((day) => day.dayKey !== clock.dayKey);
+  const targets = saved.targets ?? DEFAULT_TARGETS;
+  const targetsAreDefaults = saved.targets === null;
+  const saveTargets = (next: typeof DEFAULT_TARGETS) => {
+    setSaved((current) => ({ ...current, targets: next }));
+    notify("Daily targets saved in this browser");
+  };
+  const setTodayLogs = (update: (logs: SavedLogEntry[]) => SavedLogEntry[]) => {
+    setSaved((current) => withDayLogs(current, clock.dayKey, update(logsForDay(current, clock.dayKey))));
+  };
+  const setPlanned = (update: (entries: PlannedEntry[]) => PlannedEntry[]) => {
+    setSaved((current) => ({ ...current, planned: update(restorePlanEntries(current)).map((entry) => ({ id: entry.id, kind: entry.kind })) }));
+  };
 
   const nav = area === "track" ? trackNav : planNav;
   const activeView = area === "track" ? trackView : planView;
   const addFood = (food: Food) => {
     const isEdit = editingFoodIndex !== null;
-    setExtras((value) => isEdit ? value.map((entry, index) => index === editingFoodIndex ? food : entry) : [...value, food]);
+    if (wouldDropOldestDay(saved, clock.dayKey)) notify(`Diary is full at ${MAX_STORED_DAYS} days — the oldest day will be removed`);
+    setTodayLogs((logs) => isEdit ? logs.map((entry, index) => index === editingFoodIndex ? foodToLogEntry(food) : entry) : [...logs, foodToLogEntry(food)]);
     // An edit is finished when it is applied. A new entry is not: a real plate is several
     // foods, so the logger stays open and KP closes it when the meal is fully recorded.
     if (isEdit) {
@@ -708,9 +828,9 @@ export default function Home() {
 
   const renderContent = () => {
     if (area === "track") {
-      if (trackView === "today") return <TodayView clock={clock} calories={calories} macros={macros} extras={extras} quickFoods={quickFoods} hasCardIqImport={cardIqImport !== null} onLog={() => openFoodLogger()} onAdd={(food) => openFoodLogger(food)} onEdit={(index) => openFoodLogger(extras[index], index)} onOpenMeals={() => { setArea("plan"); setPlanView("meals"); window.scrollTo({ top: 0, behavior: "smooth" }); }} />;
-      if (trackView === "history") return <HistoryView />;
-      if (trackView === "trends") return <TrendsView />;
+      if (trackView === "today") return <TodayView clock={clock} calories={calories} macros={macros} extras={extras} quickFoods={quickFoods} hasCardIqImport={cardIqImport !== null} targets={targets} targetsAreDefaults={targetsAreDefaults} history={history} onLog={() => openFoodLogger()} onAdd={(food) => openFoodLogger(food)} onEdit={(index) => openFoodLogger(extras[index], index)} onOpenMeals={() => { setArea("plan"); setPlanView("meals"); window.scrollTo({ top: 0, behavior: "smooth" }); }} onSaveTargets={saveTargets} />;
+      if (trackView === "history") return <HistoryView history={history} clock={clock} targets={targets} />;
+      if (trackView === "trends") return <TrendsView history={history} targets={targets} />;
       return <PurchasesView cardIqImport={cardIqImport} onAdd={(food) => openFoodLogger(food)} />;
     }
     if (planView === "items") return <ItemsView planned={planned} onPlan={addItemToPlan} onRemove={removeFromPlan} />;
@@ -723,11 +843,14 @@ export default function Home() {
         <div className="brand"><span>N</span><div><strong>Nourish</strong><small>Personal nutrition</small></div></div>
         <div className="area-switch" aria-label="Main sections"><button className={area === "plan" ? "active" : ""} onClick={() => switchArea("plan")}><span>PLAN</span><small>Decide what to eat</small></button><button className={area === "track" ? "active" : ""} onClick={() => switchArea("track")}><span>TRACK</span><small>See how you’re doing</small></button></div>
         <nav className="side-nav" aria-label={`${area} navigation`}>{nav.map((item) => <button key={item.id} className={activeView === item.id ? "active" : ""} onClick={() => switchView(item.id)}><i>{item.icon}</i><span>{item.label}</span></button>)}</nav>
-        <div className="sidebar-footer"><span className="kp-avatar">KP</span><div><strong>Kanwar</strong><small>Sample target · 2,150 kcal</small></div><button aria-label="Open settings">•••</button></div>
+        <div className="sidebar-footer"><span className="kp-avatar">KP</span><div><strong>Kanwar</strong><small>{targetsAreDefaults ? "Set your targets" : `${targets.calories.toLocaleString("en-IN")} kcal target`}</small></div><button aria-label="Open settings">•••</button></div>
       </aside>
       <div className="mobile-topbar"><div className="brand"><span>N</span><strong>Nourish</strong></div><div className="mobile-area"><button className={area === "plan" ? "active" : ""} onClick={() => switchArea("plan")}>Plan</button><button className={area === "track" ? "active" : ""} onClick={() => switchArea("track")}>Track</button></div><span className="kp-avatar">KP</span></div>
       <div className="mobile-subnav">{nav.map((item) => <button key={item.id} className={activeView === item.id ? "active" : ""} onClick={() => switchView(item.id)}>{item.label}</button>)}</div>
-      <main className="workspace">{renderContent()}</main>
+      <main className="workspace">
+        {saveFailed ? <div className="save-warning" role="alert"><strong>Nourish cannot save to this browser.</strong><span>Anything you log now will be lost when you close the tab. This usually means private browsing or a full storage quota.</span></div> : null}
+        {renderContent()}
+      </main>
       {area === "track" ? <button className="mobile-log-button" onClick={() => openFoodLogger()}>＋ Log food</button> : null}
       {foodDialog ? <FoodDialog initialFood={foodDialogSelection} editing={editingFoodIndex !== null} onClose={() => { setFoodDialog(false); setFoodDialogSelection(null); setEditingFoodIndex(null); }} onAdd={addFood} /> : null}
       <RecipeDrawer recipe={recipe} onClose={() => setRecipe(null)} onPlan={addMealToPlan} />

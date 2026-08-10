@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { buildCompositeItem, componentNutrition, compositeFoods, defaultCompositeItems, findCompositeByLogId, sumComponents } from "../app/composite-foods";
 import { nutritionItems } from "../app/nutrition-data";
-import { parseSavedNutritionState, stringifySavedNutritionState, type SavedNutritionState } from "../app/local-nutrition-state";
+import { logsForDay, parseSavedNutritionState, stringifySavedNutritionState, withDayLogs, emptyNutritionState } from "../app/local-nutrition-state";
 import { scaleNutrition } from "../app/prototype-logic";
 
 const chapati = compositeFoods.find((composite) => composite.id === "chapati")!;
@@ -63,14 +63,15 @@ test("logging two chapatis doubles the dish, and re-editing keeps the one-servin
 test("an edited chapati survives a save and reload", () => {
   const edited = [{ foodId: "atta-whole-wheat", amount: 45 }];
   const built = buildCompositeItem(chapati, edited);
-  const state: SavedNutritionState = { dayKey: "2026-08-10", logs: [{ foodId: built.id, amount: 2, components: edited }], planned: [] };
+  const state = withDayLogs(emptyNutritionState(), "2026-08-10", [{ foodId: built.id, amount: 2, components: edited }]);
 
   const restored = parseSavedNutritionState(stringifySavedNutritionState(state));
-  assert.deepEqual(restored.logs[0].components, edited, "the weight KP actually used must be saved");
+  const logs = logsForDay(restored, "2026-08-10");
+  assert.deepEqual(logs[0].components, edited, "the weight KP actually used must be saved");
 
-  const composite = findCompositeByLogId(restored.logs[0].foodId);
+  const composite = findCompositeByLogId(logs[0].foodId);
   assert.ok(composite);
-  const rebuilt = scaleNutrition(buildCompositeItem(composite, restored.logs[0].components!), restored.logs[0].amount);
+  const rebuilt = scaleNutrition(buildCompositeItem(composite, logs[0].components!), logs[0].amount);
   assert.equal(rebuilt.calories, scaleNutrition(built, 2).calories, "reload must not fall back to the 30 g default");
 });
 

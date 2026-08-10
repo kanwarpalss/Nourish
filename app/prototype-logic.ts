@@ -96,7 +96,9 @@ export function getEnergyRunway(calories: number, target: number) {
   if (!Number.isFinite(calories) || calories < 0) throw new RangeError("Calories must be a finite non-negative number");
   const difference = target - calories;
   return {
-    amount: Math.abs(difference),
+    // Rounded here so every caller shows a whole number of calories. "1,943.2 kcal
+    // remaining" reads like false precision on a figure that is an estimate anyway.
+    amount: Math.round(Math.abs(difference)),
     isOver: difference < 0,
     percentage: Math.round((calories / target) * 100),
   };

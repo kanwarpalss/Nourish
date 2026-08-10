@@ -32,7 +32,12 @@ function assertPrototypeShell(html) {
   assert.match(html, /Daily energy/);
   assert.match(html, /Today’s timeline/);
   assert.match(html, /Log food/);
-  assert.match(html, /Sample target/);
+  // Today must open at zero with an empty diary and say so, and must never present a
+  // placeholder target as though it were KP's own.
+  assert.match(html, /0<\/strong><span>kcal eaten/);
+  assert.match(html, /No food logged yet/);
+  assert.match(html, /Placeholder target/);
+  assert.match(html, /Set your targets/);
   assert.doesNotMatch(html, /Masala oats \+ dahi|Rajma chawal bowl|Banana \+ whey/);
   assert.match(html, /role="progressbar"/);
   assert.match(html, /aria-live="polite"/);
@@ -75,10 +80,18 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
   assert.match(page, /needs nutrition review/);
   assert.match(page, /getBangaloreClock\(new Date\(\)\)/);
   assert.match(page, /sumLoggedNutrition\(extras, \{ calories: 0, protein: 0, carbs: 0, fat: 0 \}\)/);
-  assert.match(page, /Sample data · 7 days/);
-  assert.match(page, /Track · History · Sample preview/);
-  assert.match(page, /Track · Trends · Sample preview/);
+  // The dashboard reads from the stored diary. No fabricated history may remain anywhere.
+  assert.doesNotMatch(page, /sampleWeekCalories|sampleMonthDays|sampleMeals/);
+  assert.doesNotMatch(page, /Masala oats \+ dahi|Rajma chawal bowl|Banana \+ whey/);
+  assert.match(page, /Last 7 days · your diary/);
+  assert.match(page, /summariseHistory|summariseTrend/);
+  // A day with no diary must be shown as a gap, never as a zero-calorie day.
+  assert.match(page, /shown as gaps, not as zero/);
+  assert.match(page, /Averages count only the days you actually logged/);
+  // The one remaining example on Today stays explicitly labelled.
   assert.match(page, /Sample meal idea · not logged/);
+  // A failed save must be surfaced, never swallowed.
+  assert.match(page, /Nourish cannot save to this browser/);
   assert.doesNotMatch(page, /Just now ·/);
   assert.doesNotMatch(page, /Meal studio|Week plan|DiscoverView|LibraryView/);
   assert.match(nutrition, /Fudgy banana protein brownies/);

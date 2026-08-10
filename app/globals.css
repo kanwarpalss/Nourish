@@ -466,6 +466,18 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .session-log-items small { color: var(--muted); font-size: 8px; }
 .session-log > strong { font-size: 12px; }
 .dialog-footer { padding: 0 22px 20px; }
+.save-warning { display: grid; gap: 4px; margin-bottom: 18px; padding: 14px 16px; border: 1px solid #ff6b32; border-radius: 14px; background: rgb(255 107 50 / 0.1); }
+.save-warning strong { font-size: 13px; }
+.save-warning span { color: var(--muted); font-size: 10px; line-height: 1.5; }
+.text-button.inline { margin-left: 6px; font-size: 9px; }
+.target-editor { display: grid; gap: 14px; margin-bottom: 16px; padding: 18px 20px; }
+.target-drift { color: var(--muted); font-size: 10px; }
+.target-drift.warn { color: #b4531f; }
+.week-empty, .week-note { display: block; margin-top: 8px; color: var(--muted); font-size: 9px; line-height: 1.5; }
+.mini-bars span.no-data { background: rgb(20 40 30 / 0.12); }
+.month-pad { display: block; }
+.month-grid button.no-data { opacity: 0.45; cursor: default; }
+.no-data-mark { color: var(--muted); }
 .purchase-nutrition { display: grid; gap: 2px; }
 .purchase-nutrition small { color: var(--muted); font-size: 8px; }
 
