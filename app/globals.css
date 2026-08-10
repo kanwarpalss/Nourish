@@ -445,6 +445,29 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .live-nutrition small { color: #8f9c94; font-size: 8px; }
 .quantity-editor > a { display: block; margin-bottom: 16px; color: #a8b4ac; font-size: 8px; text-decoration: none; }
 
+/*
+ * Hand-editing a food's name and macros at log time — every prefilled default (a composite's
+ * weights, a catalogue item's researched panel) is a starting point KP can override, never a
+ * locked figure. This is the dark-card counterpart of .target-fields.
+ */
+.quantity-editor-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 4px 10px; margin-bottom: 3px; }
+.quantity-editor-head > div:first-child { min-width: 0; }
+.quantity-editor-head h3 { margin: 3px 0 0; }
+.quantity-editor-head .eyebrow { white-space: nowrap; }
+.quantity-editor-head .text-button { flex: 0 0 auto; color: var(--lime); font-size: 9px; text-align: right; white-space: nowrap; }
+.override-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 14px; }
+.override-fields label { display: grid; gap: 4px; }
+.override-name { grid-column: 1 / -1; }
+.override-fields label > span { color: #94a199; font-size: 8px; text-transform: uppercase; letter-spacing: 0.06em; }
+.override-fields input { min-width: 0; height: 40px; padding: 0 11px; border: 1px solid rgb(255 255 255 / 0.14); border-radius: 10px; background: rgb(255 255 255 / 0.06); color: white; font-size: 13px; font-weight: 700; }
+.override-fields input::placeholder { color: #6c7871; font-weight: 500; }
+.override-fields input:focus-visible { background: rgb(255 255 255 / 0.1); }
+
+/* "Estimated" is the fourth provenance tier — KP's own corrected number, never mistaken for a
+   researched or label value at a glance. */
+.trust-mark.estimated { color: #a05a12; background: #f6dfc0; }
+.edited-tag { display: inline-block; margin-left: 6px; padding: 2px 7px; border-radius: 99px; background: rgb(232 173 35 / 0.16); color: var(--turmeric); font-size: 8px; font-weight: 800; font-style: normal; letter-spacing: 0.04em; white-space: nowrap; }
+
 /* Composite dishes: one editable weight per component, plus the note explaining the default. */
 .component-editor { display: grid; gap: 7px; margin-bottom: 10px; }
 .component-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 9px; padding: 9px 11px; border: 1px solid rgb(255 255 255 / 0.12); border-radius: 11px; }

@@ -55,6 +55,16 @@ function restorePlanEntries(saved: SavedNutritionState): PlannedEntry[] {
 }
 
 function foodToLogEntry(food: Food): SavedLogEntry {
+  // "Estimated" is the marker an override left on the food object (see day-history.ts /
+  // FoodDialog's override mode) — KP's own numbers are the final total, not a scale of the
+  // catalogue's, so components are not also saved alongside them.
+  if (food.source.trust === "Estimated") {
+    return {
+      foodId: food.id,
+      amount: food.amount,
+      override: { name: food.name, calories: food.calories, protein: food.protein, carbs: food.carbs, fat: food.fat, fiber: food.fiber },
+    };
+  }
   return food.components?.length
     ? { foodId: food.id, amount: food.amount, components: food.components }
     : { foodId: food.id, amount: food.amount };
@@ -215,8 +225,8 @@ function TodayView({ clock, calories, macros, extras, quickFoods, hasCardIqImpor
             {extras.length === 0 ? <div className="timeline-empty"><strong>No food logged yet</strong><span>Your actual entries—and only your actual entries—will appear here.</span><button className="text-button" onClick={onLog}>Log your first food</button></div> : extras.map((food, index) => (
               <article className="meal-entry added" key={`${food.name}-${index}`}>
                 <i className="timeline-dot" />
-                <div className="meal-meta"><span>Logged today · {food.amount} {food.unit}{food.amount === 1 ? "" : food.unit === "piece" ? "s" : food.unit === "serving" || food.unit === "scoop" || food.unit === "pack" ? "s" : ""}</span><strong>{food.name}</strong><small>{food.protein.toFixed(1)}P · {food.carbs.toFixed(1)}C · {food.fat.toFixed(1)}F · {food.fiber.toFixed(1)} fibre</small></div>
-                <div className="entry-actions"><b>{Math.round(food.calories)} kcal</b><button onClick={() => onEdit(index)}>Edit quantity</button></div>
+                <div className="meal-meta"><span>Logged today · {food.amount} {food.unit}{food.amount === 1 ? "" : food.unit === "piece" ? "s" : food.unit === "serving" || food.unit === "scoop" || food.unit === "pack" ? "s" : ""}{food.source.trust === "Estimated" ? <i className="edited-tag">Edited by you</i> : null}</span><strong>{food.name}</strong><small>{food.protein.toFixed(1)}P · {food.carbs.toFixed(1)}C · {food.fat.toFixed(1)}F · {food.fiber.toFixed(1)} fibre</small></div>
+                <div className="entry-actions"><b>{Math.round(food.calories)} kcal</b><button onClick={() => onEdit(index)}>Edit</button></div>
               </article>
             ))}
           </div>
@@ -601,6 +611,10 @@ function ComponentEditor({ components, onChange }: { components: CompositeCompon
   );
 }
 
+type OverrideDraft = { name: string; calories: string; protein: string; carbs: string; fat: string; fiber: string };
+const blankOverrideDraft: OverrideDraft = { name: "", calories: "", protein: "", carbs: "", fat: "", fiber: "" };
+const draftFromFood = (food: Food): OverrideDraft => ({ name: food.name, calories: String(food.calories), protein: String(food.protein), carbs: String(food.carbs), fat: String(food.fat), fiber: String(food.fiber) });
+
 function FoodDialog({ initialFood, editing, onClose, onAdd }: { initialFood: Food | null; editing: boolean; onClose: () => void; onAdd: (food: Food) => void }) {
   const initial = initialFood ?? foods.find((food) => food.common) ?? foods[0];
   const [search, setSearch] = useState("");
@@ -614,6 +628,12 @@ function FoodDialog({ initialFood, editing, onClose, onAdd }: { initialFood: Foo
   // Component weights are held here so an edit survives switching tabs or searching, and so
   // editing a logged chapati reopens with the weight KP actually used.
   const [components, setComponents] = useState<CompositeComponent[]>(initialFood?.components ?? []);
+  // A prefilled default is a starting point, never a ceiling — KP must always be able to
+  // correct the name or any macro by hand, for any food, not only ones with no label. Editing
+  // an entry that was already hand-corrected (source.trust === "Estimated") reopens with the
+  // numbers KP actually saved, not a re-derived catalogue default.
+  const [overrideMode, setOverrideMode] = useState(initialFood?.source.trust === "Estimated");
+  const [overrideDraft, setOverrideDraft] = useState<OverrideDraft>(initialFood?.source.trust === "Estimated" ? draftFromFood(initialFood) : blankOverrideDraft);
   // Items logged without leaving the dialog, so a chapati + sabzi + curd plate is three taps.
   const [sessionLog, setSessionLog] = useState<Food[]>([]);
   const shown = getShownLogFoods(tab, search);
@@ -626,17 +646,49 @@ function FoodDialog({ initialFood, editing, onClose, onAdd }: { initialFood: Foo
   const quantityValid = selected ? isQuantityValid(selected.unit, quantity) : false;
   const scaled = selected ? scaleNutrition(selected, quantityValid ? quantity : 0) : null;
   const labelBasis = selected ? selected.basis?.amount ?? selected.amount : 0;
+  const overrideNumbers = { calories: Number(overrideDraft.calories), protein: Number(overrideDraft.protein), carbs: Number(overrideDraft.carbs), fat: Number(overrideDraft.fat), fiber: Number(overrideDraft.fiber) };
+  const overrideValid = Object.values(overrideNumbers).every((value) => Number.isFinite(value) && value >= 0)
+    && (overrideNumbers.calories > 0 || overrideNumbers.protein > 0 || overrideNumbers.carbs > 0 || overrideNumbers.fat > 0);
+  // The food actually committed on Add: KP's typed numbers when override mode is on and they
+  // add up to something real, otherwise the catalogue-derived, quantity-scaled figure.
+  const finalFood: Food | null = overrideMode
+    ? (selected && overrideValid ? {
+      ...selected,
+      name: overrideDraft.name.trim() || selected.name,
+      brand: undefined,
+      amount: quantityValid ? quantity : selected.amount,
+      basis: undefined,
+      components: undefined,
+      calories: overrideNumbers.calories,
+      protein: overrideNumbers.protein,
+      carbs: overrideNumbers.carbs,
+      fat: overrideNumbers.fat,
+      fiber: overrideNumbers.fiber,
+      source: { label: "Edited by you", url: selected.source.url, trust: "Estimated" },
+    } : null)
+    : scaled;
   const selectFood = (food: Food) => {
     setSelectedId(food.id);
     setQuantity(food.amount);
     const nextComposite = findCompositeByLogId(food.id);
     setComponents(food.components ?? nextComposite?.components ?? []);
+    setOverrideMode(false);
+    setOverrideDraft(blankOverrideDraft);
   };
+  const startOverride = () => {
+    if (selected) setOverrideDraft(draftFromFood(scaled ?? selected));
+    setOverrideMode(true);
+  };
+  const cancelOverride = () => {
+    setOverrideMode(false);
+    setOverrideDraft(blankOverrideDraft);
+  };
+  const setOverrideField = (field: keyof OverrideDraft, value: string) => setOverrideDraft((current) => ({ ...current, [field]: value }));
   const keepSelectionVisible = (nextTab: string, nextSearch: string) => {
     const candidates = getShownLogFoods(nextTab, nextSearch);
     if (candidates.some((food) => food.id === selectedId)) return;
     if (candidates[0]) selectFood(candidates[0]);
-    else { setSelectedId(""); setQuantity(0); setComponents([]); }
+    else { setSelectedId(""); setQuantity(0); setComponents([]); setOverrideMode(false); setOverrideDraft(blankOverrideDraft); }
   };
   const sessionTotals = sessionLog.reduce((sum, food) => ({ calories: sum.calories + food.calories, protein: sum.protein + food.protein }), { calories: 0, protein: 0 });
   const commit = (food: Food) => {
@@ -665,17 +717,37 @@ function FoodDialog({ initialFood, editing, onClose, onAdd }: { initialFood: Foo
         ) : null}
         <div className="food-dialog-body">
           <div className="food-results">{shown.map((food) => <button className={selected?.id === food.id ? "selected" : ""} key={food.id} onClick={() => selectFood(food)}><span className="food-initial">{food.name.charAt(0)}</span><span><strong>{food.brand ? `${food.brand} · ${food.name}` : food.name}</strong><small>{food.category === "Composite" ? food.availability : `${food.amount} ${food.unit} · ${food.source.trust}`}</small></span><span><b>{Math.round(food.calories)}</b><small>kcal</small></span><i>→</i></button>)}{shown.length === 0 ? <div className="food-results-empty"><strong>No match yet</strong><span>Try the product, brand, or ingredient name.</span></div> : null}</div>
-          {selected && scaled ? <aside className="quantity-editor dark-card">
-            <span className="eyebrow bright">{composite ? "Dish" : "Quantity"}</span><h3>{selected.brand ? `${selected.brand} · ` : ""}{selected.name}</h3><p>Nutrition updates while you edit.</p>
-            {composite ? <>
-              <ComponentEditor components={components} onChange={setComponents} />
-              <small className="component-note">{composite.note}</small>
-            </> : null}
+          {selected ? <aside className="quantity-editor dark-card">
+            <div className="quantity-editor-head">
+              <div><span className="eyebrow bright">{overrideMode ? "Edited by you" : composite ? "Dish" : "Quantity"}</span><h3>{overrideMode ? (overrideDraft.name || selected.name) : <>{selected.brand ? `${selected.brand} · ` : ""}{selected.name}</>}</h3></div>
+              <button className="text-button" onClick={overrideMode ? cancelOverride : startOverride}>{overrideMode ? "Use researched numbers" : "Edit exact numbers"}</button>
+            </div>
+            {overrideMode ? (
+              <>
+                <p>A prefilled number is a starting point, not a fact — change anything here to match what you actually had.</p>
+                <div className="override-fields">
+                  <label className="override-name"><span>Name</span><input type="text" value={overrideDraft.name} onChange={(event) => setOverrideField("name", event.target.value)} placeholder={selected.name} maxLength={120} /></label>
+                  {(["calories", "protein", "carbs", "fat", "fiber"] as const).map((field) => (
+                    <label key={field}><span>{field === "calories" ? "kcal" : field === "fiber" ? "Fibre (g)" : `${field.charAt(0).toUpperCase()}${field.slice(1)} (g)`}</span><input type="number" min={0} inputMode="decimal" value={overrideDraft[field]} onChange={(event) => setOverrideField(field, event.target.value)} /></label>
+                  ))}
+                </div>
+                {!overrideValid ? <small className="quantity-basis error">Enter at least one macro above zero.</small> : null}
+              </>
+            ) : (
+              <>
+                <p>Nutrition updates while you edit.</p>
+                {composite ? <>
+                  <ComponentEditor components={components} onChange={setComponents} />
+                  <small className="component-note">{composite.note}</small>
+                </> : null}
+              </>
+            )}
             <div className="quantity-control"><button onClick={() => setQuantity((value) => Math.max(step, Number((value - step).toFixed(2))))} aria-label={`Decrease ${selected.name} quantity`}>−</button><label><input type="number" min={step} max={maxQuantity} step={step} value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} aria-label={`${selected.name} quantity`} /><span>{composite ? (quantity === 1 ? composite.serving : `× ${composite.serving}`) : selected.unit}</span></label><button onClick={() => setQuantity((value) => Math.min(maxQuantity, Number((value + step).toFixed(2))))} aria-label={`Increase ${selected.name} quantity`}>＋</button></div>
-            <small className={`quantity-basis ${quantityValid ? "" : "error"}`}>{quantityValid ? `Nutrition basis: ${labelBasis} ${selected.unit}` : `Enter more than 0 and no more than ${maxQuantity} ${selected.unit}`}</small>
-            <div className="live-nutrition"><strong><b>{Math.round(scaled.calories)}</b><small>kcal</small></strong><span><b>{scaled.protein.toFixed(1)}g</b><small>protein</small></span><span><b>{scaled.carbs.toFixed(1)}g</b><small>carbs</small></span><span><b>{scaled.fat.toFixed(1)}g</b><small>fat</small></span><span><b>{scaled.fiber.toFixed(1)}g</b><small>fibre</small></span></div>
-            <a href={selected.source.url} target="_blank" rel="noreferrer">{selected.source.label} ↗</a>
-            <button className="button lime full" disabled={!quantityValid} onClick={() => commit(scaled)}>{editing ? "Update" : "Add"} {Math.round(scaled.calories)} kcal {editing ? "in today" : "to today"}</button>
+            {overrideMode ? <small className="quantity-basis">Quantity is a record of how much — it no longer scales the numbers above.</small>
+              : <small className={`quantity-basis ${quantityValid ? "" : "error"}`}>{quantityValid ? `Nutrition basis: ${labelBasis} ${selected.unit}` : `Enter more than 0 and no more than ${maxQuantity} ${selected.unit}`}</small>}
+            {finalFood ? <div className="live-nutrition"><strong><b>{Math.round(finalFood.calories)}</b><small>kcal</small></strong><span><b>{finalFood.protein.toFixed(1)}g</b><small>protein</small></span><span><b>{finalFood.carbs.toFixed(1)}g</b><small>carbs</small></span><span><b>{finalFood.fat.toFixed(1)}g</b><small>fat</small></span><span><b>{finalFood.fiber.toFixed(1)}g</b><small>fibre</small></span></div> : null}
+            {overrideMode ? null : <a href={selected.source.url} target="_blank" rel="noreferrer">{selected.source.label} ↗</a>}
+            <button className="button lime full" disabled={!finalFood} onClick={() => finalFood && commit(finalFood)}>{editing ? "Update" : "Add"} {finalFood ? `${Math.round(finalFood.calories)} kcal ` : ""}{editing ? "in today" : "to today"}</button>
           </aside> : <aside className="quantity-editor quantity-editor-empty dark-card"><span className="eyebrow bright">Quantity</span><h3>{sessionLog.length ? "Add the next thing" : "Choose a food"}</h3><p>{sessionLog.length ? "Search for whatever else was on the plate, or finish below." : "The quantity editor will appear when a result is selected."}</p></aside>}
         </div>
         {/* Finishing must always be reachable. Clearing the search after a log can leave no

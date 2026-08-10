@@ -7,6 +7,21 @@ export const LOCAL_NUTRITION_STORAGE_KEY = "nourish.nutrition.v1";
  */
 export const MAX_STORED_DAYS = 400;
 
+/**
+ * A hand-typed replacement for a log entry's name and macros. KP must always be able to
+ * correct a prefilled number or rename an item at log time — a researched default is a
+ * starting point, not a ceiling. Once present, these numbers are the entry's final total;
+ * nothing scales them further.
+ */
+export type SavedLogOverride = {
+  name?: string;
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  fiber: number;
+};
+
 export type SavedLogEntry = {
   foodId: string;
   amount: number;
@@ -15,6 +30,8 @@ export type SavedLogEntry = {
    * chapati rolled from 45 g of atta would come back after a refresh as the 30 g default.
    */
   components?: Array<{ foodId: string; amount: number }>;
+  /** When set, this entry's name and macros come from KP directly rather than the catalogue. */
+  override?: SavedLogOverride;
 };
 
 export type SavedPlanEntry = {
@@ -54,9 +71,27 @@ const DAY_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 export const emptyNutritionState = (): SavedNutritionState => ({ schemaVersion: 2, days: [], planned: [], targets: null });
 
+/** A malformed override drops the override, not the whole entry — it falls back to the catalogue. */
+function parseLogOverride(value: unknown): SavedLogOverride | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as Record<string, unknown>;
+  const numericFields = ["calories", "protein", "carbs", "fat", "fiber"] as const;
+  const parsed = {} as Pick<SavedLogOverride, (typeof numericFields)[number]>;
+  for (const field of numericFields) {
+    const raw = candidate[field];
+    if (!Number.isFinite(raw) || (raw as number) < 0) return undefined;
+    parsed[field] = raw as number;
+  }
+  // Calories of exactly zero for every field is not a usable override — it is what an empty
+  // or abandoned edit would look like, and a real entry should not silently vanish to 0 kcal.
+  if (parsed.calories === 0 && parsed.protein === 0 && parsed.carbs === 0 && parsed.fat === 0) return undefined;
+  const name = typeof candidate.name === "string" && candidate.name.trim().length > 0 ? candidate.name.trim().slice(0, 120) : undefined;
+  return name ? { ...parsed, name } : parsed;
+}
+
 function parseLogEntry(entry: unknown): SavedLogEntry[] {
   if (!entry || typeof entry !== "object") return [];
-  const candidate = entry as { foodId?: unknown; amount?: unknown; components?: unknown };
+  const candidate = entry as { foodId?: unknown; amount?: unknown; components?: unknown; override?: unknown };
   if (typeof candidate.foodId !== "string" || candidate.foodId.length === 0) return [];
   if (!Number.isFinite(candidate.amount) || (candidate.amount as number) <= 0) return [];
   const components = Array.isArray(candidate.components)
@@ -69,7 +104,11 @@ function parseLogEntry(entry: unknown): SavedLogEntry[] {
     })
     : [];
   const saved: SavedLogEntry = { foodId: candidate.foodId, amount: candidate.amount as number };
-  if (components.length > 0) saved.components = components;
+  const override = parseLogOverride(candidate.override);
+  // An override replaces the entry's numbers outright, so components (which would otherwise
+  // be re-summed into a different total) are dropped rather than saved alongside it.
+  if (override) saved.override = override;
+  else if (components.length > 0) saved.components = components;
   return [saved];
 }
 

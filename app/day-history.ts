@@ -1,7 +1,36 @@
 import { buildCompositeItem, findCompositeByLogId } from "./composite-foods";
 import { meals, nutritionItems, SOURCE_LINKS, type NutritionItem } from "./nutrition-data";
 import { isQuantityValid, scaleNutrition } from "./prototype-logic";
-import type { SavedDay, SavedLogEntry } from "./local-nutrition-state";
+import type { SavedDay, SavedLogEntry, SavedLogOverride } from "./local-nutrition-state";
+
+const EDITED_SOURCE_LABEL = "Edited by you";
+/** A generous but finite ceiling so a stray keystroke (a dropped decimal point) cannot produce an unusable total. */
+const MAX_OVERRIDE_AMOUNT = 100_000;
+
+/**
+ * Rebuilds a hand-edited entry directly from what KP typed, using the original food only for
+ * display fallbacks (unit, category) when a name was not also supplied. The override numbers
+ * are the final total for this entry and are never scaled again.
+ */
+function resolveOverriddenFood(entry: SavedLogEntry, override: SavedLogOverride, catalogue: NutritionItem[]): NutritionItem | null {
+  if (!Number.isFinite(entry.amount) || entry.amount <= 0 || entry.amount > MAX_OVERRIDE_AMOUNT) return null;
+  const base = catalogue.find((candidate) => candidate.id === entry.foodId);
+  return {
+    id: entry.foodId,
+    name: override.name ?? base?.name ?? "Edited food",
+    amount: entry.amount,
+    unit: base?.unit ?? "serving",
+    calories: override.calories,
+    protein: override.protein,
+    carbs: override.carbs,
+    fat: override.fat,
+    fiber: override.fiber,
+    category: base?.category ?? "Ingredient",
+    availability: EDITED_SOURCE_LABEL,
+    aliases: base?.aliases ?? [],
+    source: { label: EDITED_SOURCE_LABEL, url: base?.source.url ?? SOURCE_LINKS.ifct, trust: "Estimated" },
+  };
+}
 
 /**
  * Meals are loggable as one-serving foods. Kept here so both the logger and the history
@@ -31,6 +60,10 @@ export const loggableMeals: NutritionItem[] = meals.map((meal) => ({
  * so a removed catalogue item cannot quietly shrink a past day's totals.
  */
 export function resolveLoggedFood(entry: SavedLogEntry, catalogue: NutritionItem[]): NutritionItem | null {
+  // An override is the final word for this entry — KP's own numbers, not a further scale of
+  // the catalogue's. Checked first so a renamed or corrected composite does not also try to
+  // rebuild from its components.
+  if (entry.override) return resolveOverriddenFood(entry, entry.override, catalogue);
   const composite = findCompositeByLogId(entry.foodId);
   const food = composite
     ? buildCompositeItem(composite, entry.components?.length ? entry.components : composite.components)

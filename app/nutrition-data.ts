@@ -1,7 +1,11 @@
 export type NutritionSource = {
   label: string;
   url: string;
-  trust: "Official label" | "Reference" | "Label mirror";
+  // "Estimated" marks a log entry KP corrected or renamed by hand at log time — the fourth
+  // provenance tier named in .claude/CLAUDE.md invariant 3. It is set only on a resolved log
+  // entry (day-history.ts), never on a catalogue food, so the researched value for future
+  // logs of the same food is never silently overwritten by one day's correction.
+  trust: "Official label" | "Reference" | "Label mirror" | "Estimated";
 };
 
 export type NutritionItem = {
