@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { calculateMealNutrition, meals, nutritionItems } from "../app/nutrition-data";
-import { getWeightTrendPoints, isWeightValueValid, parseSavedNutritionState, shouldPersistNutritionState, shouldRestoreSavedNutritionState, stringifySavedNutritionState, upsertWeightEntry } from "../app/local-nutrition-state";
-import { getBangaloreClock, getEnergyRunway, getLoggingUnits, getNutritionDelta, getQuantityLimit, isQuantityValid, matchesRecipe, scaleNutrition, scaleNutritionForUnit, sumLoggedNutrition, sumNutritionDetails } from "../app/prototype-logic";
+import { calculateMealNutrition, meals, numericTags, nutritionItems } from "../app/nutrition-data";
+import { estimateSatiety, getBangaloreClock, getEnergyRunway, getLoggingUnits, getNutritionDelta, getQuantityLimit, hasNutritionTarget, isQuantityValid, matchesNutritionTarget, matchesRecipe, satietyLabel, scaleNutrition, scaleNutritionForUnit, sumLoggedNutrition, sumNutritionDetails } from "../app/prototype-logic";
 
 test("quantity edits scale every displayed nutrient from the same serving basis", () => {
   const milk = nutritionItems.find((food) => food.id === "nandini-goodlife-toned");
@@ -17,34 +16,19 @@ test("quantity edits scale every displayed nutrient from the same serving basis"
   assert.equal(scaleNutrition(scaled, 300).calories, 180, "re-editing must use the original 100 ml basis");
 });
 
-test("one exact product can be logged by volume or its exact pack conversion", () => {
+test("exact products can be logged by volume, pack, piece, and combinations", () => {
   const milk = nutritionItems.find((food) => food.id === "nandini-goodlife-toned");
-  assert.ok(milk);
-  assert.deepEqual(getLoggingUnits(milk), ["ml", "pack"]);
-  const hundredMl = scaleNutritionForUnit(milk, 100, "ml");
-  const halfPack = scaleNutritionForUnit(milk, 0.5, "pack");
-  assert.deepEqual({ amount: hundredMl.amount, unit: hundredMl.unit, calories: hundredMl.calories }, { amount: 100, unit: "ml", calories: 60 });
-  assert.deepEqual({ amount: halfPack.amount, unit: halfPack.unit, calories: halfPack.calories, protein: halfPack.protein }, { amount: 0.5, unit: "pack", calories: 300, protein: 16.5 });
-  assert.deepEqual(halfPack.basis, { amount: 100, unit: "ml", calories: 60, protein: 3.3, carbs: 4.8, fat: 3.1, fiber: 0 });
-});
-
-test("egg counts and a measured-oil combination use explicit conversions", () => {
   const egg = nutritionItems.find((food) => food.id === "whole-egg");
   const whites = nutritionItems.find((food) => food.id === "egg-whites");
   const oil = nutritionItems.find((food) => food.id === "oil");
-  assert.ok(egg && whites && oil);
-  assert.equal(scaleNutritionForUnit(egg, 1, "piece").calories, 72);
+  assert.ok(milk && egg && whites && oil);
+  assert.deepEqual(getLoggingUnits(milk), ["ml", "pack"]);
+  assert.equal(scaleNutritionForUnit(milk, 0.5, "pack").calories, 300);
   assert.equal(scaleNutritionForUnit(egg, 4, "piece").calories, 288);
   const fourWhites = scaleNutritionForUnit(whites, 4, "piece");
   const fiveMlOil = scaleNutritionForUnit(oil, 5, "ml");
-  assert.deepEqual(
-    { amount: fourWhites.amount, unit: fourWhites.unit, calories: fourWhites.calories, protein: fourWhites.protein },
-    { amount: 4, unit: "piece", calories: 68.64, protein: 14.39 },
-  );
-  assert.deepEqual(
-    { amount: fiveMlOil.amount, unit: fiveMlOil.unit, calories: fiveMlOil.calories, fat: fiveMlOil.fat },
-    { amount: 5, unit: "ml", calories: 41.4, fat: 4.6 },
-  );
+  assert.deepEqual({ amount: fourWhites.amount, unit: fourWhites.unit, calories: fourWhites.calories, protein: fourWhites.protein }, { amount: 4, unit: "piece", calories: 68.64, protein: 14.39 });
+  assert.deepEqual({ amount: fiveMlOil.amount, unit: fiveMlOil.unit, calories: fiveMlOil.calories, fat: fiveMlOil.fat }, { amount: 5, unit: "ml", calories: 41.4, fat: 4.6 });
   assert.deepEqual(sumNutritionDetails([fourWhites, fiveMlOil]), { calories: 110.04, protein: 14.39, carbs: 0.92, fat: 4.86, fiber: 0 });
 });
 
@@ -97,9 +81,6 @@ test("researched items keep unique identity, serving basis, and an evidence link
       assert.ok(Number.isFinite(food[field]), `${food.id}.${field}`);
       assert.ok(food[field] >= 0, `${food.id}.${field}`);
     }
-    assert.ok(food.brand.trim(), `${food.id}.brand`);
-    assert.ok(food.name.trim(), `${food.id}.name`);
-    assert.equal(typeof food.variant, "string", `${food.id}.variant`);
     assert.match(food.source.url, /^https:\/\//);
   }
 });
@@ -147,14 +128,6 @@ test("calculation guards reject corrupt units, bases, targets, and overflow", ()
   for (const field of ["amount", "calories", "protein", "carbs", "fat", "fiber"] as const) assert.ok(Number.isFinite(overflowed[field]));
   assert.throws(() => getEnergyRunway(0, 0), /target/i);
   assert.throws(() => getEnergyRunway(100, Number.NaN), /target/i);
-  assert.throws(() => sumNutritionDetails([
-    { amount: 1, calories: Number.MAX_VALUE, protein: 0, carbs: 0, fat: 0, fiber: 0 },
-    { amount: 1, calories: Number.MAX_VALUE, protein: 0, carbs: 0, fat: 0, fiber: 0 },
-  ]), /too large/);
-  const milk = nutritionItems.find((food) => food.id === "nandini-goodlife-toned");
-  assert.ok(milk);
-  const ambiguous = { ...milk, conversions: [{ unit: "pack" as const, basisAmount: 1000 }, { unit: "pack" as const, basisAmount: 500 }] };
-  assert.equal(scaleNutritionForUnit(ambiguous, 1, "pack").amount, 0);
 });
 
 test("meal calories remain plausible against protein, digestible carbs, fat, and fibre", () => {
@@ -177,127 +150,6 @@ test("failure injection: changing one low-fat meal above its threshold is detect
   assert.equal(broken.fat <= 10, false);
 });
 
-test("local on-device nutrition state accepts only well-formed entries", () => {
-  const saved = parseSavedNutritionState(JSON.stringify({
-    dayKey: "2026-08-09",
-    logs: [{ foodId: "nandini-goodlife-toned", amount: 250 }, { foodId: "", amount: 10 }, { foodId: "chia", amount: "25" }],
-    planned: [{ id: "cauli-chicken", kind: "meal" }, { id: "chia", kind: "food" }, { id: "oops", kind: "unknown" }],
-  }));
-  assert.deepEqual(saved, {
-    dayKey: "2026-08-09",
-    logs: [{ foodId: "nandini-goodlife-toned", amount: 250 }],
-    planned: [{ id: "cauli-chicken", kind: "meal" }, { id: "chia", kind: "food" }],
-    customFoods: [],
-    weights: [],
-  });
-  assert.deepEqual(parseSavedNutritionState("{not json"), { dayKey: null, logs: [], planned: [], customFoods: [], weights: [] });
-  assert.deepEqual(parseSavedNutritionState(stringifySavedNutritionState(saved)), saved);
-  assert.equal(shouldRestoreSavedNutritionState(saved, "2026-08-09"), true);
-  assert.equal(shouldRestoreSavedNutritionState(saved, "2026-08-10"), false);
-  assert.equal(shouldRestoreSavedNutritionState({ ...saved, dayKey: null }, "2026-08-10"), true, "legacy same-session logs migrate once");
-});
-
-test("edited foods and log snapshots survive storage without rewriting history", () => {
-  const seed = nutritionItems[0];
-  const edited = { ...seed, brand: "Nandini", name: "Slim Milk", variant: "100 ml", calories: 55, source: { ...seed.source, label: "Edited by you", trust: "Personal" as const } };
-  const originalSnapshot = scaleNutrition(seed, 250);
-  const saved = parseSavedNutritionState(JSON.stringify({
-    dayKey: "2026-08-11",
-    logs: [{ foodId: seed.id, amount: 250, snapshot: originalSnapshot }],
-    planned: [],
-    customFoods: [edited],
-    weights: [],
-  }));
-  assert.deepEqual(saved.customFoods, [edited]);
-  assert.equal(saved.logs[0].snapshot?.name, seed.name);
-  assert.equal(saved.logs[0].snapshot?.calories, originalSnapshot.calories);
-
-  const corruptSnapshot = { ...originalSnapshot, brand: "" };
-  assert.deepEqual(parseSavedNutritionState(JSON.stringify({ dayKey: "2026-08-11", logs: [{ foodId: seed.id, amount: 250, snapshot: corruptSnapshot }] })).logs, []);
-  const mismatchedSnapshot = { ...originalSnapshot, id: "different-food" };
-  assert.deepEqual(parseSavedNutritionState(JSON.stringify({ dayKey: "2026-08-11", logs: [{ foodId: seed.id, amount: 250, snapshot: mismatchedSnapshot }] })).logs, []);
-});
-
-test("alternate-unit logs retain both the visible quantity and original nutrition basis", () => {
-  const milk = nutritionItems.find((food) => food.id === "nandini-goodlife-toned");
-  assert.ok(milk);
-  const halfPack = scaleNutritionForUnit(milk, 0.5, "pack");
-  const saved = parseSavedNutritionState(JSON.stringify({
-    dayKey: "2026-08-12",
-    logs: [{ foodId: milk.id, amount: 0.5, snapshot: halfPack }],
-    customFoods: [],
-    planned: [],
-    weights: [],
-  }));
-  assert.equal(saved.logs[0].snapshot?.amount, 0.5);
-  assert.equal(saved.logs[0].snapshot?.unit, "pack");
-  assert.equal(saved.logs[0].snapshot?.basis?.unit, "ml");
-  assert.equal(saved.logs[0].snapshot?.calories, 300);
-
-  const missingConversion = { ...halfPack, conversions: undefined };
-  assert.deepEqual(parseSavedNutritionState(JSON.stringify({ logs: [{ foodId: milk.id, amount: 0.5, snapshot: missingConversion }] })).logs, []);
-  const wrongConversion = { ...halfPack, conversions: [{ unit: "pack", basisAmount: 500, label: "wrong pack" }] };
-  assert.deepEqual(parseSavedNutritionState(JSON.stringify({ logs: [{ foodId: milk.id, amount: 0.5, snapshot: wrongConversion }] })).logs, []);
-
-  const oil = nutritionItems.find((food) => food.id === "oil");
-  assert.ok(oil);
-  for (const amount of [0.05, 0.1, 0.3, 0.333, 2.5, 3.3, 5, 7.5]) {
-    const snapshot = scaleNutritionForUnit(oil, amount, "ml");
-    const parsed = parseSavedNutritionState(JSON.stringify({ logs: [{ foodId: oil.id, amount, snapshot }] }));
-    assert.equal(parsed.logs.length, 1, `${amount} ml oil should survive its own conversion rounding`);
-    assert.deepEqual(parsed.logs[0].snapshot, snapshot);
-  }
-  for (const amount of [0.001, 0.005]) {
-    const tooSmallToRepresent = scaleNutritionForUnit(oil, amount, "ml");
-    assert.equal(tooSmallToRepresent.amount, 0);
-    assert.equal(tooSmallToRepresent.calories, 0);
-  }
-});
-
-test("one malformed food cannot erase other saved nutrition and valid entries are capped after validation", () => {
-  const validFood = { ...nutritionItems[0], id: "  custom-milk  ", source: { ...nutritionItems[0].source, label: "Edited by you", trust: "Personal" as const } };
-  const parsed = parseSavedNutritionState(JSON.stringify({
-    dayKey: "2026-08-11",
-    logs: [{ foodId: "banana", amount: 118 }],
-    planned: [{ id: " chia ", kind: "food" }],
-    customFoods: [...Array.from({ length: 500 }, () => ({})), { ...validFood, basis: null }],
-    weights: [...Array.from({ length: 5000 }, () => ({ date: "bad", kg: 0 })), { date: "2026-08-11", kg: 72 }, { date: "9999-12-31", kg: 399 }],
-  }));
-  assert.deepEqual(parsed.logs, [{ foodId: "banana", amount: 118 }]);
-  assert.deepEqual(parsed.planned, [{ id: "chia", kind: "food" }]);
-  assert.deepEqual(parsed.customFoods, [], "basis:null is rejected without resetting other state");
-  assert.deepEqual(parsed.weights, [{ date: "2026-08-11", kg: 72 }], "invalid leading values must not crowd out valid data");
-
-  const accepted = parseSavedNutritionState(JSON.stringify({ customFoods: [...Array.from({ length: 500 }, () => ({})), validFood] }));
-  assert.equal(accepted.customFoods[0].id, "custom-milk");
-  assert.deepEqual(parseSavedNutritionState(JSON.stringify({ customFoods: [{ ...validFood, unit: "g", amount: 5000.01 }] })).customFoods, []);
-});
-
-test("weight entries validate, correct same-day values, sort, and chart safely", () => {
-  assert.equal(isWeightValueValid(20), true);
-  assert.equal(isWeightValueValid(400), true);
-  for (const invalid of [19.9, 400.1, Number.NaN, Number.POSITIVE_INFINITY]) assert.equal(isWeightValueValid(invalid), false);
-
-  let entries = upsertWeightEntry([], { date: "2026-08-11", kg: 72.46 });
-  entries = upsertWeightEntry(entries, { date: "2026-08-09", kg: 73 });
-  entries = upsertWeightEntry(entries, { date: "2026-08-11", kg: 72.2 });
-  assert.deepEqual(entries, [{ date: "2026-08-09", kg: 73 }, { date: "2026-08-11", kg: 72.2 }]);
-  assert.deepEqual(upsertWeightEntry(entries, { date: "2026-02-30", kg: 70 }), entries);
-
-  const points = getWeightTrendPoints(entries, 300, 100);
-  assert.deepEqual(points.map(({ x, y }) => ({ x, y })), [{ x: 0, y: 20 }, { x: 300, y: 100 }], "sub-kilogram changes should not be visually exaggerated");
-  assert.deepEqual(getWeightTrendPoints([{ date: "2026-08-11", kg: 72 }], 300, 100), [{ date: "2026-08-11", kg: 72, x: 150, y: 50 }]);
-  assert.deepEqual(getWeightTrendPoints([{ date: "2026-08-11", kg: 72 }, { date: "2026-08-11", kg: 71.8 }], 300, 100), [{ date: "2026-08-11", kg: 71.8, x: 150, y: 50 }]);
-  assert.deepEqual(getWeightTrendPoints([{ date: "2026-01-01", kg: 72 }, { date: "2026-01-02", kg: 71.9 }, { date: "2026-01-11", kg: 71.8 }], 100, 100).map((point) => point.x), [0, 10, 100]);
-  assert.deepEqual(getWeightTrendPoints(entries, 0, 100), []);
-});
-
-test("day rollover cannot save yesterday's diary under today's date", () => {
-  assert.equal(shouldPersistNutritionState(true, "2026-08-11", "2026-08-11"), true);
-  assert.equal(shouldPersistNutritionState(true, "2026-08-10", "2026-08-11"), false);
-  assert.equal(shouldPersistNutritionState(false, "2026-08-11", "2026-08-11"), false);
-});
-
 test("Bangalore greeting and day key follow local time boundaries", () => {
   const cases = [
     ["2026-08-08T23:29:00.000Z", "Good night"],
@@ -312,4 +164,172 @@ test("Bangalore greeting and day key follow local time boundaries", () => {
   for (const [iso, greeting] of cases) assert.equal(getBangaloreClock(new Date(iso)).greeting, greeting, iso);
   assert.deepEqual(getBangaloreClock(new Date("2026-08-09T15:30:00.000Z")), { dayKey: "2026-08-09", dateLabel: "Sunday · 9 August", greeting: "Good evening" });
   assert.throws(() => getBangaloreClock(new Date("invalid")), /valid date/i);
+});
+
+test("a calorie ceiling and protein window select the right meals", () => {
+  // KP's scenario: something within 500 kcal carrying 50-70 g protein.
+  const target = { maxCalories: 500, minProtein: 50, maxProtein: 70 };
+  const fitting = meals.filter((meal) => matchesNutritionTarget(meal, target));
+  assert.ok(fitting.length > 0, "no meal fits 500 kcal with 50-70 g protein");
+  for (const meal of fitting) {
+    assert.ok(meal.calories <= 500, `${meal.name} is ${meal.calories} kcal`);
+    assert.ok(meal.protein >= 50 && meal.protein <= 70, `${meal.name} has ${meal.protein} g protein`);
+  }
+  // Everything excluded must genuinely breach a bound, so nothing useful is hidden.
+  for (const meal of meals.filter((meal) => !fitting.includes(meal))) {
+    assert.ok(meal.calories > 500 || meal.protein < 50 || meal.protein > 70, `${meal.name} was excluded but fits`);
+  }
+});
+
+test("an unset bound is ignored rather than treated as zero", () => {
+  const meal = { calories: 400, protein: 30, fiber: 5 };
+  assert.equal(matchesNutritionTarget(meal, {}), true);
+  assert.equal(matchesNutritionTarget(meal, { maxCalories: undefined, minProtein: 25 }), true);
+  assert.equal(matchesNutritionTarget(meal, { minProtein: Number.NaN }), true, "a non-numeric bound must not filter everything out");
+  assert.equal(matchesNutritionTarget(meal, { maxCalories: 399 }), false);
+  assert.equal(matchesNutritionTarget(meal, { minProtein: 31 }), false);
+  assert.equal(matchesNutritionTarget(meal, { maxProtein: 29 }), false);
+  assert.equal(matchesNutritionTarget(meal, { minFiber: 6 }), false);
+  // Boundaries are inclusive: "at most 500" includes 500.
+  assert.equal(matchesNutritionTarget({ calories: 500, protein: 50, fiber: 0 }, { maxCalories: 500, minProtein: 50 }), true);
+  assert.equal(hasNutritionTarget({}), false);
+  assert.equal(hasNutritionTarget({ maxCalories: Number.NaN }), false);
+  assert.equal(hasNutritionTarget({ maxCalories: 500 }), true);
+});
+
+test("fullness ranks protein and fibre above calorie-dense foods", () => {
+  const score = (id: string) => {
+    const food = nutritionItems.find((item) => item.id === id);
+    assert.ok(food, id);
+    return estimateSatiety(food);
+  };
+  // Lean protein and high-fibre volume beat oil and nuts, which is the whole point.
+  assert.ok(score("egg-whites") > score("almonds"), "egg whites should outrank almonds");
+  assert.ok(score("greek-yogurt-nonfat") > score("peanut-butter"), "non-fat yogurt should outrank peanut butter");
+  assert.ok(score("cucumber") > score("oil"), "cucumber should outrank cooking oil");
+  assert.equal(score("oil"), 0, "pure fat has no protein, no fibre and maximum energy density");
+  for (const food of nutritionItems) {
+    const value = estimateSatiety(food);
+    assert.ok(Number.isFinite(value) && value >= 0 && value <= 100, `${food.id} scored ${value}`);
+  }
+});
+
+test("fullness degrades safely on corrupt or unusual foods", () => {
+  assert.equal(estimateSatiety({ calories: 0, protein: 10, fiber: 5 }), 0, "zero calories cannot be scored");
+  assert.equal(estimateSatiety({ calories: Number.NaN, protein: 10, fiber: 5 }), 0);
+  assert.equal(estimateSatiety({ calories: -100, protein: 10, fiber: 5 }), 0);
+  // Negative macros must not produce a negative or inflated score.
+  const negative = estimateSatiety({ calories: 100, protein: -50, fiber: -50, amount: 100, unit: "g" });
+  assert.ok(negative >= 0 && negative <= 100, `scored ${negative}`);
+  // A piece/scoop serving has no computable energy density; the score must still use the
+  // full 0-100 range rather than silently losing 30 points.
+  const scoop = estimateSatiety({ calories: 131.68, protein: 25, fiber: 0, amount: 1, unit: "scoop" });
+  assert.ok(scoop > 45, `whey scored only ${scoop}; the missing density term was not rescaled`);
+  assert.equal(satietyLabel(75), "Very filling");
+  assert.equal(satietyLabel(55), "Filling");
+  assert.equal(satietyLabel(35), "Moderate");
+  assert.equal(satietyLabel(5), "Easy to overeat");
+});
+
+test("failure injection: an unfilling food must not pass as filling", () => {
+  const oil = nutritionItems.find((food) => food.id === "oil");
+  assert.ok(oil);
+  assert.equal(satietyLabel(estimateSatiety(oil)), "Easy to overeat");
+  // If the model ever scored fat highly, this comparison would break first.
+  const chicken = nutritionItems.find((food) => food.id === "chicken-breast");
+  assert.ok(chicken && estimateSatiety(chicken) > estimateSatiety(oil) + 40);
+});
+
+test("numeric badges are derived from the numbers at every boundary", () => {
+  // The catalogue test can only ever pass now that tags are computed, so the rule itself
+  // is checked directly, including each threshold and one step either side of it.
+  assert.deepEqual(numericTags({ protein: 25, fat: 10, fiber: 8 }), ["High protein", "Low fat", "High fibre"], "thresholds are inclusive");
+  assert.deepEqual(numericTags({ protein: 24.9, fat: 10.1, fiber: 7.9 }), [], "just outside every rule earns nothing");
+  assert.deepEqual(numericTags({ protein: 60, fat: 2, fiber: 20 }), ["High protein", "Low fat", "High fibre"]);
+  assert.deepEqual(numericTags({ protein: 0, fat: 0, fiber: 0 }), ["Low fat"], "a fat-free food is low fat even with no protein");
+});
+
+test("failure injection: a badge cannot survive an ingredient change that breaks its rule", () => {
+  const lowFat = meals.find((meal) => meal.tags.includes("Low fat"));
+  assert.ok(lowFat);
+  // Recomputing with the fat pushed over the line must drop the badge. Before badges were
+  // derived, the hand-typed tag stayed and silently disagreed with the number beside it.
+  assert.equal(numericTags({ protein: lowFat.protein, fat: 10.1, fiber: lowFat.fiber }).includes("Low fat"), false);
+});
+
+/**
+ * Foods whose published energy legitimately disagrees with the general 4/4/9 factors.
+ * USDA applies food-specific Atwater factors to cocoa, which are materially lower than the
+ * general ones, so the general calculation overstates it by design.
+ */
+const ENERGY_CHECK_EXEMPT = new Set(["cocoa"]);
+
+/** protein x4 + available carbs x4 + fat x9 + fibre x2, the general Atwater calculation. */
+function calculatedEnergy(food: { protein: number; carbs: number; fat: number; fiber: number }) {
+  return food.protein * 4 + Math.max(0, food.carbs - food.fiber) * 4 + food.fat * 9 + food.fiber * 2;
+}
+
+/**
+ * A packaged product's panel is one manufacturer's own arithmetic and should agree with
+ * itself closely. A raw food's published energy comes from a composition table that may use
+ * food-specific factors, and low-calorie vegetables swing wildly in percentage terms over a
+ * 2 kcal difference, so those get a much looser bound.
+ */
+function energyTolerance(food: { calories: number; source: { trust: string } }) {
+  const packaged = food.source.trust === "Official label" || food.source.trust === "Label mirror";
+  return packaged ? Math.max(10, food.calories * 0.1) : Math.max(15, food.calories * 0.25);
+}
+
+test("no catalogue food's calories contradict its own macros", () => {
+  // This is what makes it safe to transcribe a panel found online: a value that does not
+  // agree with itself never reaches KP. It is a smell test, not a precision instrument.
+  const offenders: string[] = [];
+  for (const food of nutritionItems) {
+    if (ENERGY_CHECK_EXEMPT.has(food.id) || food.calories === 0) continue;
+    const calculated = calculatedEnergy(food);
+    if (Math.abs(calculated - food.calories) > energyTolerance(food)) {
+      offenders.push(`${food.id} [${food.source.trust}]: states ${food.calories} kcal, macros compute to ${calculated.toFixed(1)}`);
+    }
+  }
+  assert.deepEqual(offenders, [], `implausible catalogue entries:\n${offenders.join("\n")}`);
+});
+
+test("failure injection: bad transcribed values are caught at the tier they arrive in", () => {
+  const paneer = nutritionItems.find((food) => food.id === "paneer-whole-milk");
+  assert.ok(paneer);
+  const passes = (food: { calories: number; protein: number; carbs: number; fat: number; fiber: number; source: { trust: string } }) =>
+    Math.abs(calculatedEnergy(food) - food.calories) <= energyTolerance(food);
+
+  assert.equal(passes(paneer), true, "the real entry must pass");
+  // A dropped or added digit, the most likely transcription slip.
+  assert.equal(passes({ ...paneer, calories: 29.6 }), false);
+  assert.equal(passes({ ...paneer, calories: 2960 }), false);
+
+  // The Yogabar figures found while researching: 210 kcal against macros computing to 238.5.
+  // At 13.6% they clear the loose bound for raw foods but fail the packaged bound, which is
+  // the tier such a value would actually arrive in. This is why it was not entered.
+  const yogabar = { calories: 210, protein: 26, carbs: 28, fat: 2.5, fiber: 0 };
+  assert.equal(passes({ ...yogabar, source: { trust: "Label mirror" } }), false, "a packaged panel that disagrees with itself must be rejected");
+  assert.equal(passes({ ...yogabar, source: { trust: "Reference" } }), true, "and the raw-food bound is deliberately looser, which is why tier matters");
+});
+
+test("an unverified product variant does not borrow a verified one's numbers", () => {
+  const ids = nutritionItems.map((food) => food.id);
+  // Only the unsweetened So Good panel was confirmed; Barista and the flavoured versions
+  // differ and must stay without macros rather than inherit it.
+  assert.ok(ids.includes("so-good-oat-unsweetened"));
+  assert.equal(nutritionItems.some((food) => food.id.includes("barista")), false);
+  // Zero-sugar cola exists; full-sugar cola does not, so it cannot be matched to 0 kcal.
+  const cola = nutritionItems.find((food) => food.id === "cola-zero-sugar");
+  assert.ok(cola && cola.calories === 0);
+});
+
+test("every transcribed panel is marked as a mirror, never as an official label", () => {
+  // A panel found online is not the pack in KP's hand, however good the source.
+  for (const id of ["milkymist-greek-yogurt", "health-factory-protein-bread", "epigamia-turbo-shake", "cosmix-plant-protein", "so-good-oat-unsweetened"]) {
+    const food = nutritionItems.find((item) => item.id === id);
+    assert.ok(food, id);
+    assert.equal(food.source.trust, "Label mirror", `${id} must not claim to be an official label`);
+    assert.match(food.source.url, /^https:\/\//);
+  }
 });

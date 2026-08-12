@@ -27,8 +27,7 @@
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
 body { margin: 0; background: var(--canvas); color: var(--text); font-family: "Avenir Next", Avenir, Inter, Arial, sans-serif; }
-button, input, select { color: var(--text); font: inherit; }
-input::placeholder { color: #6b776f; opacity: 1; }
+button, input, select { font: inherit; }
 button { color: inherit; }
 button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid rgb(185 237 85 / 0.6); outline-offset: 2px; }
 
@@ -126,8 +125,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .timeline-empty strong { color: var(--text); font-size: 17px; }
 .timeline-empty span { max-width: 310px; font-size: 11px; line-height: 1.55; }
 .meal-meta { display: grid; gap: 5px; }
-.meal-meta > span { color: #35483d; font-size: 9px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; }
-.meal-meta > .logged-volume { width: max-content; padding: 5px 8px; border-radius: 7px; color: #173e2c; background: #dfe9d7; font-size: 10px; letter-spacing: 0.06em; }
+.meal-meta > span { color: #7b877f; font-size: 9px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; }
 .meal-meta strong { font-size: 16px; letter-spacing: -0.025em; }
 .meal-meta small { color: var(--muted); font-size: 11px; }
 .meal-meta em { width: max-content; margin-top: 4px; color: #96451e; font-size: 9px; font-style: normal; font-weight: 850; letter-spacing: 0.08em; text-transform: uppercase; }
@@ -151,27 +149,6 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .mini-bars > span { position: relative; flex: 1; min-height: 12px; border-radius: 7px 7px 0 0; background: #aebfa8; }
 .mini-bars > span.active { background: var(--orange); }
 .mini-bars i { position: absolute; right: 0; bottom: -20px; left: 0; color: var(--muted); font-size: 9px; font-style: normal; text-align: center; }
-
-.weight-card { overflow: hidden; padding: 22px; }
-.weight-add-button { padding: 7px 10px; border: 1px solid var(--forest); border-radius: 9px; color: var(--forest); background: transparent; font-size: 10px; font-weight: 800; cursor: pointer; }
-.weight-summary { display: flex; justify-content: space-between; gap: 12px; align-items: end; margin: 14px 0 4px; color: #526158; font-size: 9px; }
-.weight-summary strong { display: grid; color: var(--forest); font-size: 12px; text-align: right; }
-.weight-summary small { color: #526158; font-size: 8px; font-weight: 600; }
-.weight-empty { margin: 13px 0 0; color: #526158; font-size: 10px; line-height: 1.5; }
-.weight-form { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: end; margin-top: 15px; padding-top: 15px; border-top: 1px solid var(--line); }
-.weight-form label { display: grid; gap: 5px; color: #405047; font-size: 9px; font-weight: 750; }
-.weight-form label > div { display: grid; grid-template-columns: 1fr auto; align-items: center; border: 1px solid var(--line-strong); border-radius: 10px; background: white; }
-.weight-form input { min-width: 0; height: 40px; padding: 0 9px; border: 1px solid var(--line-strong); border-radius: 10px; background: white; font-size: 11px; font-weight: 750; }
-.weight-form label > div input { border: 0; }
-.weight-form b { padding-right: 9px; color: var(--text); font-size: 9px; }
-.weight-form .button { min-height: 40px; padding-inline: 13px; font-size: 10px; }
-.weight-trend-toggle { display: flex; width: 100%; justify-content: space-between; margin-top: 14px; padding: 11px 0 0; border: 0; border-top: 1px solid var(--line); color: var(--forest); background: transparent; font-size: 10px; font-weight: 800; cursor: pointer; }
-.weight-chart-wrap { margin-top: 13px; }
-.weight-chart { width: 100%; height: 92px; overflow: visible; }
-.weight-chart polyline { fill: none; stroke: var(--forest); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
-.weight-chart circle { fill: var(--lime-deep); stroke: white; stroke-width: 2; vector-effect: non-scaling-stroke; }
-.weight-chart-wrap > div { display: flex; justify-content: space-between; color: #526158; font-size: 8px; }
-.weight-chart-wrap strong { color: var(--forest); }
 
 .history-layout { display: grid; grid-template-columns: minmax(660px, 1.5fr) minmax(330px, 0.65fr); gap: 22px; max-width: 1440px; margin: 0 auto; }
 .calendar-card { padding: 28px; }
@@ -336,7 +313,6 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .item-nutrition small { color: var(--muted); font-size: 7px; font-weight: 600; }
 .item-card-actions { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
 .item-card-actions a { color: var(--forest); font-size: 9px; font-weight: 750; text-decoration: none; }
-.item-variant { display: block; margin-top: 2px; color: #526158; font-size: 10px; font-weight: 700; }
 .research-footnote { display: flex; flex-wrap: wrap; gap: 14px; max-width: 1440px; margin: 22px auto 0; padding: 15px 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 9px; }
 .research-footnote span { color: var(--text); font-weight: 800; }
 .research-footnote a { color: var(--forest); font-weight: 700; text-decoration: none; }
@@ -430,20 +406,17 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .grocery-groups strong { font-size: 11px; }
 
 .dialog-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 18px; background: rgb(9 15 19 / 0.65); backdrop-filter: blur(10px); }
-.food-dialog { overflow: hidden; display: flex; width: min(980px, 100%); max-height: min(780px, 92dvh); flex-direction: column; border-radius: 24px; background: var(--paper); box-shadow: 0 28px 90px rgb(0 0 0 / 0.28); }
+.food-dialog { overflow: hidden; width: min(980px, 100%); max-height: min(780px, 92dvh); border-radius: 24px; background: var(--paper); box-shadow: 0 28px 90px rgb(0 0 0 / 0.28); }
 .food-dialog header { display: flex; justify-content: space-between; align-items: center; padding: 24px 26px 16px; }
 .food-dialog h2 { margin: 0; font-size: 28px; }
 .close-button { display: grid; width: 38px; height: 38px; place-items: center; border: 1px solid var(--line); border-radius: 12px; background: transparent; font-size: 24px; cursor: pointer; }
-.logging-mode-switch { display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px; margin: 0 26px 14px; padding: 4px; border-radius: 12px; background: #e8ece5; }
-.logging-mode-switch button { padding: 9px 12px; border: 0; border-radius: 9px; color: var(--muted); background: transparent; font-size: 10px; font-weight: 800; cursor: pointer; }
-.logging-mode-switch button.active { color: white; background: var(--forest); }
 .dialog-search { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: center; margin: 0 26px; padding: 0 14px; border: 2px solid var(--forest); border-radius: 14px; background: white; }
 .dialog-search input { height: 48px; border: 0; outline: 0; background: transparent; }
 .dialog-tabs { display: flex; gap: 22px; margin: 20px 26px 0; border-bottom: 1px solid var(--line); }
 .dialog-tabs button { padding: 0 0 10px; border: 0; border-bottom: 2px solid transparent; color: var(--muted); background: transparent; font-size: 10px; font-weight: 750; cursor: pointer; }
 .dialog-tabs button.active { border-color: var(--forest); color: var(--forest); }
-.food-dialog-body { overflow: hidden; display: grid; min-height: 0; grid-template-columns: 1.15fr 0.85fr; gap: 18px; flex: 1; padding: 18px 26px 26px; }
-.food-results { overflow: auto; min-height: 0; padding: 0 8px 0 0; }
+.food-dialog-body { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 18px; padding: 18px 26px 26px; }
+.food-results { overflow: auto; max-height: 480px; padding: 0 8px 0 0; }
 .food-results > button { display: grid; grid-template-columns: auto 1fr auto auto; gap: 12px; align-items: center; width: 100%; padding: 13px 0; border: 0; border-bottom: 1px solid var(--line); background: transparent; text-align: left; cursor: pointer; }
 .food-results > button.selected { padding-left: 10px; border-radius: 12px; background: #e7ecdf; }
 .food-initial { display: grid; width: 39px; height: 39px; place-items: center; border-radius: 12px; color: var(--forest); background: #e1ead7; font-weight: 800; }
@@ -458,14 +431,12 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .quantity-editor-empty { min-height: 220px; align-content: center; }
 .quantity-editor h3 { margin: 7px 0 3px; font-size: 20px; line-height: 1.15; }
 .quantity-editor > p { margin: 0 0 20px; color: #94a199; font-size: 10px; }
-.logging-unit-field { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: center; margin-bottom: 9px; color: #d5ded8; font-size: 9px; font-weight: 750; }
-.logging-unit-field select { min-width: 0; height: 36px; padding: 0 9px; border: 0; border-radius: 9px; color: var(--ink); background: white; font-size: 10px; font-weight: 750; }
 .quantity-control { display: grid; grid-template-columns: 42px 1fr 42px; gap: 7px; }
 .quantity-control > button { border: 1px solid rgb(255 255 255 / 0.14); border-radius: 11px; color: white; background: rgb(255 255 255 / 0.07); font-size: 18px; cursor: pointer; }
 .quantity-control label { display: grid; grid-template-columns: 1fr auto; align-items: center; border-radius: 11px; background: white; }
 .quantity-control input { min-width: 0; height: 48px; padding: 0 8px 0 13px; border: 0; outline: 0; background: transparent; font-size: 17px; font-weight: 800; }
-.quantity-control label span { padding-right: 12px; color: var(--ink); font-size: 11px; font-weight: 850; }
-.quantity-basis { display: block; margin: 9px 0 18px; color: #d5ded8; font-size: 9px; font-weight: 700; line-height: 1.4; }
+.quantity-control label span { padding-right: 12px; color: var(--ink); font-size: 10px; font-weight: 850; }
+.quantity-basis { display: block; margin: 7px 0 18px; color: #7f8d84; font-size: 8px; }
 .quantity-basis.error { color: #ff976e; }
 .live-nutrition { display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px; margin-bottom: 16px; }
 .live-nutrition > * { display: grid; gap: 2px; padding: 11px; border: 1px solid rgb(255 255 255 / 0.12); border-radius: 11px; }
@@ -473,50 +444,86 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .live-nutrition b { font-size: 16px; }
 .live-nutrition small { color: #8f9c94; font-size: 8px; }
 .quantity-editor > a { display: block; margin-bottom: 16px; color: #a8b4ac; font-size: 8px; text-decoration: none; }
-.personal-source { display: block; margin-bottom: 16px; color: #c1cbc4; font-size: 8px; }
-.edit-food-button { width: 100%; margin-bottom: 12px; padding: 11px; border: 1px solid rgb(255 255 255 / 0.24); border-radius: 11px; color: white; background: rgb(255 255 255 / 0.07); font-size: 10px; font-weight: 750; cursor: pointer; }
-.add-food-button { min-height: 49px; font-size: 12px; }
-.outline-light { border: 1px solid rgb(255 255 255 / 0.28); color: white; background: rgb(255 255 255 / 0.08); }
-.quantity-editor.details-mode, .quantity-editor.combination-mode { overflow-y: auto; max-height: 100%; }
-.quantity-editor.combination-mode .live-nutrition, .quantity-editor.combination-mode .edit-food-button, .quantity-editor.combination-mode > a, .quantity-editor.combination-mode > .personal-source { display: none; }
-.quantity-editor.combination-mode { padding: 16px; }
-.quantity-editor.combination-mode > p { display: none; }
-.quantity-editor.combination-mode .quantity-basis { margin-bottom: 10px; }
-.quantity-editor.combination-mode .combination-builder { gap: 7px; margin-top: 10px; padding-top: 10px; }
-.quantity-editor.combination-mode .combination-lines { gap: 4px; }
-.quantity-editor.combination-mode .combination-lines > div { padding: 6px; }
-.quantity-editor.combination-mode .combination-total { padding: 5px 0; }
-.food-details-editor > p { margin: 0 0 15px; color: #c0cbc4; font-size: 9px; line-height: 1.45; }
-.details-heading { display: flex; justify-content: space-between; gap: 12px; }
-.details-heading > button { width: 29px; height: 29px; border: 1px solid rgb(255 255 255 / 0.2); border-radius: 8px; color: white; background: transparent; cursor: pointer; }
-.identity-fields, .serving-fields, .conversion-fields, .nutrition-fields { display: grid; gap: 9px; margin-bottom: 12px; }
-.serving-fields { grid-template-columns: 1fr 0.8fr; }
-.conversion-fields { padding: 10px; border: 1px solid rgb(255 255 255 / 0.14); border-radius: 10px; }
-.nutrition-fields { grid-template-columns: repeat(2, 1fr); }
-.identity-fields label, .serving-fields label, .conversion-fields label, .nutrition-fields label { display: grid; gap: 5px; }
-.identity-fields label > span, .serving-fields label > span, .conversion-fields label > span, .nutrition-fields label > span { color: #d5ded8; font-size: 8px; font-weight: 750; }
-.identity-fields input, .serving-fields input, .serving-fields select, .conversion-fields input, .conversion-fields select, .conversion-fields label > div, .nutrition-fields label > div { width: 100%; height: 39px; border: 0; border-radius: 9px; color: var(--ink); background: white; }
-.identity-fields input, .serving-fields input, .serving-fields select, .conversion-fields input, .conversion-fields select { padding: 0 10px; font-size: 10px; font-weight: 700; }
-.conversion-fields label > div { display: grid; grid-template-columns: 1fr auto; align-items: center; }
-.conversion-fields label > div input { min-width: 0; }
-.conversion-fields label > div b { padding-right: 9px; color: #405047; font-size: 8px; }
-.nutrition-fields label > div { display: grid; grid-template-columns: 1fr auto; align-items: center; }
-.nutrition-fields input { min-width: 0; height: 39px; padding: 0 7px 0 10px; border: 0; outline: 0; background: transparent; font-size: 10px; font-weight: 750; }
-.nutrition-fields b { padding-right: 9px; color: #405047; font-size: 8px; }
-.combination-builder { display: grid; gap: 10px; margin-top: 16px; padding-top: 15px; border-top: 1px solid rgb(255 255 255 / 0.16); }
-.combination-builder > div:first-child, .combination-total { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
-.combination-builder > label { display: grid; gap: 5px; color: #d5ded8; font-size: 8px; font-weight: 750; }
-.combination-builder > label input { height: 39px; padding: 0 10px; border: 0; border-radius: 9px; color: var(--ink); background: white; font-size: 10px; font-weight: 700; }
-.combination-builder > p { margin: 0; color: #aeb9b1; font-size: 9px; line-height: 1.45; }
-.combination-lines { display: grid; gap: 6px; }
-.combination-lines > div { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; padding: 8px; border: 1px solid rgb(255 255 255 / 0.13); border-radius: 9px; }
-.combination-lines span { display: grid; gap: 2px; font-size: 8px; }
-.combination-lines span b { color: var(--lime); font-size: 9px; }
-.combination-lines small { color: #c4cec7; font-size: 8px; }
-.combination-lines button { border: 0; color: white; background: transparent; cursor: pointer; }
-.combination-total { padding: 10px 0; }
-.combination-total strong { color: var(--lime); }
-.combination-total span { color: #c4cec7; font-size: 8px; }
+
+/*
+ * Hand-editing a food's name and macros at log time — every prefilled default (a composite's
+ * weights, a catalogue item's researched panel) is a starting point KP can override, never a
+ * locked figure. This is the dark-card counterpart of .target-fields.
+ */
+.quantity-editor-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 4px 10px; margin-bottom: 3px; }
+.quantity-editor-head > div:first-child { min-width: 0; }
+.quantity-editor-head h3 { margin: 3px 0 0; }
+.quantity-editor-head .eyebrow { white-space: nowrap; }
+.quantity-editor-head .text-button { flex: 0 0 auto; color: var(--lime); font-size: 9px; text-align: right; white-space: nowrap; }
+.override-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 14px; }
+.override-fields label { display: grid; gap: 4px; }
+.override-name { grid-column: 1 / -1; }
+.override-fields label > span { color: #94a199; font-size: 8px; text-transform: uppercase; letter-spacing: 0.06em; }
+.override-fields input { min-width: 0; height: 40px; padding: 0 11px; border: 1px solid rgb(255 255 255 / 0.14); border-radius: 10px; background: rgb(255 255 255 / 0.06); color: white; font-size: 13px; font-weight: 700; }
+.override-fields input::placeholder { color: #6c7871; font-weight: 500; }
+.override-fields input:focus-visible { background: rgb(255 255 255 / 0.1); }
+
+/* "Estimated" is the fourth provenance tier — KP's own corrected number, never mistaken for a
+   researched or label value at a glance. */
+.trust-mark.estimated { color: #a05a12; background: #f6dfc0; }
+.edited-tag { display: inline-block; margin-left: 6px; padding: 2px 7px; border-radius: 99px; background: rgb(232 173 35 / 0.16); color: var(--turmeric); font-size: 8px; font-weight: 800; font-style: normal; letter-spacing: 0.04em; white-space: nowrap; }
+
+/* Composite dishes: one editable weight per component, plus the note explaining the default. */
+.component-editor { display: grid; gap: 7px; margin-bottom: 10px; }
+.component-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 9px; padding: 9px 11px; border: 1px solid rgb(255 255 255 / 0.12); border-radius: 11px; }
+.component-name { color: #dfe7e1; font-size: 11px; font-weight: 700; }
+.component-control { display: grid; grid-template-columns: 28px 1fr 28px; gap: 5px; align-items: center; }
+.component-control > button { height: 28px; border: 1px solid rgb(255 255 255 / 0.14); border-radius: 8px; color: white; background: rgb(255 255 255 / 0.07); font-size: 13px; cursor: pointer; }
+.component-control label { display: grid; grid-template-columns: 1fr auto; align-items: center; border-radius: 8px; background: white; }
+.component-control input { min-width: 0; width: 100%; height: 28px; padding: 0 3px 0 8px; border: 0; outline: 0; background: transparent; font-size: 12px; font-weight: 800; }
+.component-control label span { padding-right: 7px; color: var(--muted); font-size: 8px; }
+.component-row > b { min-width: 46px; text-align: right; color: var(--lime); font-size: 12px; }
+.component-row > b small { color: #8f9c94; font-size: 8px; }
+.component-note { display: block; margin-bottom: 14px; color: #8f9c94; font-size: 9px; line-height: 1.5; }
+
+/* Foods logged without closing the logger, so a multi-item plate stays one flow. */
+.session-log { display: grid; gap: 7px; margin: 0 22px 14px; padding: 11px 13px; border: 1px solid var(--line); border-radius: 14px; background: rgb(185 237 85 / 0.1); }
+.session-log-items { display: flex; flex-wrap: wrap; gap: 6px; }
+.session-log-items span { display: inline-grid; gap: 1px; padding: 5px 9px; border-radius: 9px; background: white; }
+.session-log-items b { font-size: 10px; }
+.session-log-items small { color: var(--muted); font-size: 8px; }
+.session-log > strong { font-size: 12px; }
+.dialog-footer { padding: 0 22px 20px; }
+.save-warning { display: grid; gap: 4px; margin-bottom: 18px; padding: 14px 16px; border: 1px solid #ff6b32; border-radius: 14px; background: rgb(255 107 50 / 0.1); }
+.save-warning strong { font-size: 13px; }
+.save-warning span { color: var(--muted); font-size: 10px; line-height: 1.5; }
+.text-button.inline { margin-left: 6px; font-size: 9px; }
+.target-editor { display: grid; gap: 14px; margin-bottom: 16px; padding: 18px 20px; }
+.target-drift { color: var(--muted); font-size: 10px; }
+.target-drift.warn { color: #b4531f; }
+.week-empty, .week-note { display: block; margin-top: 8px; color: var(--muted); font-size: 9px; line-height: 1.5; }
+.mini-bars span.no-data { background: rgb(20 40 30 / 0.12); }
+.month-pad { display: block; }
+.month-grid button.no-data { opacity: 0.45; cursor: default; }
+.no-data-mark { color: var(--muted); }
+.purchase-nutrition { display: grid; gap: 2px; }
+.purchase-nutrition small { color: var(--muted); font-size: 8px; }
+
+/* Numeric target search: a calorie ceiling and a protein window. */
+.target-filters { display: grid; gap: 14px; margin-bottom: 16px; padding: 18px 20px; }
+.target-filters-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.target-filters-head h2 { font-size: 15px; }
+.target-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.target-fields label { display: grid; gap: 5px; }
+.target-fields label > span { color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; }
+.target-fields label > div { display: grid; grid-template-columns: 1fr auto; align-items: center; border: 1px solid var(--line); border-radius: 11px; background: white; }
+.target-fields input { min-width: 0; height: 42px; padding: 0 6px 0 12px; border: 0; outline: 0; background: transparent; font-size: 15px; font-weight: 800; }
+.target-fields i { padding-right: 12px; color: var(--muted); font-size: 10px; font-style: normal; }
+.result-count { margin: 0 0 12px; color: var(--muted); font-size: 10px; }
+@media (max-width: 700px) { .target-fields { grid-template-columns: 1fr; } }
+
+/* Estimated fullness. Always labelled "est." — this is a model, not a measurement. */
+.fullness-line { display: grid; gap: 4px; margin-top: 9px; }
+.fullness-track { display: block; height: 5px; border-radius: 99px; background: rgb(20 40 30 / 0.09); overflow: hidden; }
+.fullness-track > span { display: block; height: 100%; border-radius: 99px; background: var(--lime); }
+.fullness-line small { color: var(--muted); font-size: 8px; }
+.dark-card .fullness-track { background: rgb(255 255 255 / 0.14); }
+@media (max-width: 700px) { .session-log { margin: 0 16px 12px; } .dialog-footer { padding: 0 16px 16px; } }
 .drawer-backdrop { justify-items: end; padding: 0; }
 .recipe-drawer { overflow-y: auto; width: min(520px, 100%); height: 100dvh; background: var(--paper); box-shadow: -20px 0 80px rgb(0 0 0 / 0.24); }
 .recipe-drawer > .close-button { position: absolute; top: 18px; right: 18px; z-index: 2; background: rgb(255 255 255 / 0.72); }
@@ -543,7 +550,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .toast span { font-size: 11px; font-weight: 700; }
 .mobile-topbar, .mobile-subnav, .mobile-log-button { display: none; }
 
-@media (max-width: 1400px) {
+@media (max-width: 1260px) {
   .today-layout { grid-template-columns: minmax(420px, 1.1fr) minmax(340px, 0.9fr); }
   .today-rail { grid-column: 1 / -1; grid-template-columns: repeat(3, 1fr); }
   .timeline-panel { min-height: 620px; }
@@ -560,7 +567,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
   .mobile-topbar { position: sticky; top: 0; z-index: 50; display: grid; grid-template-columns: 1fr auto auto; gap: 18px; align-items: center; padding: 12px 18px; border-bottom: 1px solid var(--line); background: rgb(238 241 231 / 0.92); backdrop-filter: blur(16px); }
   .mobile-topbar .brand > span { width: 34px; height: 34px; border-radius: 11px 11px 4px 11px; font-size: 16px; }
   .mobile-area { display: flex; gap: 4px; padding: 3px; border-radius: 11px; background: #dfe4d8; }
-  .mobile-area button { padding: 7px 12px; border: 0; border-radius: 8px; color: var(--muted); background: transparent; font-size: 10px; font-weight: 750; }
+  .mobile-area button { min-height: 44px; padding: 7px 14px; border: 0; border-radius: 8px; color: var(--muted); background: transparent; font-size: 10px; font-weight: 750; }
   .mobile-area button.active { color: white; background: var(--forest); }
   .mobile-subnav { display: flex; gap: 6px; overflow-x: auto; padding: 10px 18px 0; scrollbar-width: none; }
   .mobile-subnav button { flex: 0 0 auto; padding: 8px 12px; border: 1px solid var(--line); border-radius: 99px; color: var(--muted); background: transparent; font-size: 10px; }
@@ -628,16 +635,111 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
   .day-meals article { grid-template-columns: 28px 1fr auto; padding: 10px 0; }
   .day-meals button { display: none; }
   .drawer-macros { grid-template-columns: repeat(2, 1fr); }
-  .food-dialog { overflow-y: auto; display: block; border-radius: 20px; }
+  .food-dialog { overflow-y: auto; border-radius: 20px; }
   .dialog-tabs { overflow-x: auto; gap: 16px; }
   .dialog-tabs button { flex: 0 0 auto; }
   .food-dialog-body { grid-template-columns: 1fr; }
   .food-results { max-height: 260px; }
-  .weight-form { grid-template-columns: 1fr 1fr; }
-  .weight-form .button { grid-column: 1 / -1; }
   .toast { right: 15px; bottom: 76px; left: 15px; }
 }
 
+.meal-meta > .logged-volume { width: max-content; padding: 5px 8px; border-radius: 7px; color: #173e2c; background: #dfe9d7; font-size: 10px; letter-spacing: 0.06em; }
+.meal-meta em { width: max-content; margin-top: 4px; color: #96451e; font-size: 9px; font-style: normal; font-weight: 850; letter-spacing: 0.08em; text-transform: uppercase; }
+.weight-card { overflow: hidden; padding: 22px; }
+.weight-add-button { padding: 7px 10px; border: 1px solid var(--forest); border-radius: 9px; color: var(--forest); background: transparent; font-size: 10px; font-weight: 800; cursor: pointer; }
+.weight-summary { display: flex; justify-content: space-between; gap: 12px; align-items: end; margin: 14px 0 4px; color: #526158; font-size: 9px; }
+.weight-summary strong { color: var(--forest); font-size: 12px; text-align: right; }
+.weight-empty { margin: 13px 0 0; color: #526158; font-size: 10px; line-height: 1.5; }
+.weight-form { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: end; margin-top: 15px; padding-top: 15px; border-top: 1px solid var(--line); }
+.weight-form label { display: grid; gap: 5px; color: #405047; font-size: 9px; font-weight: 750; }
+.weight-form label > div { display: grid; grid-template-columns: 1fr auto; align-items: center; border: 1px solid var(--line-strong); border-radius: 10px; background: white; }
+.weight-form input { min-width: 0; height: 40px; padding: 0 9px; border: 1px solid var(--line-strong); border-radius: 10px; background: white; font-size: 11px; font-weight: 750; }
+.weight-form label > div input { border: 0; }
+.weight-form b { padding-right: 9px; color: var(--text); font-size: 9px; }
+.weight-form .button { min-height: 40px; padding-inline: 13px; font-size: 10px; }
+.weight-trend-toggle { display: flex; width: 100%; justify-content: space-between; margin-top: 14px; padding: 11px 0 0; border: 0; border-top: 1px solid var(--line); color: var(--forest); background: transparent; font-size: 10px; font-weight: 800; cursor: pointer; }
+.weight-chart-wrap { margin-top: 13px; }
+.weight-chart { width: 100%; height: 92px; overflow: visible; }
+.weight-chart polyline { fill: none; stroke: var(--forest); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.weight-chart circle { fill: var(--lime-deep); stroke: white; stroke-width: 2; vector-effect: non-scaling-stroke; }
+.weight-chart-wrap > div { display: flex; justify-content: space-between; color: #526158; font-size: 8px; }
+.weight-chart-wrap strong { color: var(--forest); }
+.logging-mode-switch { display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px; margin: 0 26px 14px; padding: 4px; border-radius: 12px; background: #e8ece5; }
+.logging-mode-switch button { padding: 9px 12px; border: 0; border-radius: 9px; color: var(--muted); background: transparent; font-size: 10px; font-weight: 800; cursor: pointer; }
+.logging-mode-switch button.active { color: white; background: var(--forest); }
+.logging-unit-field { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: center; margin-bottom: 9px; color: #d5ded8; font-size: 9px; font-weight: 750; }
+.logging-unit-field select { min-width: 0; height: 36px; padding: 0 9px; border: 0; border-radius: 9px; color: var(--ink); background: white; font-size: 10px; font-weight: 750; }
+.personal-source { display: block; margin-bottom: 16px; color: #c1cbc4; font-size: 8px; }
+.edit-food-button { width: 100%; margin-bottom: 12px; padding: 11px; border: 1px solid rgb(255 255 255 / 0.24); border-radius: 11px; color: white; background: rgb(255 255 255 / 0.07); font-size: 10px; font-weight: 750; cursor: pointer; }
+.add-food-button { min-height: 49px; font-size: 12px; }
+.outline-light { border: 1px solid rgb(255 255 255 / 0.28); color: white; background: rgb(255 255 255 / 0.08); }
+.food-details-editor > p { margin: 0 0 15px; color: #c0cbc4; font-size: 9px; line-height: 1.45; }
+.details-heading { display: flex; justify-content: space-between; gap: 12px; }
+.details-heading > button { width: 29px; height: 29px; border: 1px solid rgb(255 255 255 / 0.2); border-radius: 8px; color: white; background: transparent; cursor: pointer; }
+.identity-fields, .serving-fields, .conversion-fields, .nutrition-fields { display: grid; gap: 9px; margin-bottom: 12px; }
+.serving-fields { grid-template-columns: 1fr 0.8fr; }
+.conversion-fields { padding: 10px; border: 1px solid rgb(255 255 255 / 0.14); border-radius: 10px; }
+.nutrition-fields { grid-template-columns: repeat(2, 1fr); }
+.identity-fields label, .serving-fields label, .conversion-fields label, .nutrition-fields label { display: grid; gap: 5px; }
+.identity-fields label > span, .serving-fields label > span, .conversion-fields label > span, .nutrition-fields label > span { color: #d5ded8; font-size: 8px; font-weight: 750; }
+.identity-fields input, .serving-fields input, .serving-fields select, .conversion-fields input, .conversion-fields select, .conversion-fields label > div, .nutrition-fields label > div { width: 100%; height: 39px; border: 0; border-radius: 9px; color: var(--ink); background: white; }
+.identity-fields input, .serving-fields input, .serving-fields select, .conversion-fields input, .conversion-fields select { padding: 0 10px; font-size: 10px; font-weight: 700; }
+.conversion-fields label > div, .nutrition-fields label > div { display: grid; grid-template-columns: 1fr auto; align-items: center; }
+.conversion-fields label > div input, .nutrition-fields input { min-width: 0; height: 39px; padding: 0 7px 0 10px; border: 0; outline: 0; background: transparent; font-size: 10px; font-weight: 750; }
+.conversion-fields label > div b, .nutrition-fields b { padding-right: 9px; color: #405047; font-size: 8px; }
+.combination-builder { display: grid; gap: 10px; margin-top: 16px; padding-top: 15px; border-top: 1px solid rgb(255 255 255 / 0.16); }
+.combination-builder > div:first-child, .combination-total { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+.combination-builder > label { display: grid; gap: 5px; color: #d5ded8; font-size: 8px; font-weight: 750; }
+.combination-builder > label input { height: 39px; padding: 0 10px; border: 0; border-radius: 9px; color: var(--ink); background: white; font-size: 10px; font-weight: 700; }
+.combination-builder > p { margin: 0; color: #aeb9b1; font-size: 9px; line-height: 1.45; }
+.combination-lines { display: grid; gap: 6px; }
+.combination-lines > div { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; padding: 8px; border: 1px solid rgb(255 255 255 / 0.13); border-radius: 9px; }
+.combination-lines span { display: grid; gap: 2px; font-size: 8px; }
+.combination-lines span b { color: var(--lime); font-size: 9px; }
+.combination-lines small { color: #c4cec7; font-size: 8px; }
+.combination-lines button { border: 0; color: white; background: transparent; cursor: pointer; }
+.combination-total { padding: 10px 0; }
+.combination-total strong { color: var(--lime); }
+.combination-total span { color: #c4cec7; font-size: 8px; }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
+}
+
+
+/*
+ * Touch targets. On a phone every control must be comfortably tappable: the inline text
+ * buttons ("Edit", "See all", "Edit quantity") rendered at 12–18px tall, which is far below
+ * a usable target and easy to miss while holding a plate in the other hand.
+ */
+@media (max-width: 700px) {
+  .text-button,
+  .entry-actions button,
+  .table-actions button,
+  .legend button {
+    min-height: 44px;
+    padding: 0 10px;
+  }
+  .text-button.inline { padding: 0 8px; }
+  .entry-actions { align-items: center; }
+  /* Anything still smaller keeps a 44px hit area without changing how it looks. */
+  .meal-entry button,
+  .quick-grid button,
+  .month-grid button {
+    min-height: 44px;
+  }
+
+  /* Logger controls. The dish component steppers are dense by design on desktop; on a
+     phone they get room, because these are the buttons used most while cooking. */
+  .dialog-tabs button { min-height: 44px; }
+  .component-control > button,
+  .component-control input { min-height: 40px; }
+  .component-row { grid-template-columns: 1fr auto; grid-template-areas: "name kcal" "control control"; row-gap: 8px; }
+  .component-name { grid-area: name; }
+  .component-row > b { grid-area: kcal; }
+  .component-control { grid-area: control; grid-template-columns: 44px 1fr 44px; }
+  .quantity-editor > a { display: inline-flex; min-height: 44px; align-items: center; }
+
+  /* Quick-add from Purchases. */
+  .purchase-row button { min-height: 44px; min-width: 44px; }
 }

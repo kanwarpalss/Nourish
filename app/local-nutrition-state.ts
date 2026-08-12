@@ -1,12 +1,42 @@
 import type { NutritionItem } from "./nutrition-data";
 
-export const LOCAL_NUTRITION_STORAGE_KEY = "nourish.nutrition.v2";
-export const LEGACY_NUTRITION_STORAGE_KEY = "nourish.nutrition.v1";
+export const LOCAL_NUTRITION_STORAGE_KEY = "nourish.nutrition.v3";
+export const LEGACY_NUTRITION_STORAGE_KEYS = ["nourish.nutrition.v2", "nourish.nutrition.v1"] as const;
+
+/**
+ * How many days of diary are kept. Thirteen months so a full year of trends always has a
+ * comparison period. Each entry is a few dozen bytes, so even a heavily used year is far
+ * inside the browser's storage budget.
+ */
+export const MAX_STORED_DAYS = 400;
+
+/**
+ * A hand-typed replacement for a log entry's name and macros. KP must always be able to
+ * correct a prefilled number or rename an item at log time — a researched default is a
+ * starting point, not a ceiling. Once present, these numbers are the entry's final total;
+ * nothing scales them further.
+ */
+export type SavedLogOverride = {
+  name?: string;
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  fiber: number;
+};
 
 export type SavedLogEntry = {
   foodId: string;
   amount: number;
+  /** Exact food identity, displayed unit and calculated totals at the moment of logging. */
   snapshot?: NutritionItem;
+  /**
+   * Only set for composite dishes. The edited component weights must be saved, otherwise a
+   * chapati rolled from 45 g of atta would come back after a refresh as the 30 g default.
+   */
+  components?: Array<{ foodId: string; amount: number }>;
+  /** When set, this entry's name and macros come from KP directly rather than the catalogue. */
+  override?: SavedLogOverride;
 };
 
 export type SavedPlanEntry = {
@@ -14,38 +44,56 @@ export type SavedPlanEntry = {
   kind: "food" | "meal";
 };
 
-export type SavedNutritionState = {
-  dayKey: string | null;
+/** One Bangalore-local day of diary. */
+export type SavedDay = {
+  dayKey: string;
   logs: SavedLogEntry[];
+};
+
+export type SavedTargets = {
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+};
+
+export type WeightEntry = { date: string; kg: number };
+
+/**
+ * Schema 2 keeps every day rather than only the current one.
+ *
+ * Schema 1 stored a single `{ dayKey, logs }`. When the Bangalore day rolled over, the app
+ * declined to restore the previous day and then immediately autosaved the new empty day
+ * over the same key, so the diary was destroyed every midnight. That also made a truthful
+ * History or Trends view impossible, because no history was ever retained.
+ */
+export type SavedNutritionState = {
+  schemaVersion: 2;
+  days: SavedDay[];
   planned: SavedPlanEntry[];
+  targets: SavedTargets | null;
   customFoods: NutritionItem[];
   weights: WeightEntry[];
 };
 
-export type WeightEntry = {
-  date: string;
-  kg: number;
-};
+const DAY_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+export const emptyNutritionState = (): SavedNutritionState => ({ schemaVersion: 2, days: [], planned: [], targets: null, customFoods: [], weights: [] });
 
 const units = new Set<NutritionItem["unit"]>(["g", "ml", "scoop", "pack", "piece", "serving"]);
-const unitLimits: Record<NutritionItem["unit"], number> = { g: 5000, ml: 5000, scoop: 10, pack: 20, piece: 50, serving: 20 };
-const categories = new Set<NutritionItem["category"]>(["Ordered", "Product", "Ingredient", "Meal"]);
-const trustLevels = new Set<NutritionItem["source"]["trust"]>(["Official label", "Reference", "Label mirror", "Personal"]);
-
-const emptyState = (): SavedNutritionState => ({ dayKey: null, logs: [], planned: [], customFoods: [], weights: [] });
+const categories = new Set<NutritionItem["category"]>(["Ordered", "Product", "Ingredient", "Meal", "Composite"]);
+const trustLevels = new Set<NutritionItem["source"]["trust"]>(["Official label", "Reference", "Label mirror", "Estimated", "Personal"]);
 
 function isDateKey(value: unknown): value is string {
-  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  if (typeof value !== "string" || !DAY_KEY_PATTERN.test(value)) return false;
   const date = new Date(`${value}T00:00:00.000Z`);
   return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
-export function isWeightValueValid(value: number) {
-  return Number.isFinite(value) && value >= 20 && value <= 400;
-}
-
-export function shouldPersistNutritionState(storageLoaded: boolean, loadedDay: string | null, currentDay: string) {
-  return storageLoaded && loadedDay === currentDay;
+function currentBangaloreDayKey() {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((entry) => entry.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
 }
 
 function parseFood(value: unknown): NutritionItem | null {
@@ -59,9 +107,7 @@ function parseFood(value: unknown): NutritionItem | null {
     if (!entry || typeof entry !== "object") return [];
     const conversion = entry as { unit?: unknown; basisAmount?: unknown; label?: unknown };
     return units.has(conversion.unit as NutritionItem["unit"])
-      && Number.isFinite(conversion.basisAmount)
-      && (conversion.basisAmount as number) > 0
-      && (conversion.basisAmount as number) <= 5000
+      && Number.isFinite(conversion.basisAmount) && (conversion.basisAmount as number) > 0 && (conversion.basisAmount as number) <= 5000
       && (conversion.label === undefined || typeof conversion.label === "string")
       ? [{ unit: conversion.unit as NutritionItem["unit"], basisAmount: conversion.basisAmount as number, ...(conversion.label ? { label: conversion.label } : {}) }]
       : [];
@@ -70,50 +116,34 @@ function parseFood(value: unknown): NutritionItem | null {
   const basisUnit = basis?.unit ?? food.unit;
   const visibleConversion = basis && food.unit !== basisUnit ? conversions.find((conversion) => conversion.unit === food.unit) : null;
   const nutritionMatchesBasis = !basis || (() => {
-    const equivalentBasisAmount = Math.round((food.amount as number) * (food.unit === basisUnit ? 1 : visibleConversion?.basisAmount ?? 0) * 100) / 100;
-    const scale = equivalentBasisAmount / basis.amount;
+    const equivalent = Math.round((food.amount as number) * (food.unit === basisUnit ? 1 : visibleConversion?.basisAmount ?? 0) * 100) / 100;
+    const scale = equivalent / basis.amount;
     const rounded = (number: number) => Math.round(number * scale * 100) / 100;
-    return equivalentBasisAmount > 0 && [
-      [food.calories, rounded(basis.calories)],
-      [food.protein, rounded(basis.protein)],
-      [food.carbs, rounded(basis.carbs)],
-      [food.fat, rounded(basis.fat)],
-      [food.fiber, rounded(basis.fiber)],
-    ].every(([actual, expected]) => Math.abs((actual as number) - expected) <= 0.01);
+    return equivalent > 0 && [[food.calories, rounded(basis.calories)], [food.protein, rounded(basis.protein)], [food.carbs, rounded(basis.carbs)], [food.fat, rounded(basis.fat)], [food.fiber, rounded(basis.fiber)]]
+      .every(([actual, expected]) => Number.isFinite(actual) && Number.isFinite(expected) && Math.abs((actual as number) - (expected as number)) <= 0.01);
   })();
-  if (typeof food.id !== "string" || !food.id.trim()
-    || typeof food.name !== "string" || !food.name.trim()
-    || typeof food.brand !== "string" || !food.brand.trim()
-    || typeof food.variant !== "string"
-    || !units.has(food.unit as NutritionItem["unit"])
-    || !categories.has(food.category as NutritionItem["category"])
-    || numbers.some((number, index) => !Number.isFinite(number) || (number as number) < 0 || (index > 0 && (number as number) > 50_000))
-    || basisNumbers.some((number, index) => !Number.isFinite(number) || number < 0 || (index > 0 && number > 50_000))
+  if (typeof food.id !== "string" || !food.id.trim() || typeof food.name !== "string" || !food.name.trim()
+    || typeof food.brand !== "string" || !food.brand.trim() || typeof food.variant !== "string"
+    || !units.has(food.unit as NutritionItem["unit"]) || !categories.has(food.category as NutritionItem["category"])
+    || numbers.some((number) => !Number.isFinite(number) || (number as number) < 0 || (number as number) > 50_000)
+    || !food.amount || basisNumbers.some((number) => !Number.isFinite(number) || number < 0 || number > 50_000)
     || (basis !== null && basis.unit !== undefined && !units.has(basis.unit))
     || (rawBasis !== undefined && (!basis || !basis.amount))
     || (rawConversions !== undefined && (!Array.isArray(rawConversions) || conversions.length !== rawConversions.length))
     || conversions.some((conversion) => conversion.unit === basisUnit)
     || new Set(conversions.map((conversion) => conversion.unit)).size !== conversions.length
-    || (basis !== null && food.unit !== basisUnit && !visibleConversion)
-    || !nutritionMatchesBasis
-    || !food.amount
-    || food.amount > (unitLimits[food.unit as NutritionItem["unit"]] ?? 0)
-    || (basis !== null && basis.amount > (unitLimits[basis.unit ?? food.unit as NutritionItem["unit"]] ?? 0))
-    || typeof food.availability !== "string"
-    || !Array.isArray(food.aliases) || food.aliases.some((alias) => typeof alias !== "string")
+    || (basis !== null && food.unit !== basisUnit && !visibleConversion) || !nutritionMatchesBasis
+    || typeof food.availability !== "string" || !Array.isArray(food.aliases) || food.aliases.some((alias) => typeof alias !== "string")
     || !food.source || typeof food.source.label !== "string" || !food.source.label.trim() || typeof food.source.url !== "string" || !trustLevels.has(food.source.trust)) return null;
-  return {
-    ...food,
-    id: food.id.trim(),
-    name: food.name.trim(),
-    brand: food.brand.trim(),
-    variant: food.variant.trim(),
-    ...(conversions.length ? { conversions } : {}),
-  } as NutritionItem;
+  return { ...food, id: food.id.trim(), name: food.name.trim(), brand: food.brand.trim(), variant: food.variant.trim(), ...(conversions.length ? { conversions } : {}) } as NutritionItem;
+}
+
+export function isWeightValueValid(value: number) {
+  return Number.isFinite(value) && value >= 20 && value <= 400;
 }
 
 export function upsertWeightEntry(entries: WeightEntry[], next: WeightEntry) {
-  if (!isDateKey(next.date) || !isWeightValueValid(next.kg)) return entries;
+  if (!isDateKey(next.date) || next.date > currentBangaloreDayKey() || !isWeightValueValid(next.kg)) return entries;
   return [...entries.filter((entry) => isDateKey(entry.date) && isWeightValueValid(entry.kg) && entry.date !== next.date), { date: next.date, kg: Math.round(next.kg * 10) / 10 }]
     .sort((left, right) => left.date.localeCompare(right.date));
 }
@@ -126,41 +156,105 @@ export function getWeightTrendPoints(entries: WeightEntry[], width = 300, height
   if (sorted.length === 0) return [];
   const min = Math.min(...sorted.map((entry) => entry.kg));
   const max = Math.max(...sorted.map((entry) => entry.kg));
-  const range = Math.max(1, max - min);
   const firstTime = Date.parse(`${sorted[0].date}T00:00:00.000Z`);
   const lastTime = Date.parse(`${sorted.at(-1)?.date}T00:00:00.000Z`);
   const timeRange = lastTime - firstTime;
   return sorted.map((entry) => ({
     ...entry,
     x: sorted.length === 1 ? width / 2 : Math.round(((Date.parse(`${entry.date}T00:00:00.000Z`) - firstTime) / timeRange) * width * 100) / 100,
-    y: max === min ? height / 2 : Math.round((height - ((entry.kg - min) / range) * height) * 100) / 100,
+    y: max === min ? height / 2 : Math.round((height - ((entry.kg - min) / Math.max(1, max - min)) * height) * 100) / 100,
   }));
 }
 
+/** A malformed override drops the override, not the whole entry — it falls back to the catalogue. */
+function parseLogOverride(value: unknown): SavedLogOverride | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as Record<string, unknown>;
+  const numericFields = ["calories", "protein", "carbs", "fat", "fiber"] as const;
+  const parsed = {} as Pick<SavedLogOverride, (typeof numericFields)[number]>;
+  for (const field of numericFields) {
+    const raw = candidate[field];
+    if (!Number.isFinite(raw) || (raw as number) < 0) return undefined;
+    parsed[field] = raw as number;
+  }
+  // Calories of exactly zero for every field is not a usable override — it is what an empty
+  // or abandoned edit would look like, and a real entry should not silently vanish to 0 kcal.
+  if (parsed.calories === 0 && parsed.protein === 0 && parsed.carbs === 0 && parsed.fat === 0) return undefined;
+  const name = typeof candidate.name === "string" && candidate.name.trim().length > 0 ? candidate.name.trim().slice(0, 120) : undefined;
+  return name ? { ...parsed, name } : parsed;
+}
+
+function parseLogEntry(entry: unknown): SavedLogEntry[] {
+  if (!entry || typeof entry !== "object") return [];
+  const candidate = entry as { foodId?: unknown; amount?: unknown; snapshot?: unknown; components?: unknown; override?: unknown };
+  if (typeof candidate.foodId !== "string" || candidate.foodId.length === 0) return [];
+  if (!Number.isFinite(candidate.amount) || (candidate.amount as number) <= 0) return [];
+  const components = Array.isArray(candidate.components)
+    ? candidate.components.flatMap((part): Array<{ foodId: string; amount: number }> => {
+      if (!part || typeof part !== "object") return [];
+      const component = part as { foodId?: unknown; amount?: unknown };
+      return typeof component.foodId === "string" && component.foodId.length > 0 && Number.isFinite(component.amount) && (component.amount as number) > 0
+        ? [{ foodId: component.foodId, amount: component.amount as number }]
+        : [];
+    })
+    : [];
+  const saved: SavedLogEntry = { foodId: candidate.foodId, amount: candidate.amount as number };
+  const snapshot = candidate.snapshot === undefined ? undefined : parseFood(candidate.snapshot);
+  if (candidate.snapshot !== undefined && (!snapshot || snapshot.id !== candidate.foodId)) return [];
+  if (snapshot) {
+    saved.snapshot = snapshot;
+    return [saved];
+  }
+  const override = parseLogOverride(candidate.override);
+  // An override replaces the entry's numbers outright, so components (which would otherwise
+  // be re-summed into a different total) are dropped rather than saved alongside it.
+  if (override) saved.override = override;
+  else if (components.length > 0) saved.components = components;
+  return [saved];
+}
+
+function parsePlanEntry(entry: unknown): SavedPlanEntry[] {
+  if (!entry || typeof entry !== "object") return [];
+  const candidate = entry as { id?: unknown; kind?: unknown };
+  return typeof candidate.id === "string" && candidate.id.length > 0 && (candidate.kind === "food" || candidate.kind === "meal")
+    ? [{ id: candidate.id, kind: candidate.kind }]
+    : [];
+}
+
+function parseTargets(value: unknown): SavedTargets | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Record<string, unknown>;
+  const fields = ["calories", "protein", "carbs", "fat"] as const;
+  const parsed = {} as SavedTargets;
+  for (const field of fields) {
+    const raw = candidate[field];
+    if (!Number.isFinite(raw) || (raw as number) <= 0) return null;
+    parsed[field] = raw as number;
+  }
+  return parsed;
+}
+
+/** Newest first, one entry per day, capped. Empty days are dropped so they cannot masquerade as fasted days. */
+function normaliseDays(days: SavedDay[]): SavedDay[] {
+  const byKey = new Map<string, SavedDay>();
+  for (const day of days) {
+    if (!DAY_KEY_PATTERN.test(day.dayKey) || day.logs.length === 0) continue;
+    const existing = byKey.get(day.dayKey);
+    // A duplicated key keeps the richer record rather than whichever happened to be last.
+    if (!existing || day.logs.length > existing.logs.length) byKey.set(day.dayKey, day);
+  }
+  return [...byKey.values()].sort((a, b) => b.dayKey.localeCompare(a.dayKey)).slice(0, MAX_STORED_DAYS);
+}
+
 export function parseSavedNutritionState(raw: string | null): SavedNutritionState {
-  if (!raw) return emptyState();
+  if (!raw) return emptyNutritionState();
 
   try {
     const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return emptyState();
-    const value = parsed as { dayKey?: unknown; logs?: unknown; planned?: unknown; customFoods?: unknown; weights?: unknown };
-    const dayKey = isDateKey(value.dayKey) ? value.dayKey : null;
-    const logs = Array.isArray(value.logs) ? value.logs.flatMap((entry): SavedLogEntry[] => {
-      if (!entry || typeof entry !== "object") return [];
-      const candidate = entry as { foodId?: unknown; amount?: unknown; snapshot?: unknown };
-      if (typeof candidate.foodId !== "string" || !candidate.foodId.trim() || !Number.isFinite(candidate.amount) || (candidate.amount as number) <= 0) return [];
-      const parsedSnapshot = candidate.snapshot === undefined ? undefined : parseFood(candidate.snapshot);
-      if (candidate.snapshot !== undefined && !parsedSnapshot) return [];
-      const foodId = candidate.foodId.trim();
-      if (parsedSnapshot && parsedSnapshot.id !== foodId) return [];
-      const snapshot = parsedSnapshot ?? undefined;
-      return [{ foodId, amount: candidate.amount as number, ...(snapshot ? { snapshot } : {}) }];
-    }) : [];
-    const planned = Array.isArray(value.planned) ? value.planned.flatMap((entry): SavedPlanEntry[] => {
-      if (!entry || typeof entry !== "object") return [];
-      const candidate = entry as { id?: unknown; kind?: unknown };
-      return typeof candidate.id === "string" && candidate.id.trim().length > 0 && (candidate.kind === "food" || candidate.kind === "meal") ? [{ id: candidate.id.trim(), kind: candidate.kind }] : [];
-    }) : [];
+    if (!parsed || typeof parsed !== "object") return emptyNutritionState();
+    const value = parsed as { schemaVersion?: unknown; days?: unknown; dayKey?: unknown; logs?: unknown; planned?: unknown; targets?: unknown; customFoods?: unknown; weights?: unknown };
+    const planned = Array.isArray(value.planned) ? value.planned.flatMap(parsePlanEntry) : [];
+    const targets = parseTargets(value.targets);
     const parsedCustomFoods = Array.isArray(value.customFoods) ? value.customFoods.flatMap((food) => {
       const parsedFood = parseFood(food);
       return parsedFood ? [parsedFood] : [];
@@ -170,14 +264,30 @@ export function parseSavedNutritionState(raw: string | null): SavedNutritionStat
     if (Array.isArray(value.weights)) for (const entry of value.weights) {
       if (!entry || typeof entry !== "object") continue;
       const candidate = entry as { date?: unknown; kg?: unknown };
-      if (!isDateKey(candidate.date) || !isWeightValueValid(candidate.kg as number) || (dayKey !== null && candidate.date > dayKey)) continue;
+      if (!isDateKey(candidate.date) || candidate.date > currentBangaloreDayKey() || !isWeightValueValid(candidate.kg as number)) continue;
       if (weightByDate.size >= 5000 && !weightByDate.has(candidate.date)) continue;
       weightByDate.set(candidate.date, { date: candidate.date, kg: Math.round((candidate.kg as number) * 10) / 10 });
     }
     const weights = [...weightByDate.values()].sort((left, right) => left.date.localeCompare(right.date));
-    return { dayKey, logs, planned, customFoods, weights };
+
+    // Schema 1 held one day inline. Migrate it rather than discarding the diary.
+    if (value.schemaVersion !== 2) {
+      const dayKey = typeof value.dayKey === "string" && DAY_KEY_PATTERN.test(value.dayKey) ? value.dayKey : null;
+      const logs = Array.isArray(value.logs) ? value.logs.flatMap(parseLogEntry) : [];
+      return { schemaVersion: 2, days: dayKey ? normaliseDays([{ dayKey, logs }]) : [], planned, targets, customFoods, weights };
+    }
+
+    const days = Array.isArray(value.days)
+      ? value.days.flatMap((entry): SavedDay[] => {
+        if (!entry || typeof entry !== "object") return [];
+        const candidate = entry as { dayKey?: unknown; logs?: unknown };
+        if (typeof candidate.dayKey !== "string" || !DAY_KEY_PATTERN.test(candidate.dayKey)) return [];
+        return [{ dayKey: candidate.dayKey, logs: Array.isArray(candidate.logs) ? candidate.logs.flatMap(parseLogEntry) : [] }];
+      })
+      : [];
+    return { schemaVersion: 2, days: normaliseDays(days), planned, targets, customFoods, weights };
   } catch {
-    return emptyState();
+    return emptyNutritionState();
   }
 }
 
@@ -185,6 +295,21 @@ export function stringifySavedNutritionState(state: SavedNutritionState) {
   return JSON.stringify(state);
 }
 
-export function shouldRestoreSavedNutritionState(state: SavedNutritionState, dayKey: string) {
-  return state.dayKey === null || state.dayKey === dayKey;
+export function logsForDay(state: SavedNutritionState, dayKey: string): SavedLogEntry[] {
+  return state.days.find((day) => day.dayKey === dayKey)?.logs ?? [];
+}
+
+/**
+ * Replaces one day's entries, leaving every other day untouched. Writing an empty list
+ * removes that day, so a day KP clears does not linger as a zero-calorie record.
+ */
+export function withDayLogs(state: SavedNutritionState, dayKey: string, logs: SavedLogEntry[]): SavedNutritionState {
+  if (!DAY_KEY_PATTERN.test(dayKey)) return state;
+  const others = state.days.filter((day) => day.dayKey !== dayKey);
+  return { ...state, days: normaliseDays(logs.length > 0 ? [{ dayKey, logs }, ...others] : others) };
+}
+
+/** True when saving would push the oldest day out of storage, so the caller can say so. */
+export function wouldDropOldestDay(state: SavedNutritionState, dayKey: string) {
+  return state.days.length >= MAX_STORED_DAYS && !state.days.some((day) => day.dayKey === dayKey);
 }

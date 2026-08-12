@@ -165,3 +165,6 @@ export function isCardIqFoodImport(value: unknown): value is CardIqFoodImport {
     && isDateValue(candidate.generatedAt)
     && isDateValue(candidate.windowStart);
 }
+
+/** Backwards-compatible name used by the diary UI. */
+export const refineCardIqImport = sanitizeCardIqFoodImport;

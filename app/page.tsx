@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { isCardIqFoodImport, sanitizeCardIqFoodImport, type CardIqFoodImport } from "./cardiq-food";
-import { getWeightTrendPoints, LEGACY_NUTRITION_STORAGE_KEY, LOCAL_NUTRITION_STORAGE_KEY, parseSavedNutritionState, shouldPersistNutritionState, shouldRestoreSavedNutritionState, stringifySavedNutritionState, upsertWeightEntry, type SavedNutritionState, type WeightEntry } from "./local-nutrition-state";
-import { getBangaloreClock, getBasisAmountForLogging, getEnergyRunway, getLoggingUnitLabel, getLoggingUnits, getQuantityLimit, isQuantityValid, matchesRecipe, scaleNutritionForUnit, sumLoggedNutrition, sumNutritionDetails, type DashboardClock } from "./prototype-logic";
+import { isCardIqFoodImport, refineCardIqImport, type CardIqFoodImport } from "./cardiq-food";
+import { buildCompositeItem, componentNutrition, defaultCompositeItems, findCompositeByLogId, findComponentFood, type CompositeComponent } from "./composite-foods";
+import { emptyNutritionState, getWeightTrendPoints, LEGACY_NUTRITION_STORAGE_KEYS, LOCAL_NUTRITION_STORAGE_KEY, logsForDay, MAX_STORED_DAYS, parseSavedNutritionState, stringifySavedNutritionState, upsertWeightEntry, withDayLogs, wouldDropOldestDay, type SavedLogEntry, type SavedNutritionState, type WeightEntry } from "./local-nutrition-state";
+import { DEFAULT_TARGETS, loggableMeals, recentDayKeys, resolveLoggedFood, summariseHistory, summariseTrend, type DaySummary } from "./day-history";
+import { estimateSatiety, getBangaloreClock, getBasisAmountForLogging, getEnergyRunway, getLoggingUnitLabel, getLoggingUnits, getQuantityLimit, hasNutritionTarget, isQuantityValid, matchesNutritionTarget, matchesRecipe, satietyLabel, scaleNutrition, scaleNutritionForUnit, sumLoggedNutrition, sumNutritionDetails, type DashboardClock, type NutritionTarget } from "./prototype-logic";
 import { meals, nutritionItems, SOURCE_LINKS, type Meal, type NutritionItem, type NutritionUnit } from "./nutrition-data";
 
 type Area = "plan" | "track";
@@ -26,26 +28,12 @@ const planNav: Array<{ id: PlanView; label: string; icon: string }> = [
   { id: "meals", label: "Meals", icon: "✦" },
 ];
 
-const seedFoods = nutritionItems;
+const foods = nutritionItems;
 const recipes = meals;
-const loggableMeals: Food[] = recipes.map((meal) => ({
-  id: `meal-${meal.id}`,
-  name: meal.name,
-  brand: "Nourish",
-  variant: meal.serving,
-  amount: 1,
-  unit: "serving",
-  calories: meal.calories,
-  protein: meal.protein,
-  carbs: meal.carbs,
-  fat: meal.fat,
-  fiber: meal.fiber,
-  category: "Meal",
-  availability: meal.serving,
-  aliases: meal.tags,
-  source: { label: "Calculated recipe", url: SOURCE_LINKS.ifct, trust: "Reference" },
-}));
-const seedLogFoods = [...seedFoods, ...loggableMeals];
+const compositeItems = defaultCompositeItems();
+/** The meal shown as an example on Today. Falls back to the first recipe if the id changes. */
+const suggestedMeal = recipes.find((recipe) => recipe.id === "cauli-chicken") ?? recipes[0];
+const baseLogFoods = [...compositeItems, ...foods, ...loggableMeals];
 
 function foodLabel(food: Pick<Food, "brand" | "name" | "variant">) {
   return [food.brand, food.name, food.variant].map((part) => part.trim()).filter(Boolean).join(" · ");
@@ -63,9 +51,7 @@ function mergeFoodCatalog(base: Food[], overrides: Food[]) {
 
 function isFoodDetailsValid(food: Food) {
   return Boolean(food.brand.trim() && food.name.trim() && isQuantityValid(food.unit, food.amount))
-    && [food.calories, food.protein, food.carbs, food.fat, food.fiber].every((value) => Number.isFinite(value) && value >= 0 && value <= 50_000)
-    && (food.conversions ?? []).every((conversion) => conversion.unit !== food.unit && Number.isFinite(conversion.basisAmount) && conversion.basisAmount > 0 && conversion.basisAmount <= 5000)
-    && new Set((food.conversions ?? []).map((conversion) => conversion.unit)).size === (food.conversions ?? []).length;
+    && [food.calories, food.protein, food.carbs, food.fat, food.fiber].every((value) => Number.isFinite(value) && value >= 0 && value <= 50_000);
 }
 
 function planEntryFromFood(food: Food): PlannedEntry {
@@ -76,13 +62,8 @@ function planEntryFromMeal(meal: Recipe): PlannedEntry {
   return { id: meal.id, kind: "meal", name: meal.name, serving: meal.serving, calories: meal.calories, protein: meal.protein, carbs: meal.carbs, fat: meal.fat, fiber: meal.fiber };
 }
 
-function restoreNutritionState(saved: SavedNutritionState, dayKey: string, catalog: Food[]) {
-  if (!shouldRestoreSavedNutritionState(saved, dayKey)) return { extras: [] as Food[], planned: [] as PlannedEntry[] };
-  const extras = saved.logs.flatMap((entry): Food[] => {
-    const food = entry.snapshot ?? catalog.find((candidate) => candidate.id === entry.foodId);
-    return food && isQuantityValid(food.unit, entry.amount) ? [scaleNutritionForUnit(food, entry.amount, food.unit)] : [];
-  });
-  const planned = saved.planned.flatMap((entry): PlannedEntry[] => {
+function restorePlanEntries(saved: SavedNutritionState, catalog: Food[] = baseLogFoods): PlannedEntry[] {
+  return saved.planned.flatMap((entry): PlannedEntry[] => {
     if (entry.kind === "meal") {
       const meal = recipes.find((candidate) => candidate.id === entry.id);
       return meal ? [planEntryFromMeal(meal)] : [];
@@ -90,22 +71,24 @@ function restoreNutritionState(saved: SavedNutritionState, dayKey: string, catal
     const food = catalog.find((candidate) => candidate.id === entry.id);
     return food ? [planEntryFromFood(food)] : [];
   });
-  return { extras, planned };
 }
 
-const sampleWeekCalories = [1980, 2140, 2050, 2210, 1890, 2070, 1280];
-const sampleWeekAverage = Math.round(sampleWeekCalories.reduce((sum, value) => sum + value, 0) / sampleWeekCalories.length);
-const sampleMonthDays = Array.from({ length: 31 }, (_, index) => ({
-  day: index + 1,
-  calories: [2080, 2180, 1970, 2250, 2060, 1910, 2120][index % 7] + ((index % 3) - 1) * 35,
-  protein: 118 + (index % 5) * 7,
-}));
+function foodToLogEntry(food: Food): SavedLogEntry {
+  return { foodId: food.id, amount: food.amount, snapshot: food };
+}
 
-const sampleMeals = [
-  { type: "Breakfast", time: "8:10", name: "Masala oats + dahi", calories: 420, macro: "24P · 58C · 12F" },
-  { type: "Lunch", time: "1:25", name: "Rajma chawal bowl", calories: 610, macro: "31P · 72C · 17F" },
-  { type: "Snack", time: "4:40", name: "Banana + whey", calories: 250, macro: "29P · 31C · 3F" },
-];
+function restoreDayLogs(saved: SavedNutritionState, dayKey: string, catalog: Food[] = baseLogFoods): Food[] {
+  return logsForDay(saved, dayKey).flatMap((entry) => {
+    const food = resolveLoggedFood(entry, catalog);
+    return food ? [food] : [];
+  });
+}
+
+/** "9 Aug" — used on axes and chips where a full date would crowd the layout. */
+function formatShortDate(dayKey: string | undefined) {
+  if (!dayKey) return "";
+  return new Date(`${dayKey}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+}
 
 function MacroBar({ label, value, target, tone }: { label: string; value: number; target: number; tone: MacroKey }) {
   const percent = Math.min(100, Math.round((value / target) * 100));
@@ -113,9 +96,9 @@ function MacroBar({ label, value, target, tone }: { label: string; value: number
     <div className="macro-row">
       <div className="macro-label">
         <span><i className={`macro-dot ${tone}`} />{label}</span>
-        <strong>{value}<small> / {target}g</small></strong>
+        <strong>{Math.round(value)}<small> / {target}g</small></strong>
       </div>
-      <div className="progress-track" role="progressbar" aria-label={`${label}: ${value} of ${target} grams`} aria-valuenow={value} aria-valuemin={0} aria-valuemax={target}>
+      <div className="progress-track" role="progressbar" aria-label={`${label}: ${Math.round(value)} of ${target} grams`} aria-valuenow={Math.round(value)} aria-valuemin={0} aria-valuemax={target}>
         <span className={tone} style={{ width: `${percent}%` }} />
       </div>
     </div>
@@ -135,6 +118,41 @@ function SectionHeading({ eyebrow, title, description, action }: { eyebrow: stri
   );
 }
 
+function TargetEditor({ targets, isDefault, onSave, onCancel }: { targets: typeof DEFAULT_TARGETS; isDefault: boolean; onSave: (next: typeof DEFAULT_TARGETS) => void; onCancel: () => void }) {
+  const [draft, setDraft] = useState({ calories: String(targets.calories), protein: String(targets.protein), carbs: String(targets.carbs), fat: String(targets.fat) });
+  const fields: Array<{ key: keyof typeof draft; label: string; suffix: string }> = [
+    { key: "calories", label: "Daily energy", suffix: "kcal" },
+    { key: "protein", label: "Protein", suffix: "g" },
+    { key: "carbs", label: "Carbs", suffix: "g" },
+    { key: "fat", label: "Fat", suffix: "g" },
+  ];
+  const parsed = { calories: Number(draft.calories), protein: Number(draft.protein), carbs: Number(draft.carbs), fat: Number(draft.fat) };
+  const valid = Object.values(parsed).every((value) => Number.isFinite(value) && value > 0);
+  // Shown so KP can see whether the macro grams he typed actually add up to the energy he typed.
+  const macroEnergy = parsed.protein * 4 + parsed.carbs * 4 + parsed.fat * 9;
+  const drift = valid ? Math.round(macroEnergy - parsed.calories) : 0;
+  return (
+    <section className="target-editor surface-card">
+      <div className="target-filters-head">
+        <div><span className="eyebrow">Your daily targets</span><h2>{isDefault ? "These are placeholders until you set your own" : "Saved in this browser"}</h2></div>
+        <button className="text-button" onClick={onCancel}>Cancel</button>
+      </div>
+      <div className="target-fields">
+        {fields.map((field) => (
+          <label key={field.key}>
+            <span>{field.label}</span>
+            <div><input type="number" min={1} inputMode="numeric" value={draft[field.key]} onChange={(event) => setDraft((current) => ({ ...current, [field.key]: event.target.value }))} /><i>{field.suffix}</i></div>
+          </label>
+        ))}
+      </div>
+      <p className={`target-drift ${Math.abs(drift) > 100 ? "warn" : ""}`}>
+        {valid ? `Those macros come to ${Math.round(macroEnergy).toLocaleString("en-IN")} kcal, ${drift === 0 ? "exactly matching" : `${Math.abs(drift)} kcal ${drift > 0 ? "above" : "below"}`} your energy target.` : "Every target must be a number above zero."}
+      </p>
+      <button className="button lime full" disabled={!valid} onClick={() => onSave(parsed)}>Save targets</button>
+    </section>
+  );
+}
+
 function WeightCard({ dayKey, entries, onSave }: { dayKey: string; entries: WeightEntry[]; onSave: (entry: WeightEntry) => void }) {
   const [showForm, setShowForm] = useState(false);
   const [showTrend, setShowTrend] = useState(false);
@@ -144,35 +162,24 @@ function WeightCard({ dayKey, entries, onSave }: { dayKey: string; entries: Weig
   const previous = entries.at(-2) ?? null;
   const change = latest && previous ? Math.round((latest.kg - previous.kg) * 10) / 10 : null;
   const points = getWeightTrendPoints(entries, 300, 92);
-  const chartPath = points.map((point) => `${point.x},${point.y}`).join(" ");
   const kgNumber = Number(kg);
-  const valid = Number.isFinite(kgNumber) && kgNumber >= 20 && kgNumber <= 400;
-
+  const valid = Number.isFinite(kgNumber) && kgNumber >= 20 && kgNumber <= 400 && date <= dayKey;
   return (
     <section className="weight-card surface-card">
-      <div className="section-title-row">
-        <div><span className="eyebrow">Body weight</span><h2>{latest ? `${latest.kg.toFixed(1)} kg` : "Start your trend"}</h2></div>
-        <button className="weight-add-button" onClick={() => setShowForm((value) => !value)}>{showForm ? "Close" : "+ Log"}</button>
-      </div>
-      {latest ? <div className="weight-summary"><span>Last logged {latest.date === dayKey ? "today" : latest.date}</span>{change !== null ? <strong>{change > 0 ? "+" : ""}{change.toFixed(1)} kg <small>from prior log</small></strong> : <strong>First entry</strong>}</div> : <p className="weight-empty">Log whenever you weigh in. No daily streaks or pressure.</p>}
+      <div className="section-title-row"><div><span className="eyebrow">Body weight</span><h2>{latest ? `${latest.kg.toFixed(1)} kg` : "Start your trend"}</h2></div><button className="weight-add-button" onClick={() => setShowForm((value) => !value)}>{showForm ? "Close" : "+ Log"}</button></div>
+      {latest ? <div className="weight-summary"><span>Last logged {latest.date === dayKey ? "today" : latest.date}</span><strong>{change === null ? "First entry" : `${change > 0 ? "+" : ""}${change.toFixed(1)} kg`}</strong></div> : <p className="weight-empty">Log whenever you weigh in. No daily streaks or pressure.</p>}
       {showForm ? <form className="weight-form" onSubmit={(event) => { event.preventDefault(); if (!valid) return; onSave({ date, kg: kgNumber }); setKg(""); setShowForm(false); }}>
         <label><span>Date</span><input type="date" max={dayKey} value={date} onChange={(event) => setDate(event.target.value)} required /></label>
         <label><span>Weight</span><div><input type="number" min="20" max="400" step="0.1" inputMode="decimal" value={kg} onChange={(event) => setKg(event.target.value)} placeholder="72.5" aria-label="Weight in kilograms" /><b>kg</b></div></label>
         <button className="button primary" disabled={!valid}>Save</button>
       </form> : null}
       {entries.length ? <button className="weight-trend-toggle" onClick={() => setShowTrend((value) => !value)} aria-expanded={showTrend}>{showTrend ? "Hide trend" : "Show trend chart"} <span>{showTrend ? "↑" : "↗"}</span></button> : null}
-      {showTrend ? <div className="weight-chart-wrap">
-        <svg className="weight-chart" viewBox="-8 -8 316 108" role="img" aria-label={`Weight trend from ${entries[0].kg} to ${latest?.kg} kilograms across ${entries.length} ${entries.length === 1 ? "entry" : "entries"}`} preserveAspectRatio="none">
-          <polyline points={chartPath} />
-          {points.map((point) => <circle key={point.date} cx={point.x} cy={point.y} r="4" />)}
-        </svg>
-        <div><span>{entries[0].date}</span><strong>{entries.length} {entries.length === 1 ? "entry" : "entries"}</strong><span>{latest?.date}</span></div>
-      </div> : null}
+      {showTrend ? <div className="weight-chart-wrap"><svg className="weight-chart" viewBox="-8 -8 316 108" role="img" aria-label={`Weight trend across ${entries.length} entries`} preserveAspectRatio="none"><polyline points={points.map((point) => `${point.x},${point.y}`).join(" ")} />{points.map((point) => <circle key={point.date} cx={point.x} cy={point.y} r="4" />)}</svg><div><span>{entries[0].date}</span><strong>{entries.length} {entries.length === 1 ? "entry" : "entries"}</strong><span>{latest?.date}</span></div></div> : null}
     </section>
   );
 }
 
-function TodayView({ clock, calories, macros, extras, quickFoods, weights, hasCardIqImport, onLog, onAdd, onEdit, onSaveWeight, onOpenMeals }: {
+function TodayView({ clock, calories, macros, extras, quickFoods, weights, hasCardIqImport, targets, targetsAreDefaults, history, onLog, onAdd, onEdit, onSaveWeight, onOpenMeals, onSaveTargets }: {
   clock: DashboardClock;
   calories: number;
   macros: Record<MacroKey, number>;
@@ -180,19 +187,35 @@ function TodayView({ clock, calories, macros, extras, quickFoods, weights, hasCa
   quickFoods: Food[];
   weights: WeightEntry[];
   hasCardIqImport: boolean;
+  targets: typeof DEFAULT_TARGETS;
+  targetsAreDefaults: boolean;
+  history: DaySummary[];
   onLog: () => void;
   onAdd: (food: Food) => void;
   onEdit: (index: number) => void;
   onSaveWeight: (entry: WeightEntry) => void;
   onOpenMeals: () => void;
+  onSaveTargets: (next: typeof DEFAULT_TARGETS) => void;
 }) {
-  const target = 2150;
-  const runway = getEnergyRunway(calories, target);
+  const [editingTargets, setEditingTargets] = useState(false);
+  const runway = getEnergyRunway(calories, targets.calories);
   const circleProgress = Math.min(100, runway.percentage);
   const circleStyle = { "--energy-progress": `${circleProgress * 3.6}deg` } as CSSProperties;
+  const targetWord = targetsAreDefaults ? "placeholder target" : "target";
   const description = calories === 0
     ? "Nothing is assumed. Start by logging what you actually ate today."
     : `You’ve logged ${Math.round(calories).toLocaleString("en-IN")} kcal today. Add or edit foods whenever you need.`;
+
+  // The strip shows the last seven Bangalore days including today. A day with no diary is
+  // drawn as a gap, never as a zero, because not logging is not the same as not eating.
+  const weekKeys = recentDayKeys(clock.dayKey, 7);
+  const week = weekKeys.map((dayKey) => {
+    const logged = dayKey === clock.dayKey ? { dayKey, calories, entryCount: extras.length } : history.find((day) => day.dayKey === dayKey);
+    return { dayKey, calories: logged?.calories ?? null, isToday: dayKey === clock.dayKey };
+  });
+  const weekLogged = week.filter((day) => day.calories !== null);
+  const weekAverage = weekLogged.length > 0 ? Math.round(weekLogged.reduce((sum, day) => sum + (day.calories ?? 0), 0) / weekLogged.length) : null;
+  const weekPeak = Math.max(targets.calories, ...weekLogged.map((day) => day.calories ?? 0));
 
   return (
     <>
@@ -203,26 +226,28 @@ function TodayView({ clock, calories, macros, extras, quickFoods, weights, hasCa
         action={<button className="button primary" onClick={onLog}><span>＋</span> Log food</button>}
       />
 
+      {editingTargets ? <TargetEditor targets={targets} isDefault={targetsAreDefaults} onSave={(next) => { onSaveTargets(next); setEditingTargets(false); }} onCancel={() => setEditingTargets(false)} /> : null}
+
       <div className="today-layout">
         <section className="energy-card dark-card">
-          <div className="card-kicker"><span>Daily energy</span><span className={`status-pill ${runway.isOver ? "over" : ""}`}>{runway.isOver ? "Over sample target" : "Sample target"}</span></div>
+          <div className="card-kicker"><span>Daily energy</span><span className={`status-pill ${runway.isOver ? "over" : ""}`}>{runway.isOver ? `Over ${targetWord}` : targetsAreDefaults ? "Placeholder target" : "On plan"}</span></div>
           <div className="energy-main">
-            <div className="energy-ring" style={circleStyle} role="progressbar" aria-label={`${calories} of ${target} calories eaten`} aria-valuenow={calories} aria-valuemin={0} aria-valuemax={target}>
+            <div className="energy-ring" style={circleStyle} role="progressbar" aria-label={`${calories} of ${targets.calories} calories eaten`} aria-valuenow={calories} aria-valuemin={0} aria-valuemax={targets.calories}>
               <div><strong>{Math.round(calories).toLocaleString("en-IN")}</strong><span>kcal eaten</span></div>
             </div>
             <div className="runway">
-              <span>{runway.isOver ? "Above sample target" : "To sample target"}</span>
+              <span>{runway.isOver ? `Above ${targetWord}` : `To ${targetWord}`}</span>
               <strong>{runway.amount.toLocaleString("en-IN")}</strong>
               <small>{runway.isOver ? "kcal over" : "kcal remaining"}</small>
-              <p>{runway.percentage}% of the sample {target.toLocaleString("en-IN")} kcal target</p>
+              <p>{runway.percentage}% of your {targets.calories.toLocaleString("en-IN")} kcal {targetWord}</p>
               <button className="button orange" onClick={onLog}>＋ Log food</button>
             </div>
           </div>
           <div className="macro-stack dark-macros">
-            <span className="sample-context">Sample macro targets · replace during onboarding</span>
-            <MacroBar label="Protein" value={macros.protein} target={150} tone="protein" />
-            <MacroBar label="Carbs" value={macros.carbs} target={215} tone="carbs" />
-            <MacroBar label="Fat" value={macros.fat} target={72} tone="fat" />
+            <span className="sample-context">{targetsAreDefaults ? "Placeholder targets · set your own" : "Your targets"} <button className="text-button inline" onClick={() => setEditingTargets((value) => !value)}>Edit</button></span>
+            <MacroBar label="Protein" value={macros.protein} target={targets.protein} tone="protein" />
+            <MacroBar label="Carbs" value={macros.carbs} target={targets.carbs} tone="carbs" />
+            <MacroBar label="Fat" value={macros.fat} target={targets.fat} tone="fat" />
           </div>
         </section>
 
@@ -235,34 +260,45 @@ function TodayView({ clock, calories, macros, extras, quickFoods, weights, hasCa
             {extras.length === 0 ? <div className="timeline-empty"><strong>No food logged yet</strong><span>Your actual entries—and only your actual entries—will appear here.</span><button className="text-button" onClick={onLog}>Log your first food</button></div> : extras.map((food, index) => (
               <article className="meal-entry added" key={`${food.name}-${index}`}>
                 <i className="timeline-dot" />
-                <div className="meal-meta"><span className="logged-volume">{food.amount} {food.unit} logged today</span><strong>{foodLabel(food)}</strong><small>{food.protein.toFixed(1)}P · {food.carbs.toFixed(1)}C · {food.fat.toFixed(1)}F</small></div>
-                <div className="entry-actions"><b>{Math.round(food.calories)} kcal</b><button onClick={() => onEdit(index)}>Edit food & quantity</button></div>
+                <div className="meal-meta"><span className="logged-volume">Logged today · {food.amount} {food.unit}{food.amount === 1 ? "" : food.unit === "piece" ? "s" : food.unit === "serving" || food.unit === "scoop" || food.unit === "pack" ? "s" : ""}</span><strong>{foodLabel(food)}</strong><small>{food.protein.toFixed(1)}P · {food.carbs.toFixed(1)}C · {food.fat.toFixed(1)}F · {food.fiber.toFixed(1)} fibre</small>{food.source.trust === "Estimated" || food.source.trust === "Personal" ? <em>Edited by you</em> : null}</div>
+                <div className="entry-actions"><b>{Math.round(food.calories)} kcal</b><button onClick={() => onEdit(index)}>Edit</button></div>
               </article>
             ))}
           </div>
         </section>
 
         <aside className="today-rail">
+          <WeightCard dayKey={clock.dayKey} entries={weights} onSave={onSaveWeight} />
           <section className="quick-card surface-card">
             <div className="section-title-row"><div><span className="eyebrow">{hasCardIqImport ? "From cardIQ" : "One tap"}</span><h2>Quick add</h2></div><button className="text-button" onClick={onLog}>See all</button></div>
             <div className="quick-grid">
               {quickFoods.slice(0, 4).map((food) => (
-                <button key={food.id} onClick={() => onAdd(food)}><span>{foodLabel(food)}</span><b>＋</b></button>
+                <button key={food.name} onClick={() => onAdd(food)}><span>{food.name}</span><b>＋</b></button>
               ))}
             </div>
           </section>
-          <WeightCard dayKey={clock.dayKey} entries={weights} onSave={onSaveWeight} />
           <section className="nudge-card dark-card">
             <span className="eyebrow bright">Sample meal idea · not logged</span>
-            <h2>Pepper chicken cauliflower rice</h2>
-            <p>A researched example with 56 g protein and 10.8 g fibre for 406 kcal. Browse it before choosing anything.</p>
+            <h2>{suggestedMeal.name}</h2>
+            <p>A researched example with {suggestedMeal.protein} g protein and {suggestedMeal.fiber} g fibre for {suggestedMeal.calories} kcal. Browse it before choosing anything.</p>
             <button className="button lime" onClick={onOpenMeals}>Browse meals <span>→</span></button>
           </section>
           <section className="week-card surface-card">
-            <div className="section-title-row"><div><span className="eyebrow">Sample data · 7 days</span><h2>Energy rhythm preview</h2></div><strong>{sampleWeekAverage.toLocaleString("en-IN")} <small>sample avg</small></strong></div>
-            <div className="mini-bars" role="img" aria-label="Sample seven-day calorie chart, not your real history">
-              {sampleWeekCalories.map((value, index) => <span key={`${value}-${index}`} className={index === 6 ? "active" : ""} style={{ height: `${Math.round((value / 2300) * 100)}%` }}><i>{["S", "M", "T", "W", "T", "F", "S"][index]}</i></span>)}
-            </div>
+            <div className="section-title-row"><div><span className="eyebrow">Last 7 days · your diary</span><h2>Energy rhythm</h2></div>{weekAverage !== null ? <strong>{weekAverage.toLocaleString("en-IN")} <small>avg of {weekLogged.length}</small></strong> : null}</div>
+            {weekLogged.length === 0 ? (
+              <p className="week-empty">Nothing logged in the last seven days yet. This fills in as you log.</p>
+            ) : (
+              <>
+                <div className="mini-bars" role="img" aria-label={`Calories logged on ${weekLogged.length} of the last 7 days`}>
+                  {week.map((day) => (
+                    <span key={day.dayKey} className={`${day.isToday ? "active" : ""} ${day.calories === null ? "no-data" : ""}`} style={{ height: day.calories === null ? "4%" : `${Math.max(4, Math.round((day.calories / weekPeak) * 100))}%` }}>
+                      <i>{new Date(`${day.dayKey}T00:00:00Z`).toLocaleDateString("en-GB", { weekday: "narrow", timeZone: "UTC" })}</i>
+                    </span>
+                  ))}
+                </div>
+                {weekLogged.length < 7 ? <small className="week-note">{7 - weekLogged.length} of these days have no diary. They are shown as gaps, not as zero.</small> : null}
+              </>
+            )}
           </section>
         </aside>
       </div>
@@ -270,82 +306,148 @@ function TodayView({ clock, calories, macros, extras, quickFoods, weights, hasCa
   );
 }
 
-function HistoryView() {
-  const [selected, setSelected] = useState(8);
-  const day = sampleMonthDays[selected - 1];
+function HistoryView({ history, clock, targets }: { history: DaySummary[]; clock: DashboardClock; targets: typeof DEFAULT_TARGETS }) {
+  const [selectedKey, setSelectedKey] = useState<string | null>(history[0]?.dayKey ?? null);
+  const monthPrefix = clock.dayKey.slice(0, 7);
+  const [year, month] = monthPrefix.split("-").map(Number);
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const firstWeekday = (new Date(Date.UTC(year, month - 1, 1)).getUTCDay() + 6) % 7; // Monday-first
+  const monthDays = Array.from({ length: daysInMonth }, (_, index) => {
+    const dayKey = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
+    return { day: index + 1, dayKey, summary: history.find((entry) => entry.dayKey === dayKey) ?? null, isFuture: dayKey > clock.dayKey };
+  });
+  const selected = selectedKey ? history.find((day) => day.dayKey === selectedKey) ?? null : null;
+  const monthLabel = new Date(`${monthPrefix}-01T00:00:00Z`).toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
+
+  if (history.length === 0) {
+    return (
+      <>
+        <SectionHeading eyebrow="Track · History" title="Your history starts today" description="Every day you log is kept here from now on. Nothing is invented and no day is filled in for you." action={<span className="prototype-badge">0 days recorded</span>} />
+        <div className="empty-state">
+          <strong>No completed days yet.</strong>
+          <span>Today’s diary appears here once the Bangalore day rolls over. Days you don’t log stay blank rather than counting as zero.</span>
+        </div>
+      </>
+    );
+  }
+
   return (
     <>
-      <SectionHeading eyebrow="Track · History · Sample preview" title="What your history will look like" description="Everything in this view is illustrative until Nourish has enough of your real dated logs." action={<span className="prototype-badge">Sample data</span>} />
+      <SectionHeading eyebrow="Track · History" title={`${history.length} ${history.length === 1 ? "day" : "days"} recorded`} description="Only days you actually logged appear. A blank day means no diary was kept, not a day without food." action={<span className="prototype-badge">Your data</span>} />
       <div className="history-layout">
         <section className="surface-card calendar-card">
-          <div className="section-title-row"><div><span className="eyebrow">Sample month · August 2026</span><h2>Example calorie consistency</h2></div><span className="prototype-badge">Not your data</span></div>
+          <div className="section-title-row"><div><span className="eyebrow">{monthLabel}</span><h2>Days you logged</h2></div><div className="legend"><i /> Within {Math.round(targets.calories * 0.08)} kcal <i /> Outside</div></div>
           <div className="calendar-weekdays">{["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => <span key={d}>{d}</span>)}</div>
           <div className="month-grid">
-            {sampleMonthDays.map((item) => {
-              const state = item.calories > 2180 ? "over" : item.calories < 1950 ? "under" : "within";
-              return <button key={item.day} className={`${state} ${selected === item.day ? "selected" : ""}`} onClick={() => setSelected(item.day)} aria-pressed={selected === item.day}><span>{item.day}</span><b>{item.calories}</b><small>kcal</small></button>;
+            {Array.from({ length: firstWeekday }, (_, index) => <i key={`pad-${index}`} className="month-pad" />)}
+            {monthDays.map((item) => {
+              const state = !item.summary ? "no-data" : Math.abs(item.summary.calories - targets.calories) <= targets.calories * 0.08 ? "within" : item.summary.calories > targets.calories ? "over" : "under";
+              return (
+                <button key={item.dayKey} className={`${state} ${selectedKey === item.dayKey ? "selected" : ""}`} disabled={!item.summary} onClick={() => setSelectedKey(item.dayKey)} aria-pressed={selectedKey === item.dayKey} aria-label={item.summary ? `${item.day} ${monthLabel}: ${Math.round(item.summary.calories)} kcal` : `${item.day} ${monthLabel}: nothing logged`}>
+                  <span>{item.day}</span>
+                  {item.summary ? <><b>{Math.round(item.summary.calories)}</b><small>kcal</small></> : <small className="no-data-mark">{item.isFuture ? "" : "—"}</small>}
+                </button>
+              );
             })}
           </div>
         </section>
         <aside className="history-detail dark-card">
-          <span className="eyebrow bright">Sample day · {selected} August</span>
-          <h2>{day.calories.toLocaleString("en-IN")} <small>kcal</small></h2>
-          <p className="history-message">A steady day with a strong lunch and room left for an intentional dinner.</p>
-          <div className="history-metrics">
-            <div><span>Protein</span><strong>{day.protein} g</strong></div>
-            <div><span>Carbs</span><strong>204 g</strong></div>
-            <div><span>Fat</span><strong>68 g</strong></div>
-          </div>
-          <div className="history-meals">
-            {sampleMeals.map((meal) => <div key={meal.type}><span>{meal.type}</span><strong>{meal.name}</strong><b>{meal.calories}</b></div>)}
-          </div>
-          <span className="sample-note">Sample only · real dated history is not available yet.</span>
+          {selected ? (
+            <>
+              <span className="eyebrow bright">{new Date(`${selected.dayKey}T00:00:00Z`).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" })}</span>
+              <h2>{Math.round(selected.calories).toLocaleString("en-IN")} <small>kcal</small></h2>
+              <p className="history-message">{selected.entryCount} {selected.entryCount === 1 ? "item" : "items"} logged{selected.unresolvedCount > 0 ? ` · ${selected.unresolvedCount} entry could not be resolved, so this total is incomplete` : ""}.</p>
+              <div className="history-metrics">
+                <div><span>Protein</span><strong>{selected.protein.toFixed(1)} g</strong></div>
+                <div><span>Carbs</span><strong>{selected.carbs.toFixed(1)} g</strong></div>
+                <div><span>Fat</span><strong>{selected.fat.toFixed(1)} g</strong></div>
+                <div><span>Fibre</span><strong>{selected.fiber.toFixed(1)} g</strong></div>
+              </div>
+              <span className="sample-note">Against your {targets.calories.toLocaleString("en-IN")} kcal target: {selected.calories > targets.calories ? `${Math.round(selected.calories - targets.calories).toLocaleString("en-IN")} kcal over` : `${Math.round(targets.calories - selected.calories).toLocaleString("en-IN")} kcal under`}.</span>
+            </>
+          ) : (
+            <>
+              <span className="eyebrow bright">No day selected</span>
+              <h2>Pick a day</h2>
+              <p className="history-message">Days with a diary are selectable. Blank days were never logged.</p>
+            </>
+          )}
         </aside>
       </div>
     </>
   );
 }
 
-function TrendsView() {
-  const range = "30D";
-  const sampleBars = [72, 84, 68, 91, 77, 82, 73, 88, 79, 86, 69, 76, 90, 83];
+function TrendsView({ history, targets }: { history: DaySummary[]; targets: typeof DEFAULT_TARGETS }) {
+  const ranges = [7, 30, 90] as const;
+  const [range, setRange] = useState<(typeof ranges)[number]>(30);
+  const window = summariseTrend(history, range, targets.calories);
+  const bars = history.slice(0, range).reverse();
+  const peak = Math.max(targets.calories, ...bars.map((day) => day.calories));
+
   return (
     <>
-      <SectionHeading eyebrow="Track · Trends · Sample preview" title="What your trends will look like" description="These charts demonstrate the future experience; none of the values or insights below are based on your food diary yet." action={<span className="prototype-badge">Sample data</span>} />
-      <div className="trends-grid">
-        <section className="surface-card calorie-trend">
-          <div className="section-title-row"><div><span className="eyebrow">Sample daily energy · {range}</span><h2>Illustrative calorie pattern</h2></div><span className="prototype-badge">Not your data</span></div>
-          <div className="trend-chart" role="img" aria-label={`${range} sample calorie trend, not your real data`}>
-            <i className="target-line"><span>Sample target</span></i>
-            {sampleBars.map((height, index) => <span key={`${height}-${index}`} className={index > 10 ? "recent" : ""} style={{ height: `${height}%` }} />)}
-          </div>
-          <div className="chart-axis"><span>10 Jul</span><span>24 Jul</span><span>8 Aug</span></div>
-        </section>
-        <section className="trend-insight dark-card">
-          <span className="eyebrow bright">Sample insight · not yours</span>
-          <h2>Nourish will surface patterns after enough real logs.</h2>
-          <p>For example, it could notice when protein tends to be missed earlier in the day—without pretending that pattern exists yet.</p>
-          <div className="insight-number"><strong>Example</strong><span>Real insights will cite the days and meals behind them.</span></div>
-        </section>
-        <section className="surface-card macro-average">
-          <span className="eyebrow">Sample macro split</span><h2>Illustrative only</h2>
-          <div className="macro-donut" role="img" aria-label="Sample energy split, not your real data"><div><strong>29%</strong><span>sample</span></div></div>
-          <div className="macro-legend"><span><i className="protein" />Protein <b>29%</b></span><span><i className="carbs" />Carbs <b>42%</b></span><span><i className="fat" />Fat <b>29%</b></span></div>
-        </section>
-        <section className="surface-card consistency-card">
-          <span className="eyebrow">Sample consistency</span><h2>Example month</h2><p>Real consistency appears after you have enough dated logs.</p>
-          <div className="dot-field">{Array.from({ length: 30 }, (_, i) => <i key={i} className={i < 18 ? "hit" : i < 26 ? "near" : "miss"} />)}</div>
-        </section>
-      </div>
+      <SectionHeading
+        eyebrow="Track · Trends"
+        title="Your rhythm, not a report card"
+        description="Averages count only the days you actually logged. A day without a diary is never treated as a day without food."
+        action={<div className="segmented compact">{ranges.map((value) => <button key={value} className={range === value ? "active" : ""} onClick={() => setRange(value)}>{value}D</button>)}</div>}
+      />
+      {window.average === null ? (
+        <div className="empty-state">
+          <strong>Nothing logged in the last {range} days.</strong>
+          <span>Trends appear once there are real days to compare. Nourish will not draw a chart out of nothing.</span>
+        </div>
+      ) : (
+        <div className="trends-grid">
+          <section className="surface-card calorie-trend">
+            <div className="section-title-row"><div><span className="eyebrow">Daily energy · last {range} days</span><h2>Average {Math.round(window.average.calories).toLocaleString("en-IN")} kcal</h2></div><span className="soft-badge">{window.loggedDays} of {range} days logged</span></div>
+            <div className="trend-chart" role="img" aria-label={`Calories across ${window.loggedDays} logged days, averaging ${Math.round(window.average.calories)}`}>
+              <i className="target-line" style={{ bottom: `${Math.round((targets.calories / peak) * 100)}%` }}><span>{targets.calories.toLocaleString("en-IN")} target</span></i>
+              {bars.map((day) => <span key={day.dayKey} title={`${formatShortDate(day.dayKey)}: ${Math.round(day.calories).toLocaleString("en-IN")} kcal`} style={{ height: `${Math.max(3, Math.round((day.calories / peak) * 100))}%` }} />)}
+            </div>
+            <div className="chart-axis"><span>{formatShortDate(bars[0]?.dayKey)}</span><span>{formatShortDate(bars[bars.length - 1]?.dayKey)}</span></div>
+          </section>
+          <section className="trend-insight dark-card">
+            <span className="eyebrow bright">Average macros per logged day</span>
+            <h2>{Math.round(window.average.protein)} g protein</h2>
+            <p>{Math.round(window.average.carbs)} g carbs · {Math.round(window.average.fat)} g fat · {Math.round(window.average.fiber)} g fibre, averaged across {window.loggedDays} {window.loggedDays === 1 ? "day" : "days"}.</p>
+            <div className="insight-number"><strong>{window.average.protein >= targets.protein ? "On target" : `${Math.round(targets.protein - window.average.protein)} g short`}</strong><span>against your {targets.protein} g protein target.</span></div>
+          </section>
+          <section className="surface-card macro-average">
+            <span className="eyebrow">Energy split</span><h2>Where the calories came from</h2>
+            <div className="macro-legend">
+              {(() => {
+                const energy = window.average.protein * 4 + window.average.carbs * 4 + window.average.fat * 9;
+                const share = (grams: number, factor: number) => energy > 0 ? Math.round((grams * factor / energy) * 100) : 0;
+                return <>
+                  <span><i className="protein" />Protein <b>{share(window.average.protein, 4)}%</b></span>
+                  <span><i className="carbs" />Carbs <b>{share(window.average.carbs, 4)}%</b></span>
+                  <span><i className="fat" />Fat <b>{share(window.average.fat, 9)}%</b></span>
+                </>;
+              })()}
+            </div>
+          </section>
+          <section className="surface-card consistency-card">
+            <span className="eyebrow">Consistency</span>
+            <h2>{window.daysOnTarget ?? 0} of {window.loggedDays} logged days</h2>
+            <p>landed within 8% of your {targets.calories.toLocaleString("en-IN")} kcal target.</p>
+            <div className="dot-field">{bars.map((day) => <i key={day.dayKey} className={Math.abs(day.calories - targets.calories) <= targets.calories * 0.08 ? "hit" : "miss"} />)}</div>
+          </section>
+        </div>
+      )}
     </>
   );
 }
 
-function PurchasesView({ onAdd, cardIqImport, catalog }: { onAdd: (food: Food) => void; cardIqImport: CardIqFoodImport | null; catalog: Food[] }) {
+function PurchasesView({ onAdd, cardIqImport }: { onAdd: (food: Food) => void; cardIqImport: CardIqFoodImport | null }) {
   const [filter, setFilter] = useState<"All" | "Needs review">("All");
   const purchaseItems = (cardIqImport?.items ?? []).map((item) => {
-    const food = item.matchedFoodId ? catalog.find((candidate) => candidate.id === item.matchedFoodId) ?? null : null;
+    const food = item.matchedFoodId ? foods.find((candidate) => candidate.id === item.matchedFoodId) ?? null : null;
     return { ...item, food, match: food ? "Matched" as const : "Review" as const, cal: food ? `${Math.round(food.calories)} kcal / ${food.amount} ${food.unit}` : "Exact pack label needed" };
+    // matchKind answers "is this the right product?"; source.trust answers "how good is this
+    // number?". Both are shown, because a confident identity on a mirrored panel is not the
+    // same as a confident identity on the pack's own label.
   });
   const shown = filter === "Needs review" ? purchaseItems.filter((item) => item.match === "Review") : purchaseItems;
   const stores = ["Instamart", "Amazon", "BigBasket"] as const;
@@ -353,13 +455,20 @@ function PurchasesView({ onAdd, cardIqImport, catalog }: { onAdd: (food: Food) =
     <>
       <SectionHeading eyebrow="Track · Purchases" title="Your food shelf, already waiting" description={cardIqImport ? `Your actual food products from the last year of cardIQ orders. Matched foods are ready to log; the rest wait for an exact nutrition label.` : "Run the local cardIQ import to bring your real orders here. No order history is stored in Git."} action={<span className="prototype-badge">{cardIqImport ? `Synced ${cardIqImport.generatedAt.slice(0, 10)}` : "Local import needed"}</span>} />
       <div className="purchase-summary">
-        {stores.map((name, index) => { const items = purchaseItems.filter((item) => item.store === name); const ready = items.filter((item) => item.food).length; return <section className={`source-card dark-card ${["lime", "orange", "cream"][index]}`} key={name}><span>{name}</span><strong>{items.length}</strong><small>food products in the last year</small><i>{ready} nutrition-ready</i></section>; })}
+        {stores.map((name, index) => {
+          const items = purchaseItems.filter((item) => item.store === name);
+          const ready = items.filter((item) => item.food).length;
+          // SPEC §4.7: Amazon's export does not identify the Now channel, so the app must
+          // say so rather than imply a certainty the data does not support.
+          const label = name === "Amazon" ? "Amazon — channel unconfirmed" : name;
+          return <section className={`source-card dark-card ${["lime", "orange", "cream"][index]}`} key={name}><span>{label}</span><strong>{items.length}</strong><small>food products in the last year</small><i>{ready} nutrition-ready</i></section>;
+        })}
       </div>
       <section className="surface-card purchase-table-card">
         <div className="section-title-row"><div><span className="eyebrow">Personal catalogue</span><h2>Recently purchased foods</h2></div><div className="table-actions"><button className={`chip ${filter === "All" ? "active" : ""}`} onClick={() => setFilter("All")}>All</button><button className={`chip ${filter === "Needs review" ? "active" : ""}`} onClick={() => setFilter("Needs review")}>Needs review</button></div></div>
         <div className="purchase-table">
           <div className="purchase-row header"><span>Item</span><span>Store</span><span>Nutrition</span><span>Status</span><span /></div>
-          {shown.map((item) => <div className="purchase-row" key={`${item.store}-${item.name}`}><span className="purchase-name"><b>{item.name}</b><small>{item.orderCount} order{item.orderCount === 1 ? "" : "s"} · last {item.lastOrdered}</small></span><span><em>{item.store}</em></span><span>{item.cal}</span><span><i className={item.match === "Matched" ? "matched" : "review"}>{item.food ? item.matchKind ?? item.match : "Needs label"}</i></span><span><button aria-label={item.food ? `Quick add ${item.name}` : `${item.name} needs nutrition review`} disabled={!item.food} onClick={() => { if (item.food) onAdd(item.food); }}>＋</button></span></div>)}
+          {shown.map((item) => <div className="purchase-row" key={`${item.store}-${item.name}`}><span className="purchase-name"><b>{item.name}</b><small>{item.orderCount} order{item.orderCount === 1 ? "" : "s"} · last {item.lastOrdered}</small></span><span><em>{item.store}</em></span><span className="purchase-nutrition">{item.cal}{item.food ? <small>{item.food.source.trust}</small> : null}</span><span><i className={item.match === "Matched" ? "matched" : "review"}>{item.food ? item.matchKind ?? item.match : "Needs label"}</i></span><span><button aria-label={item.food ? `Quick add ${item.name}` : `${item.name} needs nutrition review`} disabled={!item.food} onClick={() => { if (item.food) onAdd(item.food); }}>＋</button></span></div>)}
           {shown.length === 0 ? <div className="empty-state"><strong>{cardIqImport ? "Nothing in this view." : "Your cardIQ food snapshot is not here yet."}</strong><span>{cardIqImport ? "Try the other filter." : "The importer keeps your personal purchase history on this Mac only."}</span></div> : null}
         </div>
       </section>
@@ -385,29 +494,36 @@ function RecipeCard({ recipe, onOpen, onPlan }: { recipe: Recipe; onOpen: (recip
         <div className="recipe-tags">{recipe.tags.slice(0, 3).map((tag) => <span key={tag}>{tag}</span>)}</div>
         <button className="recipe-title" onClick={() => onOpen(recipe)}>{recipe.name}</button>
         <div className="recipe-macros"><strong>{recipe.calories} <small>kcal</small></strong><span>{recipe.protein}P</span><span>{recipe.carbs}C</span><span>{recipe.fat}F</span><span>{recipe.fiber} fibre</span></div>
+        <div className="fullness-line" title="Estimated from protein, fibre and energy density"><i className="fullness-track"><span style={{ width: `${estimateSatiety(recipe)}%` }} /></i><small>{satietyLabel(estimateSatiety(recipe))} · est. {estimateSatiety(recipe)}/100</small></div>
         <button className="button secondary full recipe-plan-button" onClick={() => onPlan(recipe)}>＋ Add meal to plan</button>
       </div>
     </article>
   );
 }
 
-function ItemsView({ planned, catalog, onPlan, onRemove }: { planned: PlannedEntry[]; catalog: Food[]; onPlan: (food: Food) => void; onRemove: (index: number) => void }) {
+function ItemsView({ planned, onPlan, onRemove }: { planned: PlannedEntry[]; onPlan: (food: Food) => void; onRemove: (index: number) => void }) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("All");
+  const [sortByFullness, setSortByFullness] = useState(false);
   const query = search.trim().toLowerCase();
-  const shown = catalog.filter((food) => food.category !== "Meal" && (filter === "All" || food.category === filter) && (!query || [food.name, food.brand, food.variant, ...food.aliases].join(" ").toLowerCase().includes(query)));
+  const matched = foods.filter((food) => (filter === "All" || food.category === filter) && (!query || [food.name, food.brand, ...food.aliases].filter(Boolean).join(" ").toLowerCase().includes(query)));
+  const shown = sortByFullness ? [...matched].sort((a, b) => estimateSatiety(b) - estimateSatiety(a) || b.protein - a.protein) : matched;
   return (
     <>
-      <SectionHeading eyebrow="Plan · Items" title="Start with the exact thing" description="Search products you buy and raw ingredients you can find around Bengaluru. Every result keeps its serving basis and evidence strength." action={<span className="prototype-badge">{catalog.filter((food) => food.category !== "Meal").length} items</span>} />
+      <SectionHeading eyebrow="Plan · Items" title="Start with the exact thing" description="Search products you buy and raw ingredients you can find around Bengaluru. Every result keeps its serving basis and evidence strength." action={<span className="prototype-badge">{foods.length} researched items</span>} />
       <PlanSummary entries={planned} onRemove={onRemove} />
       <section className="item-search-hero surface-card">
         <div className="catalogue-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} aria-label="Search products and ingredients" placeholder="Search Nandini milk, chia, chicken, paneer…" /></div>
-        <div className="filter-row" aria-label="Item filters">{["All", "Ordered", "Product", "Ingredient"].map((item) => <button className={`chip ${filter === item ? "active" : ""}`} key={item} onClick={() => setFilter(item)} aria-pressed={filter === item}>{item}</button>)}</div>
+        <div className="filter-row" aria-label="Item filters">
+          {["All", "Ordered", "Product", "Ingredient"].map((item) => <button className={`chip ${filter === item ? "active" : ""}`} key={item} onClick={() => setFilter(item)} aria-pressed={filter === item}>{item}</button>)}
+          <button className={`chip ${sortByFullness ? "active" : ""}`} onClick={() => setSortByFullness((value) => !value)} aria-pressed={sortByFullness}>Most filling first</button>
+        </div>
       </section>
       <div className="item-catalogue-grid">{shown.map((food) => <article className="item-card surface-card" key={food.id}>
         <div className="item-card-head"><span className={`trust-mark ${food.source.trust === "Label mirror" ? "review" : ""}`}>{food.source.trust}</span><small>{food.availability}</small></div>
-        <div><span className="item-brand">{food.brand}</span><h2>{food.name}</h2>{food.variant ? <span className="item-variant">{food.variant}</span> : null}<p>Per {food.amount} {food.unit}</p></div>
+        <div><span className="item-brand">{food.brand ?? food.category}</span><h2>{food.name}</h2><p>Per {food.amount} {food.unit}</p></div>
         <div className="item-nutrition"><strong>{Math.round(food.calories)}<small> kcal</small></strong><span>{food.protein}g <small>protein</small></span><span>{food.carbs}g <small>carbs</small></span><span>{food.fat}g <small>fat</small></span><span>{food.fiber}g <small>fibre</small></span></div>
+        <div className="fullness-line" title="Estimated from protein, fibre and energy density"><i className="fullness-track"><span style={{ width: `${estimateSatiety(food)}%` }} /></i><small>{satietyLabel(estimateSatiety(food))} · est. {estimateSatiety(food)}/100</small></div>
         <div className="item-card-actions"><a href={food.source.url} target="_blank" rel="noreferrer">Source ↗</a><button className="button primary" onClick={() => onPlan(food)}>＋ Plan this</button></div>
       </article>)}</div>
       {shown.length === 0 ? <div className="empty-state"><strong>No researched item matches yet.</strong><span>Try a broader name; exact cardIQ products arrive in the purchase-import phase.</span><button className="button secondary" onClick={() => { setSearch(""); setFilter("All"); }}>Clear search</button></div> : null}
@@ -416,10 +532,48 @@ function ItemsView({ planned, catalog, onPlan, onRemove }: { planned: PlannedEnt
   );
 }
 
+/** A blank or non-numeric box means "no bound", not zero. */
+function boundFrom(value: string): number | undefined {
+  if (value.trim() === "") return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function TargetFilters({ target, onChange, onClear }: { target: Record<"maxCalories" | "minProtein" | "maxProtein", string>; onChange: (key: "maxCalories" | "minProtein" | "maxProtein", value: string) => void; onClear: () => void }) {
+  const fields: Array<{ key: "maxCalories" | "minProtein" | "maxProtein"; label: string; suffix: string; placeholder: string }> = [
+    { key: "maxCalories", label: "Calories at most", suffix: "kcal", placeholder: "500" },
+    { key: "minProtein", label: "Protein at least", suffix: "g", placeholder: "50" },
+    { key: "maxProtein", label: "Protein at most", suffix: "g", placeholder: "70" },
+  ];
+  const active = fields.some((field) => target[field.key].trim() !== "");
+  return (
+    <section className="target-filters surface-card" aria-label="Nutrition target">
+      <div className="target-filters-head">
+        <div><span className="eyebrow">Fit my numbers</span><h2>Set a calorie ceiling and a protein window</h2></div>
+        {active ? <button className="text-button" onClick={onClear}>Clear numbers</button> : null}
+      </div>
+      <div className="target-fields">
+        {fields.map((field) => (
+          <label key={field.key}>
+            <span>{field.label}</span>
+            <div><input type="number" min={0} inputMode="numeric" value={target[field.key]} placeholder={field.placeholder} onChange={(event) => onChange(field.key, event.target.value)} /><i>{field.suffix}</i></div>
+          </label>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function MealsView({ onRecipe, planned, onPlan, onRemove }: { onRecipe: (recipe: Recipe) => void; planned: PlannedEntry[]; onPlan: (recipe: Recipe) => void; onRemove: (index: number) => void }) {
   const [filter, setFilter] = useState("All");
   const [search, setSearch] = useState("");
-  const shown = recipes.filter((recipe) => matchesRecipe(recipe, search, filter));
+  const [target, setTarget] = useState({ maxCalories: "", minProtein: "", maxProtein: "" });
+  const [sortByFullness, setSortByFullness] = useState(false);
+  const bounds: NutritionTarget = { maxCalories: boundFrom(target.maxCalories), minProtein: boundFrom(target.minProtein), maxProtein: boundFrom(target.maxProtein) };
+  const matched = recipes.filter((recipe) => matchesRecipe(recipe, search, filter) && matchesNutritionTarget(recipe, bounds));
+  const shown = sortByFullness
+    ? [...matched].sort((a, b) => estimateSatiety(b) - estimateSatiety(a) || b.protein - a.protein)
+    : matched;
   return (
     <>
       <SectionHeading eyebrow="Plan · Meals" title="Healthy food with actual receipts" description="Creative Indian-first meals calculated from weighed ingredients, with cooking oil counted and the evidence trail kept visible." action={<span className="prototype-badge">{recipes.length} calculated meals</span>} />
@@ -429,19 +583,35 @@ function MealsView({ onRecipe, planned, onPlan, onRemove }: { onRecipe: (recipe:
         <div className="hero-search"><label htmlFor="recipe-search">What do you feel like eating?</label><div><span>⌕</span><input id="recipe-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search brownies, chia, chicken, breakfast…" /></div></div>
         <div className="hero-stat"><strong>{recipes.filter((recipe) => recipe.tags.includes("High protein")).length}</strong><span>meals with at least<br />25 g protein</span></div>
       </section>
-      <div className="filter-row meal-filter-row" aria-label="Meal filters">{["All", "High protein", "Low fat", "High fibre", "Vegetarian", "Vegan", "30 min or less"].map((item) => <button className={`chip ${filter === item ? "active" : ""}`} key={item} onClick={() => setFilter(item)} aria-pressed={filter === item}>{item}</button>)}</div>
+      <TargetFilters target={target} onChange={(key, value) => setTarget((current) => ({ ...current, [key]: value }))} onClear={() => setTarget({ maxCalories: "", minProtein: "", maxProtein: "" })} />
+      <div className="filter-row meal-filter-row" aria-label="Meal filters">
+        {["All", "High protein", "Low fat", "High fibre", "Vegetarian", "Vegan", "30 min or less"].map((item) => <button className={`chip ${filter === item ? "active" : ""}`} key={item} onClick={() => setFilter(item)} aria-pressed={filter === item}>{item}</button>)}
+        <button className={`chip ${sortByFullness ? "active" : ""}`} onClick={() => setSortByFullness((value) => !value)} aria-pressed={sortByFullness}>Most filling first</button>
+      </div>
       <div className="filter-definition"><span><b>High protein</b> 25g+</span><span><b>Low fat</b> ≤10g</span><span><b>High fibre</b> 8g+</span><small>Transparent app filters, not regulatory label claims.</small></div>
+      <div className="result-count">{shown.length} of {recipes.length} meals{hasNutritionTarget(bounds) ? " fit your numbers" : ""}</div>
       <div className="recipe-grid">{shown.map((recipe) => <RecipeCard recipe={recipe} onOpen={onRecipe} onPlan={onPlan} key={recipe.id} />)}</div>
-      {shown.length === 0 ? <div className="empty-state"><strong>No meals match that combination yet.</strong><span>Try a broader search or clear the active filter.</span><button className="button secondary" onClick={() => { setSearch(""); setFilter("All"); }}>Clear filters</button></div> : null}
+      {shown.length === 0 ? <div className="empty-state"><strong>Nothing fits those numbers yet.</strong><span>{hasNutritionTarget(bounds) ? "Widen the calorie ceiling or the protein window—the catalogue is still small." : "Try a broader search or clear the active filter."}</span><button className="button secondary" onClick={() => { setSearch(""); setFilter("All"); setTarget({ maxCalories: "", minProtein: "", maxProtein: "" }); }}>Clear filters</button></div> : null}
       <div className="research-footnote"><span>Built from</span><a href={SOURCE_LINKS.ninGuidelines} target="_blank" rel="noreferrer">ICMR–NIN 2024 guidance</a><a href={SOURCE_LINKS.ifct} target="_blank" rel="noreferrer">Indian Food Composition Tables</a><a href={SOURCE_LINKS.usda} target="_blank" rel="noreferrer">USDA FoodData Central</a></div>
     </>
   );
 }
 
+function ComponentEditor({ components, onChange }: { components: CompositeComponent[]; onChange: (next: CompositeComponent[]) => void }) {
+  return <div className="component-editor">{components.map((component, index) => {
+    const food = findComponentFood(component.foodId);
+    if (!food) return null;
+    const step = food.unit === "ml" ? 10 : food.unit === "g" ? 5 : food.unit === "piece" ? 1 : 0.25;
+    const value = componentNutrition(component);
+    const update = (amount: number) => onChange(components.map((entry, entryIndex) => entryIndex === index ? { ...entry, amount: Math.min(getQuantityLimit(food.unit), Math.max(0, Number(amount.toFixed(2)))) } : entry));
+    return <div className="component-row" key={`${component.foodId}-${index}`}><span className="component-name">{food.name.split(" · ")[0]}</span><div className="component-control"><button onClick={() => update(component.amount - step)} aria-label={`Less ${food.name}`}>−</button><label><input type="number" min={0} max={getQuantityLimit(food.unit)} step={step} value={component.amount} onChange={(event) => update(Number(event.target.value))} aria-label={`${food.name} amount in ${food.unit}`} /><span>{food.unit}</span></label><button onClick={() => update(component.amount + step)} aria-label={`More ${food.name}`}>＋</button></div><b>{Math.round(value.calories)}<small> kcal</small></b></div>;
+  })}</div>;
+}
+
 function getShownLogFoods(catalog: Food[], tab: string, search: string) {
   const query = search.trim().toLowerCase();
   return catalog.filter((food) => {
-    const matchesTab = query ? true : tab === "Commonly ordered" ? food.common : tab === "Products" ? food.category === "Ordered" || food.category === "Product" : tab === "Ingredients" ? food.category === "Ingredient" : food.category === "Meal";
+    const matchesTab = query ? true : tab === "Commonly ordered" ? food.common : tab === "Dishes" ? food.category === "Composite" : tab === "Products" ? food.category === "Ordered" || food.category === "Product" : tab === "Ingredients" ? food.category === "Ingredient" : food.category === "Meal";
     const matchesSearch = !query || [food.name, food.brand, food.variant, ...food.aliases].join(" ").toLowerCase().includes(query);
     return matchesTab && matchesSearch;
   });
@@ -450,10 +620,11 @@ function getShownLogFoods(catalog: Food[], tab: string, search: string) {
 function FoodDialog({ initialFood, editing, catalog, onClose, onAdd, onSaveFood }: { initialFood: Food | null; editing: boolean; catalog: Food[]; onClose: () => void; onAdd: (food: Food) => void; onSaveFood: (food: Food) => void }) {
   const initial = initialFood ? foodAtBasis(initialFood) : catalog.find((food) => food.common) ?? catalog[0];
   const [search, setSearch] = useState("");
-  const [tab, setTab] = useState(initialFood?.category === "Meal" ? "Meals" : initialFood && !initialFood.common ? (initialFood.category === "Ingredient" ? "Ingredients" : "Products") : "Commonly ordered");
+  const [tab, setTab] = useState(initialFood?.category === "Composite" ? "Dishes" : initialFood?.category === "Meal" ? "Meals" : initialFood && !initialFood.common ? (initialFood.category === "Ingredient" ? "Ingredients" : "Products") : "Commonly ordered");
   const [selectedId, setSelectedId] = useState(initial.id);
   const [quantity, setQuantity] = useState(initialFood?.amount ?? initial.amount);
   const [loggingUnit, setLoggingUnit] = useState<NutritionUnit>(initialFood?.unit ?? initial.unit);
+  const [components, setComponents] = useState<CompositeComponent[]>(initialFood?.components ?? findCompositeByLogId(initial.id)?.components ?? []);
   const [combining, setCombining] = useState(false);
   const [combinationName, setCombinationName] = useState("");
   const [combinationLines, setCombinationLines] = useState<Array<{ key: string; food: Food }>>([]);
@@ -466,7 +637,9 @@ function FoodDialog({ initialFood, editing, catalog, onClose, onAdd, onSaveFood 
     return food;
   });
   const shown = getShownLogFoods(dialogCatalog, tab, search);
-  const selected = shown.find((food) => food.id === selectedId) ?? null;
+  const listed = shown.find((food) => food.id === selectedId) ?? null;
+  const composite = listed ? findCompositeByLogId(listed.id) : null;
+  const selected = composite && components.length > 0 ? buildCompositeItem(composite, components) : listed;
   const step = loggingUnit === "ml" || loggingUnit === "g" ? 5 : 0.25;
   const maxQuantity = selected ? getQuantityLimit(loggingUnit) : 0;
   const requestedBasisAmount = selected ? getBasisAmountForLogging(selected, quantity, loggingUnit) : 0;
@@ -481,6 +654,7 @@ function FoodDialog({ initialFood, editing, catalog, onClose, onAdd, onSaveFood 
     setSelectedId(candidates[0]?.id ?? "");
     setQuantity(candidates[0]?.amount ?? 0);
     setLoggingUnit(candidates[0]?.unit ?? "g");
+    setComponents(candidates[0]?.components ?? findCompositeByLogId(candidates[0]?.id ?? "")?.components ?? []);
     setDetailsOpen(false);
   };
   const openDetails = () => {
@@ -539,9 +713,9 @@ function FoodDialog({ initialFood, editing, catalog, onClose, onAdd, onSaveFood 
         <header><div><span className="eyebrow">Track</span><h2 id="log-food-title">{editing ? "Edit logged food" : "Log food"}</h2></div><button className="close-button" onClick={close} aria-label="Close food logger">×</button></header>
         {!editing ? <div className="logging-mode-switch" aria-label="Logging mode"><button className={!combining ? "active" : ""} onClick={() => setCombining(false)}>Single item</button><button className={combining ? "active" : ""} onClick={() => setCombining(true)}>Combination</button></div> : null}
         <div className="dialog-search"><span>⌕</span><input autoFocus value={search} onChange={(event) => { const next = event.target.value; setSearch(next); keepSelectionVisible(tab, next); }} placeholder="Search food, recipe or recent purchase" /></div>
-        <div className="dialog-tabs">{["Commonly ordered", "Products", "Ingredients", "Meals"].map((item) => <button className={tab === item ? "active" : ""} onClick={() => { setTab(item); keepSelectionVisible(item, search); }} key={item}>{item}</button>)}</div>
+        <div className="dialog-tabs">{["Commonly ordered", "Dishes", "Products", "Ingredients", "Meals"].map((item) => <button className={tab === item ? "active" : ""} onClick={() => { setTab(item); keepSelectionVisible(item, search); }} key={item}>{item}</button>)}</div>
         <div className="food-dialog-body">
-          <div className="food-results">{shown.map((food) => <button className={selected?.id === food.id ? "selected" : ""} key={food.id} onClick={() => { setSelectedId(food.id); setQuantity(food.amount); setLoggingUnit(food.unit); setDetailsOpen(false); }}><span className="food-initial">{food.name.charAt(0)}</span><span><strong>{foodLabel(food)}</strong><small>{food.amount} {food.unit} · {food.source.trust}</small></span><span><b>{Math.round(food.calories)}</b><small>kcal</small></span><i>→</i></button>)}{shown.length === 0 ? <div className="food-results-empty"><strong>No match yet</strong><span>Try the product, brand, item, or variant name.</span></div> : null}</div>
+          <div className="food-results">{shown.map((food) => <button className={selected?.id === food.id ? "selected" : ""} key={food.id} onClick={() => { setSelectedId(food.id); setQuantity(food.amount); setLoggingUnit(food.unit); setComponents(food.components ?? findCompositeByLogId(food.id)?.components ?? []); setDetailsOpen(false); }}><span className="food-initial">{food.name.charAt(0)}</span><span><strong>{foodLabel(food)}</strong><small>{food.amount} {food.unit} · {food.source.trust}</small></span><span><b>{Math.round(food.calories)}</b><small>kcal</small></span><i>→</i></button>)}{shown.length === 0 ? <div className="food-results-empty"><strong>No match yet</strong><span>Try the product, brand, item, or variant name.</span></div> : null}</div>
           {selected && scaled ? <aside className={`quantity-editor dark-card ${detailsOpen ? "details-mode" : ""} ${combining ? "combination-mode" : ""}`}>
             {detailsOpen ? <div className="food-details-editor">
               <div className="details-heading"><div><span className="eyebrow bright">Food details</span><h3>Edit anything</h3></div><button onClick={() => setDetailsOpen(false)} aria-label="Cancel food details edit">×</button></div>
@@ -564,7 +738,7 @@ function FoodDialog({ initialFood, editing, catalog, onClose, onAdd, onSaveFood 
               </div>
               <button className="button lime full" disabled={!isFoodDetailsValid(draft)} onClick={saveDetails}>Save to My Foods</button>
             </div> : <>
-            <span className="eyebrow bright">{combining ? "Add ingredient" : "Quantity"}</span><h3>{foodLabel(selected)}</h3><p>Choose weight, volume, or a natural unit. Nutrition stays on the same evidence-backed basis.</p>
+            <span className="eyebrow bright">{combining ? "Add ingredient" : composite ? "Dish" : "Quantity"}</span><h3>{foodLabel(selected)}</h3><p>Choose weight, volume, or a natural unit. Nutrition stays on the same evidence-backed basis.</p>{composite ? <><ComponentEditor components={components} onChange={setComponents} /><small className="component-note">{composite.note}</small></> : null}
             <label className="logging-unit-field"><span>Log by</span><select aria-label={`${selected.name} logging unit`} value={loggingUnit} onChange={(event) => { const unit = event.target.value as NutritionUnit; setLoggingUnit(unit); setQuantity(unit === (selected.basis?.unit ?? selected.unit) ? (selected.basis?.amount ?? selected.amount) : 1); }}>{getLoggingUnits(selected).map((unit) => <option value={unit} key={unit}>{unit === (selected.basis?.unit ?? selected.unit) ? unit : `${unit} · ${getLoggingUnitLabel(selected, unit)}`}</option>)}</select></label>
             <div className="quantity-control"><button onClick={() => setQuantity((value) => Math.max(step, Number((value - step).toFixed(2))))} aria-label={`Decrease ${selected.name} quantity`}>−</button><label><input type="number" min={step} max={maxQuantity} step={step} value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} aria-label={`${selected.name} quantity`} /><span>{loggingUnit}</span></label><button onClick={() => setQuantity((value) => Math.min(maxQuantity, Number((value + step).toFixed(2))))} aria-label={`Increase ${selected.name} quantity`}>＋</button></div>
             <small className={`quantity-basis ${quantityValid ? "" : "error"}`}>{quantityValid ? `You are adding ${quantity} ${loggingUnit}${loggingUnit === basisUnit ? "" : ` = ${requestedBasisAmount} ${basisUnit}`} · nutrition basis ${labelBasis} ${basisUnit}` : `Enter more than 0 and no more than ${maxQuantity} ${loggingUnit}`}</small>
@@ -576,6 +750,7 @@ function FoodDialog({ initialFood, editing, catalog, onClose, onAdd, onSaveFood 
             </>}
           </aside> : <aside className="quantity-editor quantity-editor-empty dark-card"><span className="eyebrow bright">Quantity</span><h3>Choose a food</h3><p>The quantity editor will appear when a result is selected.</p></aside>}
         </div>
+        {editing ? null : <div className="dialog-footer"><button className="button secondary full" onClick={close}>Done</button></div>}
       </section>
     </div>
   );
@@ -609,16 +784,13 @@ export default function Home() {
   const [foodDialogSelection, setFoodDialogSelection] = useState<Food | null>(null);
   const [editingFoodIndex, setEditingFoodIndex] = useState<number | null>(null);
   const [recipe, setRecipe] = useState<Recipe | null>(null);
-  const [planned, setPlanned] = useState<PlannedEntry[]>([]);
   const [toast, setToast] = useState("");
   const toastTimer = useRef<number | null>(null);
-  const [extras, setExtras] = useState<Food[]>([]);
-  const [customFoods, setCustomFoods] = useState<Food[]>([]);
-  const [weights, setWeights] = useState<WeightEntry[]>([]);
   const [storageLoaded, setStorageLoaded] = useState(false);
-  const loadedDayRef = useRef<string | null>(null);
   const [cardIqImport, setCardIqImport] = useState<CardIqFoodImport | null>(null);
-  const foodCatalog = mergeFoodCatalog(seedLogFoods, customFoods);
+  const [saved, setSaved] = useState<SavedNutritionState>(emptyNutritionState);
+  const [saveFailed, setSaveFailed] = useState(false);
+  const foodCatalog = mergeFoodCatalog(baseLogFoods, saved.customFoods);
   const notify = (message: string) => {
     if (toastTimer.current !== null) window.clearTimeout(toastTimer.current);
     setToast(message);
@@ -629,38 +801,27 @@ export default function Home() {
   };
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      let raw: string | null = null;
-      try {
-        raw = window.localStorage.getItem(LOCAL_NUTRITION_STORAGE_KEY) ?? window.localStorage.getItem(LEGACY_NUTRITION_STORAGE_KEY);
-      } catch {
-        window.setTimeout(() => notify("Nourish could not read saved data in this browser"), 0);
-      }
-      const saved = parseSavedNutritionState(raw);
-      const restored = restoreNutritionState(saved, clock.dayKey, mergeFoodCatalog(seedLogFoods, saved.customFoods));
-      setExtras(restored.extras);
-      setPlanned(restored.planned);
-      setCustomFoods(saved.customFoods);
-      setWeights(saved.weights);
-      loadedDayRef.current = clock.dayKey;
+      const raw = window.localStorage.getItem(LOCAL_NUTRITION_STORAGE_KEY)
+        ?? LEGACY_NUTRITION_STORAGE_KEYS.map((key) => window.localStorage.getItem(key)).find((value) => value !== null)
+        ?? null;
+      setSaved(parseSavedNutritionState(raw));
       setStorageLoaded(true);
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [clock.dayKey]);
+  }, []);
   useEffect(() => {
-    if (!shouldPersistNutritionState(storageLoaded, loadedDayRef.current, clock.dayKey)) return;
-    const saved: SavedNutritionState = {
-      dayKey: clock.dayKey,
-      logs: extras.map((food) => ({ foodId: food.id, amount: food.amount, snapshot: food })),
-      planned: planned.map((entry) => ({ id: entry.id, kind: entry.kind })),
-      customFoods,
-      weights,
-    };
+    // Pure external-system sync: the diary is the source of truth and this mirrors it to
+    // storage. Only today's slice is ever rewritten, so earlier days survive midnight.
+    if (!storageLoaded) return;
     try {
       window.localStorage.setItem(LOCAL_NUTRITION_STORAGE_KEY, stringifySavedNutritionState(saved));
     } catch {
-      window.setTimeout(() => notify("Nourish could not save on this browser"), 0);
+      // A persistent banner, not a toast that disappears: if the diary has stopped being
+      // written, KP must keep seeing that until it is fixed. Deferred so the effect body
+      // does not set state synchronously.
+      window.setTimeout(() => setSaveFailed(true), 0);
     }
-  }, [clock.dayKey, extras, planned, customFoods, weights, storageLoaded]);
+  }, [saved, storageLoaded]);
   useEffect(() => {
     const timer = window.setInterval(() => setClock(getBangaloreClock(new Date())), 60_000);
     return () => window.clearInterval(timer);
@@ -669,41 +830,82 @@ export default function Home() {
     let active = true;
     fetch("/cardiq-food-import.json")
       .then((response) => response.ok ? response.json() : null)
-      .then((value: unknown) => { if (active && isCardIqFoodImport(value)) setCardIqImport(sanitizeCardIqFoodImport(value)); })
+      // Classification and matching are re-applied here rather than trusted from the file,
+      // so a matcher fix reaches KP without re-running the cardIQ import.
+      .then((value: unknown) => { if (active && isCardIqFoodImport(value)) setCardIqImport(refineCardIqImport(value)); })
       .catch(() => undefined);
     return () => { active = false; };
   }, []);
-  const cardIqQuickFoods = (cardIqImport?.items ?? []).flatMap((item) => {
-    const food = item.matchedFoodId ? foodCatalog.find((candidate) => candidate.id === item.matchedFoodId) : null;
-    return food ? [food] : [];
-  }).filter((food, index, all) => all.findIndex((candidate) => candidate.id === food.id) === index);
+  // Quick add is ordered by how often KP actually buys the thing, then by how recently.
+  // The snapshot's own order is by purchase date, which surfaced whatever happened to be
+  // bought last — sugar ahead of milk — rather than what he reaches for.
+  const cardIqQuickFoods = (cardIqImport?.items ?? [])
+    .flatMap((item) => {
+      const food = item.matchedFoodId ? foodCatalog.find((candidate) => candidate.id === item.matchedFoodId) : null;
+      return food ? [{ food, orderCount: item.orderCount, lastOrdered: item.lastOrdered }] : [];
+    })
+    // Repeat buys of the same food across stores are one entry, keeping the combined count.
+    .reduce((unique: Array<{ food: Food; orderCount: number; lastOrdered: string }>, entry) => {
+      const existing = unique.find((candidate) => candidate.food.id === entry.food.id);
+      if (existing) {
+        existing.orderCount += entry.orderCount;
+        if (entry.lastOrdered > existing.lastOrdered) existing.lastOrdered = entry.lastOrdered;
+        return unique;
+      }
+      return [...unique, { ...entry }];
+    }, [])
+    .sort((a, b) => b.orderCount - a.orderCount || b.lastOrdered.localeCompare(a.lastOrdered))
+    .map((entry) => entry.food);
   const quickFoods = cardIqQuickFoods.length ? cardIqQuickFoods : foodCatalog.filter((food) => food.common);
+  const extras = restoreDayLogs(saved, clock.dayKey, foodCatalog);
+  const planned = restorePlanEntries(saved, foodCatalog);
   const totals = sumLoggedNutrition(extras, { calories: 0, protein: 0, carbs: 0, fat: 0 });
   const calories = totals.calories;
   const macros = { protein: totals.protein, carbs: totals.carbs, fat: totals.fat };
+  // History excludes today, which is still being written and is already shown in full on Today.
+  const history = summariseHistory(saved.days, foodCatalog).filter((day) => day.dayKey !== clock.dayKey);
+  const targets = saved.targets ?? DEFAULT_TARGETS;
+  const targetsAreDefaults = saved.targets === null;
+  const saveTargets = (next: typeof DEFAULT_TARGETS) => {
+    setSaved((current) => ({ ...current, targets: next }));
+    notify("Daily targets saved in this browser");
+  };
+  const setTodayLogs = (update: (logs: SavedLogEntry[]) => SavedLogEntry[]) => {
+    setSaved((current) => withDayLogs(current, clock.dayKey, update(logsForDay(current, clock.dayKey))));
+  };
+  const setPlanned = (update: (entries: PlannedEntry[]) => PlannedEntry[]) => {
+    setSaved((current) => ({ ...current, planned: update(restorePlanEntries(current, mergeFoodCatalog(baseLogFoods, current.customFoods))).map((entry) => ({ id: entry.id, kind: entry.kind })) }));
+  };
+
+  const saveCustomFood = (food: Food) => {
+    if (!isFoodDetailsValid(food)) return;
+    setSaved((current) => ({ ...current, customFoods: [...current.customFoods.filter((candidate) => candidate.id !== food.id), food] }));
+    notify(`${foodLabel(food)} saved to My Foods`);
+  };
+  const saveWeight = (entry: WeightEntry) => {
+    setSaved((current) => ({ ...current, weights: upsertWeightEntry(current.weights, entry) }));
+    notify(`Weight saved · ${entry.kg.toFixed(1)} kg`);
+  };
 
   const nav = area === "track" ? trackNav : planNav;
   const activeView = area === "track" ? trackView : planView;
   const addFood = (food: Food) => {
-    const previous = editingFoodIndex === null ? null : extras[editingFoodIndex];
-    setExtras((value) => editingFoodIndex === null ? [...value, food] : value.map((entry, index) => index === editingFoodIndex ? food : entry));
-    setFoodDialog(false);
-    setFoodDialogSelection(null);
-    setEditingFoodIndex(null);
-    notify(`${food.name} ${previous ? "updated" : "added"} · ${Math.round(food.calories)} kcal`);
+    const isEdit = editingFoodIndex !== null;
+    if (wouldDropOldestDay(saved, clock.dayKey)) notify(`Diary is full at ${MAX_STORED_DAYS} days — the oldest day will be removed`);
+    setTodayLogs((logs) => isEdit ? logs.map((entry, index) => index === editingFoodIndex ? foodToLogEntry(food) : entry) : [...logs, foodToLogEntry(food)]);
+    // An edit is finished when it is applied. A new entry is not: a real plate is several
+    // foods, so the logger stays open and KP closes it when the meal is fully recorded.
+    if (isEdit) {
+      setFoodDialog(false);
+      setFoodDialogSelection(null);
+      setEditingFoodIndex(null);
+    }
+    notify(`${food.name} ${isEdit ? "updated" : "added"} · ${Math.round(food.calories)} kcal`);
   };
   const openFoodLogger = (food: Food | null = null, editIndex: number | null = null) => {
     setFoodDialogSelection(food);
     setEditingFoodIndex(editIndex);
     setFoodDialog(true);
-  };
-  const saveCustomFood = (food: Food) => {
-    setCustomFoods((value) => [...value.filter((candidate) => candidate.id !== food.id), food]);
-    notify(`${foodLabel(food)} saved to My Foods`);
-  };
-  const saveWeight = (entry: WeightEntry) => {
-    setWeights((value) => upsertWeightEntry(value, entry));
-    notify(`${entry.kg.toFixed(1)} kg logged for ${entry.date}`);
   };
   const addItemToPlan = (food: Food) => {
     setPlanned((value) => [...value, planEntryFromFood(food)]);
@@ -726,12 +928,12 @@ export default function Home() {
 
   const renderContent = () => {
     if (area === "track") {
-      if (trackView === "today") return <TodayView clock={clock} calories={calories} macros={macros} extras={extras} quickFoods={quickFoods} weights={weights} hasCardIqImport={cardIqImport !== null} onLog={() => openFoodLogger()} onAdd={(food) => openFoodLogger(food)} onEdit={(index) => openFoodLogger(extras[index], index)} onSaveWeight={saveWeight} onOpenMeals={() => { setArea("plan"); setPlanView("meals"); window.scrollTo({ top: 0, behavior: "smooth" }); }} />;
-      if (trackView === "history") return <HistoryView />;
-      if (trackView === "trends") return <TrendsView />;
-      return <PurchasesView cardIqImport={cardIqImport} catalog={foodCatalog} onAdd={(food) => openFoodLogger(food)} />;
+      if (trackView === "today") return <TodayView clock={clock} calories={calories} macros={macros} extras={extras} quickFoods={quickFoods} weights={saved.weights} hasCardIqImport={cardIqImport !== null} targets={targets} targetsAreDefaults={targetsAreDefaults} history={history} onLog={() => openFoodLogger()} onAdd={(food) => openFoodLogger(food)} onEdit={(index) => openFoodLogger(extras[index], index)} onSaveWeight={saveWeight} onOpenMeals={() => { setArea("plan"); setPlanView("meals"); window.scrollTo({ top: 0, behavior: "smooth" }); }} onSaveTargets={saveTargets} />;
+      if (trackView === "history") return <HistoryView history={history} clock={clock} targets={targets} />;
+      if (trackView === "trends") return <TrendsView history={history} targets={targets} />;
+      return <PurchasesView cardIqImport={cardIqImport} onAdd={(food) => openFoodLogger(food)} />;
     }
-    if (planView === "items") return <ItemsView planned={planned} catalog={foodCatalog} onPlan={addItemToPlan} onRemove={removeFromPlan} />;
+    if (planView === "items") return <ItemsView planned={planned} onPlan={addItemToPlan} onRemove={removeFromPlan} />;
     return <MealsView onRecipe={setRecipe} planned={planned} onPlan={addMealToPlan} onRemove={removeFromPlan} />;
   };
 
@@ -741,11 +943,14 @@ export default function Home() {
         <div className="brand"><span>N</span><div><strong>Nourish</strong><small>Personal nutrition</small></div></div>
         <div className="area-switch" aria-label="Main sections"><button className={area === "plan" ? "active" : ""} onClick={() => switchArea("plan")}><span>PLAN</span><small>Decide what to eat</small></button><button className={area === "track" ? "active" : ""} onClick={() => switchArea("track")}><span>TRACK</span><small>See how you’re doing</small></button></div>
         <nav className="side-nav" aria-label={`${area} navigation`}>{nav.map((item) => <button key={item.id} className={activeView === item.id ? "active" : ""} onClick={() => switchView(item.id)}><i>{item.icon}</i><span>{item.label}</span></button>)}</nav>
-        <div className="sidebar-footer"><span className="kp-avatar">KP</span><div><strong>Kanwar</strong><small>Sample target · 2,150 kcal</small></div><button aria-label="Open settings">•••</button></div>
+        <div className="sidebar-footer"><span className="kp-avatar">KP</span><div><strong>Kanwar</strong><small>{targetsAreDefaults ? "Set your targets" : `${targets.calories.toLocaleString("en-IN")} kcal target`}</small></div><button aria-label="Open settings">•••</button></div>
       </aside>
       <div className="mobile-topbar"><div className="brand"><span>N</span><strong>Nourish</strong></div><div className="mobile-area"><button className={area === "plan" ? "active" : ""} onClick={() => switchArea("plan")}>Plan</button><button className={area === "track" ? "active" : ""} onClick={() => switchArea("track")}>Track</button></div><span className="kp-avatar">KP</span></div>
       <div className="mobile-subnav">{nav.map((item) => <button key={item.id} className={activeView === item.id ? "active" : ""} onClick={() => switchView(item.id)}>{item.label}</button>)}</div>
-      <main className="workspace">{renderContent()}</main>
+      <main className="workspace">
+        {saveFailed ? <div className="save-warning" role="alert"><strong>Nourish cannot save to this browser.</strong><span>Anything you log now will be lost when you close the tab. This usually means private browsing or a full storage quota.</span></div> : null}
+        {renderContent()}
+      </main>
       {area === "track" ? <button className="mobile-log-button" onClick={() => openFoodLogger()}>＋ Log food</button> : null}
       {foodDialog ? <FoodDialog initialFood={foodDialogSelection} editing={editingFoodIndex !== null} catalog={foodCatalog} onClose={() => { setFoodDialog(false); setFoodDialogSelection(null); setEditingFoodIndex(null); }} onAdd={addFood} onSaveFood={saveCustomFood} /> : null}
       <RecipeDrawer recipe={recipe} onClose={() => setRecipe(null)} onPlan={addMealToPlan} />

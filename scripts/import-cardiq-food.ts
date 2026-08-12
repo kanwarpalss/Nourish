@@ -1,8 +1,13 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { makeCardIqFoodImport, type CardIqOrder } from "../app/cardiq-food";
 
-const cardIqDir = process.env.CARDIQ_DIR ?? resolve(process.cwd(), "../cardIQ");
+// A git worktree sits several levels below ~/Code, so the plain sibling guess misses.
+// Both candidates are tried before failing, and CARDIQ_DIR still overrides.
+const cardIqCandidates = [resolve(process.cwd(), "../cardIQ"), resolve(homedir(), "Code/cardIQ")];
+const cardIqDir = process.env.CARDIQ_DIR ?? cardIqCandidates.find((path) => existsSync(join(path, ".env.local"))) ?? cardIqCandidates[0];
+const ORDER_PAGE_LIMIT = 1000;
 const outputPath = process.env.CARDIQ_FOOD_OUTPUT ?? resolve(process.cwd(), "public/cardiq-food-import.json");
 const windowStart = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();
 
@@ -34,9 +39,14 @@ async function main() {
     order_at: `gte.${windowStart}`,
     order: "order_at.desc",
   });
-  const response = await fetch(`${url}/rest/v1/orders?${params}`, { headers: { apikey: key, Authorization: `Bearer ${key}`, Range: "0-999" } });
+  const response = await fetch(`${url}/rest/v1/orders?${params}`, { headers: { apikey: key, Authorization: `Bearer ${key}`, Range: `0-${ORDER_PAGE_LIMIT - 1}` } });
   if (!response.ok) throw new Error(`Couldn't read cardIQ orders: ${response.status}`);
   const orders = await response.json() as CardIqOrder[];
+  // Silently dropping the oldest orders would understate the catalogue with no sign that
+  // anything was missing, so say so loudly instead.
+  if (orders.length >= ORDER_PAGE_LIMIT) {
+    console.warn(`WARNING: cardIQ returned the maximum of ${ORDER_PAGE_LIMIT} orders, so older orders in the last year were not read. This snapshot is incomplete.`);
+  }
   const snapshot = makeCardIqFoodImport(orders, new Date().toISOString(), windowStart.slice(0, 10));
   mkdirSync(dirname(outputPath), { recursive: true });
   writeFileSync(outputPath, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
