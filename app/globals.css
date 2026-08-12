@@ -27,7 +27,8 @@
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
 body { margin: 0; background: var(--canvas); color: var(--text); font-family: "Avenir Next", Avenir, Inter, Arial, sans-serif; }
-button, input, select { font: inherit; }
+button, input, select { color: var(--text); font: inherit; }
+input::placeholder { color: #6b776f; opacity: 1; }
 button { color: inherit; }
 button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid rgb(185 237 85 / 0.6); outline-offset: 2px; }
 
@@ -125,7 +126,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .timeline-empty strong { color: var(--text); font-size: 17px; }
 .timeline-empty span { max-width: 310px; font-size: 11px; line-height: 1.55; }
 .meal-meta { display: grid; gap: 5px; }
-.meal-meta > span { color: #7b877f; font-size: 9px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; }
+.meal-meta > span { color: #35483d; font-size: 9px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; }
+.meal-meta > .logged-volume { width: max-content; padding: 5px 8px; border-radius: 7px; color: #173e2c; background: #dfe9d7; font-size: 10px; letter-spacing: 0.06em; }
 .meal-meta strong { font-size: 16px; letter-spacing: -0.025em; }
 .meal-meta small { color: var(--muted); font-size: 11px; }
 .meal-meta em { width: max-content; margin-top: 4px; color: #96451e; font-size: 9px; font-style: normal; font-weight: 850; letter-spacing: 0.08em; text-transform: uppercase; }
@@ -149,6 +151,27 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .mini-bars > span { position: relative; flex: 1; min-height: 12px; border-radius: 7px 7px 0 0; background: #aebfa8; }
 .mini-bars > span.active { background: var(--orange); }
 .mini-bars i { position: absolute; right: 0; bottom: -20px; left: 0; color: var(--muted); font-size: 9px; font-style: normal; text-align: center; }
+
+.weight-card { overflow: hidden; padding: 22px; }
+.weight-add-button { padding: 7px 10px; border: 1px solid var(--forest); border-radius: 9px; color: var(--forest); background: transparent; font-size: 10px; font-weight: 800; cursor: pointer; }
+.weight-summary { display: flex; justify-content: space-between; gap: 12px; align-items: end; margin: 14px 0 4px; color: #526158; font-size: 9px; }
+.weight-summary strong { display: grid; color: var(--forest); font-size: 12px; text-align: right; }
+.weight-summary small { color: #526158; font-size: 8px; font-weight: 600; }
+.weight-empty { margin: 13px 0 0; color: #526158; font-size: 10px; line-height: 1.5; }
+.weight-form { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: end; margin-top: 15px; padding-top: 15px; border-top: 1px solid var(--line); }
+.weight-form label { display: grid; gap: 5px; color: #405047; font-size: 9px; font-weight: 750; }
+.weight-form label > div { display: grid; grid-template-columns: 1fr auto; align-items: center; border: 1px solid var(--line-strong); border-radius: 10px; background: white; }
+.weight-form input { min-width: 0; height: 40px; padding: 0 9px; border: 1px solid var(--line-strong); border-radius: 10px; background: white; font-size: 11px; font-weight: 750; }
+.weight-form label > div input { border: 0; }
+.weight-form b { padding-right: 9px; color: var(--text); font-size: 9px; }
+.weight-form .button { min-height: 40px; padding-inline: 13px; font-size: 10px; }
+.weight-trend-toggle { display: flex; width: 100%; justify-content: space-between; margin-top: 14px; padding: 11px 0 0; border: 0; border-top: 1px solid var(--line); color: var(--forest); background: transparent; font-size: 10px; font-weight: 800; cursor: pointer; }
+.weight-chart-wrap { margin-top: 13px; }
+.weight-chart { width: 100%; height: 92px; overflow: visible; }
+.weight-chart polyline { fill: none; stroke: var(--forest); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.weight-chart circle { fill: var(--lime-deep); stroke: white; stroke-width: 2; vector-effect: non-scaling-stroke; }
+.weight-chart-wrap > div { display: flex; justify-content: space-between; color: #526158; font-size: 8px; }
+.weight-chart-wrap strong { color: var(--forest); }
 
 .history-layout { display: grid; grid-template-columns: minmax(660px, 1.5fr) minmax(330px, 0.65fr); gap: 22px; max-width: 1440px; margin: 0 auto; }
 .calendar-card { padding: 28px; }
@@ -313,6 +336,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .item-nutrition small { color: var(--muted); font-size: 7px; font-weight: 600; }
 .item-card-actions { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
 .item-card-actions a { color: var(--forest); font-size: 9px; font-weight: 750; text-decoration: none; }
+.item-variant { display: block; margin-top: 2px; color: #526158; font-size: 10px; font-weight: 700; }
 .research-footnote { display: flex; flex-wrap: wrap; gap: 14px; max-width: 1440px; margin: 22px auto 0; padding: 15px 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 9px; }
 .research-footnote span { color: var(--text); font-weight: 800; }
 .research-footnote a { color: var(--forest); font-weight: 700; text-decoration: none; }
@@ -406,7 +430,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .grocery-groups strong { font-size: 11px; }
 
 .dialog-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 18px; background: rgb(9 15 19 / 0.65); backdrop-filter: blur(10px); }
-.food-dialog { overflow: hidden; width: min(980px, 100%); max-height: min(780px, 92dvh); border-radius: 24px; background: var(--paper); box-shadow: 0 28px 90px rgb(0 0 0 / 0.28); }
+.food-dialog { overflow: hidden; display: flex; width: min(980px, 100%); max-height: min(780px, 92dvh); flex-direction: column; border-radius: 24px; background: var(--paper); box-shadow: 0 28px 90px rgb(0 0 0 / 0.28); }
 .food-dialog header { display: flex; justify-content: space-between; align-items: center; padding: 24px 26px 16px; }
 .food-dialog h2 { margin: 0; font-size: 28px; }
 .close-button { display: grid; width: 38px; height: 38px; place-items: center; border: 1px solid var(--line); border-radius: 12px; background: transparent; font-size: 24px; cursor: pointer; }
@@ -415,8 +439,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .dialog-tabs { display: flex; gap: 22px; margin: 20px 26px 0; border-bottom: 1px solid var(--line); }
 .dialog-tabs button { padding: 0 0 10px; border: 0; border-bottom: 2px solid transparent; color: var(--muted); background: transparent; font-size: 10px; font-weight: 750; cursor: pointer; }
 .dialog-tabs button.active { border-color: var(--forest); color: var(--forest); }
-.food-dialog-body { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 18px; padding: 18px 26px 26px; }
-.food-results { overflow: auto; max-height: 480px; padding: 0 8px 0 0; }
+.food-dialog-body { overflow: hidden; display: grid; min-height: 0; grid-template-columns: 1.15fr 0.85fr; gap: 18px; flex: 1; padding: 18px 26px 26px; }
+.food-results { overflow: auto; min-height: 0; padding: 0 8px 0 0; }
 .food-results > button { display: grid; grid-template-columns: auto 1fr auto auto; gap: 12px; align-items: center; width: 100%; padding: 13px 0; border: 0; border-bottom: 1px solid var(--line); background: transparent; text-align: left; cursor: pointer; }
 .food-results > button.selected { padding-left: 10px; border-radius: 12px; background: #e7ecdf; }
 .food-initial { display: grid; width: 39px; height: 39px; place-items: center; border-radius: 12px; color: var(--forest); background: #e1ead7; font-weight: 800; }
@@ -435,8 +459,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .quantity-control > button { border: 1px solid rgb(255 255 255 / 0.14); border-radius: 11px; color: white; background: rgb(255 255 255 / 0.07); font-size: 18px; cursor: pointer; }
 .quantity-control label { display: grid; grid-template-columns: 1fr auto; align-items: center; border-radius: 11px; background: white; }
 .quantity-control input { min-width: 0; height: 48px; padding: 0 8px 0 13px; border: 0; outline: 0; background: transparent; font-size: 17px; font-weight: 800; }
-.quantity-control label span { padding-right: 12px; color: var(--muted); font-size: 10px; }
-.quantity-basis { display: block; margin: 7px 0 18px; color: #7f8d84; font-size: 8px; }
+.quantity-control label span { padding-right: 12px; color: var(--ink); font-size: 11px; font-weight: 850; }
+.quantity-basis { display: block; margin: 9px 0 18px; color: #d5ded8; font-size: 9px; font-weight: 700; line-height: 1.4; }
 .quantity-basis.error { color: #ff976e; }
 .live-nutrition { display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px; margin-bottom: 16px; }
 .live-nutrition > * { display: grid; gap: 2px; padding: 11px; border: 1px solid rgb(255 255 255 / 0.12); border-radius: 11px; }
@@ -444,6 +468,23 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .live-nutrition b { font-size: 16px; }
 .live-nutrition small { color: #8f9c94; font-size: 8px; }
 .quantity-editor > a { display: block; margin-bottom: 16px; color: #a8b4ac; font-size: 8px; text-decoration: none; }
+.personal-source { display: block; margin-bottom: 16px; color: #c1cbc4; font-size: 8px; }
+.edit-food-button { width: 100%; margin-bottom: 12px; padding: 11px; border: 1px solid rgb(255 255 255 / 0.24); border-radius: 11px; color: white; background: rgb(255 255 255 / 0.07); font-size: 10px; font-weight: 750; cursor: pointer; }
+.add-food-button { min-height: 49px; font-size: 12px; }
+.quantity-editor.details-mode { overflow-y: auto; max-height: 100%; }
+.food-details-editor > p { margin: 0 0 15px; color: #c0cbc4; font-size: 9px; line-height: 1.45; }
+.details-heading { display: flex; justify-content: space-between; gap: 12px; }
+.details-heading > button { width: 29px; height: 29px; border: 1px solid rgb(255 255 255 / 0.2); border-radius: 8px; color: white; background: transparent; cursor: pointer; }
+.identity-fields, .serving-fields, .nutrition-fields { display: grid; gap: 9px; margin-bottom: 12px; }
+.serving-fields { grid-template-columns: 1fr 0.8fr; }
+.nutrition-fields { grid-template-columns: repeat(2, 1fr); }
+.identity-fields label, .serving-fields label, .nutrition-fields label { display: grid; gap: 5px; }
+.identity-fields label > span, .serving-fields label > span, .nutrition-fields label > span { color: #d5ded8; font-size: 8px; font-weight: 750; }
+.identity-fields input, .serving-fields input, .serving-fields select, .nutrition-fields label > div { width: 100%; height: 39px; border: 0; border-radius: 9px; color: var(--ink); background: white; }
+.identity-fields input, .serving-fields input, .serving-fields select { padding: 0 10px; font-size: 10px; font-weight: 700; }
+.nutrition-fields label > div { display: grid; grid-template-columns: 1fr auto; align-items: center; }
+.nutrition-fields input { min-width: 0; height: 39px; padding: 0 7px 0 10px; border: 0; outline: 0; background: transparent; font-size: 10px; font-weight: 750; }
+.nutrition-fields b { padding-right: 9px; color: #405047; font-size: 8px; }
 .drawer-backdrop { justify-items: end; padding: 0; }
 .recipe-drawer { overflow-y: auto; width: min(520px, 100%); height: 100dvh; background: var(--paper); box-shadow: -20px 0 80px rgb(0 0 0 / 0.24); }
 .recipe-drawer > .close-button { position: absolute; top: 18px; right: 18px; z-index: 2; background: rgb(255 255 255 / 0.72); }
@@ -470,7 +511,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .toast span { font-size: 11px; font-weight: 700; }
 .mobile-topbar, .mobile-subnav, .mobile-log-button { display: none; }
 
-@media (max-width: 1260px) {
+@media (max-width: 1400px) {
   .today-layout { grid-template-columns: minmax(420px, 1.1fr) minmax(340px, 0.9fr); }
   .today-rail { grid-column: 1 / -1; grid-template-columns: repeat(3, 1fr); }
   .timeline-panel { min-height: 620px; }
@@ -555,11 +596,13 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
   .day-meals article { grid-template-columns: 28px 1fr auto; padding: 10px 0; }
   .day-meals button { display: none; }
   .drawer-macros { grid-template-columns: repeat(2, 1fr); }
-  .food-dialog { overflow-y: auto; border-radius: 20px; }
+  .food-dialog { overflow-y: auto; display: block; border-radius: 20px; }
   .dialog-tabs { overflow-x: auto; gap: 16px; }
   .dialog-tabs button { flex: 0 0 auto; }
   .food-dialog-body { grid-template-columns: 1fr; }
   .food-results { max-height: 260px; }
+  .weight-form { grid-template-columns: 1fr 1fr; }
+  .weight-form .button { grid-column: 1 / -1; }
   .toast { right: 15px; bottom: 76px; left: 15px; }
 }
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { calculateMealNutrition, meals, nutritionItems } from "../app/nutrition-data";
-import { parseSavedNutritionState, shouldRestoreSavedNutritionState, stringifySavedNutritionState } from "../app/local-nutrition-state";
+import { getWeightTrendPoints, isWeightValueValid, parseSavedNutritionState, shouldPersistNutritionState, shouldRestoreSavedNutritionState, stringifySavedNutritionState, upsertWeightEntry } from "../app/local-nutrition-state";
 import { getBangaloreClock, getEnergyRunway, getNutritionDelta, getQuantityLimit, isQuantityValid, matchesRecipe, scaleNutrition, sumLoggedNutrition } from "../app/prototype-logic";
 
 test("quantity edits scale every displayed nutrient from the same serving basis", () => {
@@ -66,6 +66,9 @@ test("researched items keep unique identity, serving basis, and an evidence link
       assert.ok(Number.isFinite(food[field]), `${food.id}.${field}`);
       assert.ok(food[field] >= 0, `${food.id}.${field}`);
     }
+    assert.ok(food.brand.trim(), `${food.id}.brand`);
+    assert.ok(food.name.trim(), `${food.id}.name`);
+    assert.equal(typeof food.variant, "string", `${food.id}.variant`);
     assert.match(food.source.url, /^https:\/\//);
   }
 });
@@ -145,12 +148,79 @@ test("local on-device nutrition state accepts only well-formed entries", () => {
     dayKey: "2026-08-09",
     logs: [{ foodId: "nandini-goodlife-toned", amount: 250 }],
     planned: [{ id: "cauli-chicken", kind: "meal" }, { id: "chia", kind: "food" }],
+    customFoods: [],
+    weights: [],
   });
-  assert.deepEqual(parseSavedNutritionState("{not json"), { dayKey: null, logs: [], planned: [] });
+  assert.deepEqual(parseSavedNutritionState("{not json"), { dayKey: null, logs: [], planned: [], customFoods: [], weights: [] });
   assert.deepEqual(parseSavedNutritionState(stringifySavedNutritionState(saved)), saved);
   assert.equal(shouldRestoreSavedNutritionState(saved, "2026-08-09"), true);
   assert.equal(shouldRestoreSavedNutritionState(saved, "2026-08-10"), false);
   assert.equal(shouldRestoreSavedNutritionState({ ...saved, dayKey: null }, "2026-08-10"), true, "legacy same-session logs migrate once");
+});
+
+test("edited foods and log snapshots survive storage without rewriting history", () => {
+  const seed = nutritionItems[0];
+  const edited = { ...seed, brand: "Nandini", name: "Slim Milk", variant: "100 ml", calories: 55, source: { ...seed.source, label: "Edited by you", trust: "Personal" as const } };
+  const originalSnapshot = scaleNutrition(seed, 250);
+  const saved = parseSavedNutritionState(JSON.stringify({
+    dayKey: "2026-08-11",
+    logs: [{ foodId: seed.id, amount: 250, snapshot: originalSnapshot }],
+    planned: [],
+    customFoods: [edited],
+    weights: [],
+  }));
+  assert.deepEqual(saved.customFoods, [edited]);
+  assert.equal(saved.logs[0].snapshot?.name, seed.name);
+  assert.equal(saved.logs[0].snapshot?.calories, originalSnapshot.calories);
+
+  const corruptSnapshot = { ...originalSnapshot, brand: "" };
+  assert.deepEqual(parseSavedNutritionState(JSON.stringify({ dayKey: "2026-08-11", logs: [{ foodId: seed.id, amount: 250, snapshot: corruptSnapshot }] })).logs, []);
+  const mismatchedSnapshot = { ...originalSnapshot, id: "different-food" };
+  assert.deepEqual(parseSavedNutritionState(JSON.stringify({ dayKey: "2026-08-11", logs: [{ foodId: seed.id, amount: 250, snapshot: mismatchedSnapshot }] })).logs, []);
+});
+
+test("one malformed food cannot erase other saved nutrition and valid entries are capped after validation", () => {
+  const validFood = { ...nutritionItems[0], id: "  custom-milk  ", source: { ...nutritionItems[0].source, label: "Edited by you", trust: "Personal" as const } };
+  const parsed = parseSavedNutritionState(JSON.stringify({
+    dayKey: "2026-08-11",
+    logs: [{ foodId: "banana", amount: 118 }],
+    planned: [{ id: " chia ", kind: "food" }],
+    customFoods: [...Array.from({ length: 500 }, () => ({})), { ...validFood, basis: null }],
+    weights: [...Array.from({ length: 5000 }, () => ({ date: "bad", kg: 0 })), { date: "2026-08-11", kg: 72 }, { date: "9999-12-31", kg: 399 }],
+  }));
+  assert.deepEqual(parsed.logs, [{ foodId: "banana", amount: 118 }]);
+  assert.deepEqual(parsed.planned, [{ id: "chia", kind: "food" }]);
+  assert.deepEqual(parsed.customFoods, [], "basis:null is rejected without resetting other state");
+  assert.deepEqual(parsed.weights, [{ date: "2026-08-11", kg: 72 }], "invalid leading values must not crowd out valid data");
+
+  const accepted = parseSavedNutritionState(JSON.stringify({ customFoods: [...Array.from({ length: 500 }, () => ({})), validFood] }));
+  assert.equal(accepted.customFoods[0].id, "custom-milk");
+  assert.deepEqual(parseSavedNutritionState(JSON.stringify({ customFoods: [{ ...validFood, unit: "g", amount: 5000.01 }] })).customFoods, []);
+});
+
+test("weight entries validate, correct same-day values, sort, and chart safely", () => {
+  assert.equal(isWeightValueValid(20), true);
+  assert.equal(isWeightValueValid(400), true);
+  for (const invalid of [19.9, 400.1, Number.NaN, Number.POSITIVE_INFINITY]) assert.equal(isWeightValueValid(invalid), false);
+
+  let entries = upsertWeightEntry([], { date: "2026-08-11", kg: 72.46 });
+  entries = upsertWeightEntry(entries, { date: "2026-08-09", kg: 73 });
+  entries = upsertWeightEntry(entries, { date: "2026-08-11", kg: 72.2 });
+  assert.deepEqual(entries, [{ date: "2026-08-09", kg: 73 }, { date: "2026-08-11", kg: 72.2 }]);
+  assert.deepEqual(upsertWeightEntry(entries, { date: "2026-02-30", kg: 70 }), entries);
+
+  const points = getWeightTrendPoints(entries, 300, 100);
+  assert.deepEqual(points.map(({ x, y }) => ({ x, y })), [{ x: 0, y: 20 }, { x: 300, y: 100 }], "sub-kilogram changes should not be visually exaggerated");
+  assert.deepEqual(getWeightTrendPoints([{ date: "2026-08-11", kg: 72 }], 300, 100), [{ date: "2026-08-11", kg: 72, x: 150, y: 50 }]);
+  assert.deepEqual(getWeightTrendPoints([{ date: "2026-08-11", kg: 72 }, { date: "2026-08-11", kg: 71.8 }], 300, 100), [{ date: "2026-08-11", kg: 71.8, x: 150, y: 50 }]);
+  assert.deepEqual(getWeightTrendPoints([{ date: "2026-01-01", kg: 72 }, { date: "2026-01-02", kg: 71.9 }, { date: "2026-01-11", kg: 71.8 }], 100, 100).map((point) => point.x), [0, 10, 100]);
+  assert.deepEqual(getWeightTrendPoints(entries, 0, 100), []);
+});
+
+test("day rollover cannot save yesterday's diary under today's date", () => {
+  assert.equal(shouldPersistNutritionState(true, "2026-08-11", "2026-08-11"), true);
+  assert.equal(shouldPersistNutritionState(true, "2026-08-10", "2026-08-11"), false);
+  assert.equal(shouldPersistNutritionState(false, "2026-08-11", "2026-08-11"), false);
 });
 
 test("Bangalore greeting and day key follow local time boundaries", () => {

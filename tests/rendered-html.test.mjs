@@ -69,7 +69,13 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
   assert.match(page, /Commonly ordered/);
   assert.match(page, /Nutrition updates while you edit/);
   assert.match(page, /scaleNutrition\(selected, quantityValid \? quantity : 0\)/);
-  assert.match(page, /getShownLogFoods\(nextTab, nextSearch\)/);
+  assert.match(page, /getShownLogFoods\(dialogCatalog, nextTab, nextSearch\)/);
+  assert.match(page, /Brand and item name are required\. Variant can be blank\./);
+  assert.match(page, /Edit name, serving & nutrition/);
+  assert.match(page, /You are adding \$\{quantity\} \$\{selected\.unit\}/);
+  assert.match(page, /Show trend chart/);
+  assert.match(page, /upsertWeightEntry/);
+  assert.match(page, /shouldPersistNutritionState\(storageLoaded, loadedDayRef\.current, clock\.dayKey\)/);
   assert.match(page, /30 min or less/);
   assert.doesNotMatch(page, /Number\.parseInt\(recipe\.time/);
   assert.match(page, /needs nutrition review/);
@@ -95,6 +101,8 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
   assert.match(css, /--orange:\s*#ff6b32/);
   assert.match(css, /\.meal-timeline\.connected::before[^}]*left:\s*8\.5px/);
   assert.match(css, /\.timeline-dot[^}]*left:\s*0/);
+  assert.match(css, /\.meal-meta > \.logged-volume[^}]*color:\s*#173e2c/);
+  assert.match(css, /\.quantity-control label span[^}]*color:\s*var\(--ink\)/);
   const lineLeft = Number(css.match(/\.meal-timeline\.connected::before[^}]*left:\s*(-?\d+(?:\.\d+)?)px/)?.[1]);
   const dotLeft = Number(css.match(/\.timeline-dot[^}]*left:\s*(-?\d+(?:\.\d+)?)(?:px)?[;}]/)?.[1]);
   const dotWidth = Number(css.match(/\.timeline-dot[^}]*width:\s*(\d+(?:\.\d+)?)px/)?.[1]);

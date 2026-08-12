@@ -100,7 +100,7 @@ Package-label calories remain the displayed authority for exact products. A calc
 
 Every canonical food stores:
 
-- human name, brand, variant, package size, and optional barcode/retailer identifiers;
+- mandatory brand and item name, optional variant, package size, and optional barcode/retailer identifiers;
 - serving definitions in grams/millilitres and natural Indian units where useful (roti, katori, glass, piece, tablespoon);
 - calories, protein, carbohydrate, fat, fibre, sugar, sodium, and optional micronutrients;
 - field-level source, source date, confidence, and evidence URL/image reference;
@@ -108,6 +108,8 @@ Every canonical food stores:
 - aliases and a link to any retailer order line that matched it.
 
 Search ranking: exact personal favourite → recent purchase → repeated meal → exact catalogue match → generic reference food → estimated result.
+
+Brand, item name, variant, serving basis/unit, calories, protein, carbohydrate, fat, and fibre are all user-editable. Researched or imported values are pre-filled first; a personal edit is labelled as such and becomes the future default without rewriting the identity or nutrition snapshot stored in an older food log.
 
 ### 4.3 Recipes
 
@@ -152,6 +154,8 @@ Supported paths:
 - log a saved recipe or planned meal;
 - add an exact recent purchase;
 - edit quantity/volume before adding or from the logged timeline while calories and all macros update live;
+- see the exact quantity and unit in both the final add action and the logged timeline;
+- rename a food or edit its brand, item name, optional variant, serving basis, calories, protein, carbohydrate, fat, and fibre;
 - quick-add only calories/macros when detail is unavailable;
 - create a custom food from a package label.
 
@@ -163,6 +167,7 @@ Every log records event time, meal slot, food/recipe version, serving quantity, 
 - History provides date-level review and correction.
 - Weekly/monthly trends use averages, target-range days, and macro consistency—not streak shame.
 - Missing or partial days are labelled; they are not treated as zero intake.
+- Track includes a compact, date-aware body-weight log. A second entry on the same date corrects that date rather than duplicating it, and the real saved entries can expand into an elapsed-time trend chart.
 - The product may describe observed associations but must not diagnose or claim causation.
 
 ### 4.7 cardIQ purchase bridge — after design approval
@@ -204,12 +209,14 @@ Amazon’s export does not reliably identify the Now channel by itself, so that 
 | 2026-08-09 | Today contains only food KP actually logs | Mix illustrative meals into Today totals or its timeline | A real diary must never make sample intake look consumed |
 | 2026-08-09 | Dashboard time and diary date use `Asia/Kolkata` | Rely on server location or a fixed greeting/date | Keeps Bangalore greetings correct and prevents yesterday's entries leaking into today |
 | 2026-08-09 | Every illustrative target, trend, insight, and meal suggestion is explicitly labelled Sample | Let polished preview data resemble personal history | KP must be able to distinguish researched catalogue facts, imported purchases, and UI examples at a glance |
+| 2026-08-11 | Personal food edits are versioned defaults while food logs retain snapshots | Resolve every old log against the latest mutable food record | Renaming or correcting macros must not silently rewrite what was recorded earlier |
+| 2026-08-11 | Weight tracking lives as a compact expandable card in Track Today | Add a third top-level area or a large dedicated dashboard | Keeps the two-area navigation intact while making weigh-ins and the real trend easy to reach |
 
 ## §6 Current State
 
-As of 2026-08-09, the repository lives at `/Users/kanwar/Code/Nourish`. Plan is split into Items and Meals. The seed catalogue contains 38 researched products/ingredients and 10 original meals recalculated from structured, weighed ingredient records. Source strength and links are visible; the evidence register lives in `data/NUTRITION_SOURCES.md`. Track has the approved Today/History/Trends/Purchases structure plus a quantity-first logger with live nutrition recalculation. Today now starts at zero, totals only KP's logged entries, and shows a Bangalore-local greeting and date. Logs are date-scoped so a prior day's diary is not restored as today's intake.
+As of 2026-08-11, the repository lives at `/Users/kanwar/Code/Nourish`. Plan is split into Items and Meals. The seed catalogue contains 38 researched products/ingredients and 10 original meals recalculated from structured, weighed ingredient records. Source strength and links are visible; the evidence register lives in `data/NUTRITION_SOURCES.md`. Track has the approved Today/History/Trends/Purchases structure plus a quantity-first logger with live nutrition recalculation. The add action and timeline now show the exact quantity/unit at high contrast. Every food exposes editable Brand, Item Name, optional Variant, serving basis/unit, calories, protein, carbohydrate, fat, and fibre; those personal defaults persist while each diary entry retains its own snapshot. Today starts at zero, totals only KP's logged entries, and shows a Bangalore-local greeting and date. Logs are date-scoped, with a rollover guard preventing a prior day's diary from being saved into the next Bangalore day.
 
-The local cardIQ importer now reads the last year of deduplicated orders and writes an ignored snapshot to `public/cardiq-food-import.json`. On 2026-08-09 it produced 209 food products from 131 cardIQ orders, with 43 safely matched to the Nourish catalogue. Food logs and Plan selections survive refresh in the current browser profile; malformed stored entries are rejected during restore. Historical Track data, targets, charts, insights, and unlogged meal ideas are still preview data and are explicitly labelled Sample. This is intentionally browser-local persistence, not the backed-up local database planned for Phase 1. The working product name Nourish is not yet approved as permanent.
+The local cardIQ importer now reads the last year of deduplicated orders and writes an ignored snapshot to `public/cardiq-food-import.json`. On 2026-08-09 it produced 209 food products from 131 cardIQ orders, with 43 safely matched to the Nourish catalogue. Food logs, personal food edits, weight entries, and Plan selections survive refresh in the current browser profile; malformed stored entries are isolated and rejected without discarding unrelated valid data. Track Today now includes a compact real weight log with same-date correction and an expandable elapsed-time chart. Historical food Track data, targets, food charts, insights, and unlogged meal ideas are still preview data and are explicitly labelled Sample. This is intentionally browser-local persistence, not the backed-up local database planned for Phase 1. The working product name Nourish is not yet approved as permanent.
 
 ## §7 Known Issues and deferred scope
 
@@ -293,7 +300,7 @@ The local cardIQ importer now reads the last year of deduplicated orders and wri
 
 ### Current handoff
 
-KP can now test Today with food actually eaten: the diary starts empty, live quantities recalculate nutrition, refresh restores same-day logs, and the next Bangalore day starts separately. History, Trends, targets, insights, and unlogged meal ideas remain Sample previews. The next build phase is backed-up local persistence and exact product reconciliation; cardIQ should remain connected only through the documented narrow import contract, without importing payment or address data.
+KP can now test Today with food actually eaten: the diary starts empty, live quantities recalculate nutrition, the exact volume is prominent before and after adding, and any food identity, serving basis, or macro can be corrected and saved to My Foods. Older logged snapshots remain unchanged by later food edits. The compact Body Weight card accepts dated weigh-ins, corrects a repeated date, and expands into a real trend chart. Refresh restores same-day food logs, personal food defaults, and weight history; the next Bangalore day starts with an empty food diary. History, food Trends, targets, insights, and unlogged meal ideas remain Sample previews. The next build phase is backed-up local persistence and exact product reconciliation; cardIQ should remain connected only through the documented narrow import contract, without importing payment or address data.
 
 ## §10 Deployment
 

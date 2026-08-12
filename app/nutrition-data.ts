@@ -1,13 +1,14 @@
 export type NutritionSource = {
   label: string;
   url: string;
-  trust: "Official label" | "Reference" | "Label mirror";
+  trust: "Official label" | "Reference" | "Label mirror" | "Personal";
 };
 
 export type NutritionItem = {
   id: string;
   name: string;
-  brand?: string;
+  brand: string;
+  variant: string;
   amount: number;
   unit: "g" | "ml" | "scoop" | "pack" | "piece" | "serving";
   calories: number;
@@ -52,7 +53,7 @@ export const SOURCE_LINKS = {
 
 const usdaSource: NutritionSource = { label: "USDA FoodData Central", url: SOURCE_LINKS.usda, trust: "Reference" };
 
-export const nutritionItems: NutritionItem[] = [
+const nutritionSeedItems: Array<Omit<NutritionItem, "brand" | "variant"> & { brand?: string; variant?: string }> = [
   {
     id: "nandini-goodlife-toned",
     name: "GoodLife UHT toned milk",
@@ -171,6 +172,16 @@ export const nutritionItems: NutritionItem[] = [
   { id: "brown-rice", name: "Brown rice · cooked", amount: 150, unit: "g", calories: 185, protein: 3.9, carbs: 38.4, fat: 1.6, fiber: 2.4, category: "Ingredient", availability: "Widely available in India", aliases: ["whole grain rice", "chawal"], source: usdaSource },
   { id: "greek-yogurt-nonfat", name: "Greek yogurt · non-fat reference", amount: 200, unit: "g", calories: 118, protein: 20.4, carbs: 7.2, fat: 0.8, fiber: 0, category: "Ingredient", availability: "Use exact local pack when available", aliases: ["strained yogurt", "hung curd", "dahi"], source: usdaSource },
 ];
+
+export const nutritionItems: NutritionItem[] = nutritionSeedItems.map((food) => {
+  const [name, ...variantParts] = food.name.split(" · ");
+  return {
+    ...food,
+    brand: food.brand?.trim() || "Generic",
+    name: name.trim(),
+    variant: food.variant?.trim() || variantParts.join(" · ").trim(),
+  };
+});
 
 export function calculateMealNutrition(basis: Meal["nutritionBasis"]) {
   const totals = basis.reduce((sum, ingredient) => {
