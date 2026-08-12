@@ -9,6 +9,7 @@ export const LEGACY_NUTRITION_STORAGE_KEY = LEGACY_NUTRITION_STORAGE_KEYS[0];
 export const MAX_SAVED_CUSTOM_FOODS = 500;
 export const MAX_SAVED_USER_MEALS = 200;
 export const MAX_SAVED_MEAL_COMPONENTS = 40;
+export const MAX_SAVED_SERVINGS = 8;
 
 export type SavedLogEntry = {
   foodId: string;
@@ -103,6 +104,22 @@ function parseFood(value: unknown): NutritionItem | null {
   // An unusable photo link loses a thumbnail, never the food itself.
   if (isSafeImageUrl(rawImageUrl)) parsed.imageUrl = rawImageUrl;
   else delete parsed.imageUrl;
+
+  // Servings are shortcuts to a quantity. A malformed one loses that shortcut,
+  // never the food and never its base panel.
+  const rawServings = (value as { servings?: unknown }).servings;
+  const unitLimit = unitLimits[parsed.unit] ?? 0;
+  const servings = Array.isArray(rawServings)
+    ? rawServings.flatMap((serving) => {
+      if (!serving || typeof serving !== "object") return [];
+      const candidate = serving as { label?: unknown; amount?: unknown };
+      if (typeof candidate.label !== "string" || !candidate.label.trim() || candidate.label.length > 40) return [];
+      if (!Number.isFinite(candidate.amount) || (candidate.amount as number) <= 0 || (candidate.amount as number) > unitLimit) return [];
+      return [{ label: candidate.label.trim(), amount: candidate.amount as number }];
+    }).slice(0, MAX_SAVED_SERVINGS)
+    : [];
+  if (servings.length) parsed.servings = servings;
+  else delete parsed.servings;
   return parsed;
 }
 

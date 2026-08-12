@@ -690,3 +690,17 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
   .meal-entry .entry-actions { grid-column: 2; justify-items: start; }
   .dialog-notice { margin: 10px 16px 0; }
 }
+
+/* ---- Serving variants: one tap to a known pack size or portion ---- */
+.serving-options { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0 4px; }
+.serving-options button { padding: 7px 11px; border: 1px solid rgb(255 255 255 / 0.22); border-radius: 99px; color: rgb(255 255 255 / 0.82); background: transparent; font-size: 9px; font-weight: 750; white-space: nowrap; cursor: pointer; }
+.serving-options button:hover { border-color: rgb(255 255 255 / 0.45); color: white; }
+/* The base panel is the source of truth, so it always reads differently. */
+.serving-options button.is-base { border-style: dashed; border-color: rgb(185 237 85 / 0.55); color: var(--lime); }
+.serving-options button.active { border-color: var(--lime); color: var(--ink); background: var(--lime); }
+.per-hundred { display: block; margin-top: 5px; color: rgb(255 255 255 / 0.5); font-size: 9px; }
+
+@media (max-width: 700px) {
+  .serving-options { gap: 5px; }
+  .serving-options button { padding: 8px 10px; }
+}

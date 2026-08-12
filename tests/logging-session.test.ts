@@ -4,6 +4,8 @@ import {
   addToTray,
   createCustomFood,
   createUserMeal,
+  getBaseMultiple,
+  getServingOptions,
   forkFoodForEdit,
   isCustomFoodDraftValid,
   isOwnedFood,
@@ -24,6 +26,7 @@ import {
   type TrayItem,
 } from "../app/logging-session";
 import { foodIconKey } from "../app/food-icon";
+import { scaleNutrition } from "../app/prototype-logic";
 import { nutritionItems } from "../app/nutrition-data";
 import type { NutritionItem } from "../app/nutrition-data";
 
@@ -252,4 +255,104 @@ test("icon keywords match whole words, not fragments hiding inside longer ones",
   // Plurals still resolve to the same group.
   assert.equal(pick("Almonds"), "nut");
   assert.equal(pick("Eggs"), "egg");
+});
+
+test("serving options always expose the base and never hide it behind a pack size", () => {
+  const options = getServingOptions({
+    amount: 100,
+    unit: "g",
+    servings: [{ label: "90 g cup", amount: 90 }, { label: "400 g tub", amount: 400 }],
+  });
+  assert.deepEqual(options.map((option) => option.amount), [90, 100, 400], "sorted by size");
+  const base = options.find((option) => option.isBase);
+  assert.ok(base);
+  assert.equal(base.amount, 100);
+  assert.match(base.label, /base/, "the base must say so");
+  assert.equal(options.filter((option) => option.isBase).length, 1);
+});
+
+test("a pack size equal to the base collapses into the base rather than duplicating it", () => {
+  const options = getServingOptions({
+    amount: 90,
+    unit: "g",
+    servings: [{ label: "90 g cup", amount: 90 }, { label: "400 g tub", amount: 400 }],
+  });
+  assert.deepEqual(options.map((option) => option.amount), [90, 400]);
+  assert.equal(options.filter((option) => option.isBase).length, 1);
+  assert.match(options[0].label, /base/);
+});
+
+test("countable foods get plain multiples so 2 bananas is one tap", () => {
+  const options = getServingOptions({ amount: 1, unit: "piece", servings: [] });
+  assert.deepEqual(options.map((option) => option.amount), [1, 2, 3]);
+  assert.equal(options[0].isBase, true);
+  assert.equal(options[1].label, "2 piece");
+
+  // Weight-based foods must not sprout meaningless "200 g / 300 g" multiples.
+  const grams = getServingOptions({ amount: 100, unit: "g", servings: [] });
+  assert.deepEqual(grams.map((option) => option.amount), [100]);
+});
+
+test("serving options reject the entries that would log impossible amounts", () => {
+  const options = getServingOptions({
+    amount: 100,
+    unit: "g",
+    servings: [
+      { label: "ok", amount: 250 },
+      { label: "zero", amount: 0 },
+      { label: "negative", amount: -50 },
+      { label: "over the unit limit", amount: 99_999 },
+      { label: "   ", amount: 120 },
+      { label: "not a number", amount: Number.NaN },
+    ],
+  });
+  assert.deepEqual(options.map((option) => option.amount), [100, 250]);
+  assert.deepEqual(getServingOptions({ amount: 0, unit: "g", servings: [] }), []);
+  assert.deepEqual(getServingOptions({ amount: Number.NaN, unit: "g", servings: [] }), []);
+});
+
+test("multiples of a countable base stop at the unit ceiling", () => {
+  // scoop tops out at 10, so 3x a 4-scoop base (12) must not be offered.
+  const options = getServingOptions({ amount: 4, unit: "scoop", servings: [] });
+  assert.deepEqual(options.map((option) => option.amount), [4, 8]);
+});
+
+test("the base multiple reads the way the quantity was chosen", () => {
+  assert.equal(getBaseMultiple(100, 90), 0.9);
+  assert.equal(getBaseMultiple(1, 2), 2);
+  assert.equal(getBaseMultiple(90, 400), 4.44);
+  assert.equal(getBaseMultiple(0, 50), null);
+  assert.equal(getBaseMultiple(100, 0), null);
+  assert.equal(getBaseMultiple(Number.NaN, 50), null);
+});
+
+test("logging a variation never rewrites the base it came from", () => {
+  const epigamia: NutritionItem = food({
+    id: "epigamia-test",
+    amount: 100,
+    unit: "g",
+    calories: 71,
+    protein: 7.8,
+    carbs: 3.3,
+    fat: 2.2,
+    fiber: 0,
+    servings: [{ label: "90 g cup", amount: 90 }, { label: "400 g tub", amount: 400 }],
+  });
+  const frozen = JSON.parse(JSON.stringify(epigamia));
+
+  const cup = scaleNutrition(epigamia, 90);
+  const tub = scaleNutrition(epigamia, 400);
+
+  assert.deepEqual(epigamia, frozen, "the catalogue entry must be untouched by logging");
+  assert.equal(cup.amount, 90);
+  assert.equal(cup.calories, 63.9);
+  assert.equal(tub.amount, 400);
+  assert.equal(tub.calories, 284);
+
+  // Both logged entries still carry the same base, so a later re-edit rescales
+  // from the panel rather than from the previous portion.
+  assert.equal(cup.basis?.amount, 100);
+  assert.equal(tub.basis?.amount, 100);
+  assert.equal(scaleNutrition(cup, 400).calories, 284, "re-editing a cup up to a tub uses the base");
+  assert.equal(scaleNutrition(tub, 90).calories, 63.9, "and back down again");
 });

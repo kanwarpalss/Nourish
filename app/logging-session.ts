@@ -1,5 +1,5 @@
 import type { NutritionItem } from "./nutrition-data";
-import { isQuantityValid, scaleNutrition } from "./prototype-logic";
+import { getQuantityLimit, isQuantityValid, scaleNutrition } from "./prototype-logic";
 
 export const CUSTOM_FOOD_PREFIX = "custom-";
 export const USER_MEAL_PREFIX = "usermeal-";
@@ -133,6 +133,73 @@ export function mergeFoodCatalog(base: NutritionItem[], overrides: NutritionItem
   const overridden = base.map((food) => byId.get(food.id) ?? food);
   const added = [...byId.values()].filter((food) => !baseIds.has(food.id));
   return [...overridden, ...added];
+}
+
+export const MAX_SERVING_OPTIONS = 6;
+
+/** Units where a whole number of items is the natural way to eat the food. */
+const COUNTABLE_UNITS = new Set(["piece", "pack", "scoop", "serving"]);
+
+export type ResolvedServing = {
+  label: string;
+  amount: number;
+  isBase: boolean;
+};
+
+function formatAmount(amount: number) {
+  return Number.isInteger(amount) ? `${amount}` : `${Math.round(amount * 100) / 100}`;
+}
+
+/**
+ * Builds the one-tap quantity list for a food.
+ *
+ * The base panel always appears and is always marked, so the number the macros
+ * actually describe is never hidden behind a pack size. Declared pack sizes
+ * come from the catalogue; countable foods additionally get plain multiples,
+ * because "2 bananas" is how you eat them, not "236 g".
+ */
+export function getServingOptions(food: Pick<NutritionItem, "amount" | "unit" | "servings">): ResolvedServing[] {
+  const base = food.amount;
+  if (!Number.isFinite(base) || base <= 0) return [];
+  const limit = getQuantityLimit(food.unit);
+  const byAmount = new Map<number, ResolvedServing>();
+
+  const add = (label: string, amount: number, isBase = false) => {
+    if (!isQuantityValid(food.unit, amount)) return;
+    const rounded = Math.round(amount * 100) / 100;
+    const existing = byAmount.get(rounded);
+    // The base label wins over an identical pack size, so it stays visible.
+    if (existing && !isBase) return;
+    byAmount.set(rounded, { label, amount: rounded, isBase: isBase || existing?.isBase === true });
+  };
+
+  add(`${formatAmount(base)} ${food.unit} · base`, base, true);
+
+  for (const serving of food.servings ?? []) {
+    if (typeof serving?.label !== "string" || !serving.label.trim()) continue;
+    add(serving.label.trim(), serving.amount);
+  }
+
+  if (COUNTABLE_UNITS.has(food.unit)) {
+    for (const multiple of [2, 3]) {
+      const amount = base * multiple;
+      if (amount <= limit) add(`${formatAmount(amount)} ${food.unit}`, amount);
+    }
+  }
+
+  return [...byAmount.values()]
+    .sort((left, right) => left.amount - right.amount)
+    .slice(0, MAX_SERVING_OPTIONS);
+}
+
+/**
+ * How many bases a logged quantity represents — the sentence that makes the
+ * hierarchy legible: 90 g of a 100 g base reads as "0.9 × base".
+ */
+export function getBaseMultiple(baseAmount: number, loggedAmount: number): number | null {
+  if (!Number.isFinite(baseAmount) || baseAmount <= 0) return null;
+  if (!Number.isFinite(loggedAmount) || loggedAmount <= 0) return null;
+  return Math.round((loggedAmount / baseAmount) * 100) / 100;
 }
 
 export function makeTrayKey(unique: string) {

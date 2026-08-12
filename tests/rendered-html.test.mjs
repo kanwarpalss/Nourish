@@ -104,6 +104,14 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
   assert.match(page, /Brand and item name are required\. Variant can be blank\./);
   assert.match(page, /Edit name, serving & nutrition/);
   assert.match(page, /You are adding \$\{quantity\} \$\{selected\.unit\}/);
+
+  // Base panel is the source of truth; logging is a multiple of it.
+  assert.match(page, /getServingOptions\(selectedAtBasis\)/, "servings must derive from the base panel, not the edited portion");
+  assert.match(page, /\$\{baseMultiple \?\? 1\}× the \$\{labelBasis\} \$\{selected\.unit\} base/);
+  assert.match(page, /className="serving-options"/);
+  assert.match(page, /aria-pressed=\{quantity === option\.amount\}/, "serving chips must expose their selected state");
+  assert.match(page, /Base panel reads .*per 100 \{selected\.unit\}/);
+  assert.match(css, /\.serving-options button\.is-base/, "the base chip must be visually distinct");
   assert.match(page, /Show trend chart/);
   assert.match(page, /upsertWeightEntry/);
   assert.match(page, /shouldPersistNutritionState\(storageLoaded, loadedDayRef\.current, clock\.dayKey\)/);

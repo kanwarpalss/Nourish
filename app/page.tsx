@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { isCardIqFoodImport, type CardIqFoodImport } from "./cardiq-food";
 import { FoodIcon, foodIconKey } from "./food-icon";
 import { getWeightTrendPoints, isSafeImageUrl, LOCAL_NUTRITION_STORAGE_KEY, parseSavedNutritionState, readSavedNutritionRaw, shouldPersistNutritionState, shouldRestoreSavedNutritionState, stringifySavedNutritionState, upsertWeightEntry, type SavedNutritionState, type WeightEntry } from "./local-nutrition-state";
-import { addToTray, createCustomFood, createUserMeal, forkFoodForEdit, isOwnedFood, isUserMealNameValid, mergeFoodCatalog, removeFromTray, removeUserMeal, trayTotals, upsertUserMeal, userMealToFoods, userMealTotals, type TrayItem, type UserMeal } from "./logging-session";
+import { addToTray, createCustomFood, createUserMeal, forkFoodForEdit, getBaseMultiple, getServingOptions, isOwnedFood, isUserMealNameValid, mergeFoodCatalog, removeFromTray, removeUserMeal, trayTotals, upsertUserMeal, userMealToFoods, userMealTotals, type TrayItem, type UserMeal } from "./logging-session";
 import { getBangaloreClock, getEnergyRunway, getQuantityLimit, isQuantityValid, matchesRecipe, scaleNutrition, sumLoggedNutrition, type DashboardClock } from "./prototype-logic";
 import { meals, nutritionItems, SOURCE_LINKS, type Meal, type NutritionItem } from "./nutrition-data";
 
@@ -530,6 +530,16 @@ function FoodDialog({ initialFood, editing, catalog, userMeals, onClose, onCommi
   const quantityValid = selected ? isQuantityValid(selected.unit, quantity) : false;
   const scaled = selected ? scaleNutrition(selected, quantityValid ? quantity : 0) : null;
   const labelBasis = selected ? selected.basis?.amount ?? selected.amount : 0;
+  // Servings and the base always come from the food's own panel, never from the
+  // portion currently being edited, so the hierarchy holds while you re-edit.
+  const selectedAtBasis = selected ? foodAtBasis(selected) : null;
+  const servingOptions = selectedAtBasis ? getServingOptions(selectedAtBasis) : [];
+  const baseMultiple = getBaseMultiple(labelBasis, quantity);
+  // A published panel is kept exactly as printed; the per-100 line is derived
+  // for comparison rather than rewriting the food's own basis.
+  const per100 = selectedAtBasis && (selected?.unit === "g" || selected?.unit === "ml") && labelBasis !== 100
+    ? scaleNutrition(selectedAtBasis, 100)
+    : null;
   const totals = trayTotals(tray);
 
   const keepSelectionVisible = (nextTab: string, nextSearch: string) => {
@@ -692,8 +702,22 @@ function FoodDialog({ initialFood, editing, catalog, userMeals, onClose, onCommi
           ) : selected && scaled ? (
             <aside className="quantity-editor dark-card">
               <span className="eyebrow bright">Quantity</span><h3>{foodLabel(selected)}</h3><p>Nutrition updates while you edit.</p>
+              {servingOptions.length > 1 ? (
+                <div className="serving-options" role="group" aria-label={`Common servings for ${selected.name}`}>
+                  {servingOptions.map((option) => (
+                    <button
+                      key={`${option.label}-${option.amount}`}
+                      type="button"
+                      className={`${quantity === option.amount ? "active" : ""} ${option.isBase ? "is-base" : ""}`}
+                      aria-pressed={quantity === option.amount}
+                      onClick={() => setQuantity(option.amount)}
+                    >{option.label}</button>
+                  ))}
+                </div>
+              ) : null}
               <div className="quantity-control"><button onClick={() => setQuantity((value) => Math.max(step, Number((value - step).toFixed(2))))} aria-label={`Decrease ${selected.name} quantity`}>−</button><label><input type="number" min={step} max={maxQuantity} step={step} value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} aria-label={`${selected.name} quantity`} /><span>{selected.unit}</span></label><button onClick={() => setQuantity((value) => Math.min(maxQuantity, Number((value + step).toFixed(2))))} aria-label={`Increase ${selected.name} quantity`}>＋</button></div>
-              <small className={`quantity-basis ${quantityValid ? "" : "error"}`}>{quantityValid ? `You are adding ${quantity} ${selected.unit} · nutrition basis ${labelBasis} ${selected.unit}` : `Enter more than 0 and no more than ${maxQuantity} ${selected.unit}`}</small>
+              <small className={`quantity-basis ${quantityValid ? "" : "error"}`}>{quantityValid ? `You are adding ${quantity} ${selected.unit} · ${baseMultiple ?? 1}× the ${labelBasis} ${selected.unit} base` : `Enter more than 0 and no more than ${maxQuantity} ${selected.unit}`}</small>
+              {per100 ? <small className="per-hundred">Base panel reads {Math.round(per100.calories)} kcal · {per100.protein.toFixed(1)}P · {per100.carbs.toFixed(1)}C · {per100.fat.toFixed(1)}F per 100 {selected.unit}</small> : null}
               <div className="live-nutrition"><strong><b>{Math.round(scaled.calories)}</b><small>kcal</small></strong><span><b>{scaled.protein.toFixed(1)}g</b><small>protein</small></span><span><b>{scaled.carbs.toFixed(1)}g</b><small>carbs</small></span><span><b>{scaled.fat.toFixed(1)}g</b><small>fat</small></span><span><b>{scaled.fiber.toFixed(1)}g</b><small>fibre</small></span></div>
               <button className="edit-food-button" onClick={startEdit}>✎ Edit name, serving & nutrition</button>
               {selected.source.url ? <a href={selected.source.url} target="_blank" rel="noreferrer">{selected.source.label} ↗</a> : <span className="personal-source">{selected.source.label}</span>}

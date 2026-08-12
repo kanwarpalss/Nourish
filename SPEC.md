@@ -220,12 +220,19 @@ Amazon’s export does not reliably identify the Now channel by itself, so that 
 | 2026-08-12 | Removing a logged entry is reversible via a 10-second Undo | Confirmation dialog, or a silent delete | Keeps one-tap removal fast without making a misclick destructive |
 | 2026-08-12 | Food thumbnails are hot-linked photo URLs with a drawn icon fallback | Download product images into the repository | The repo is public, so vendoring retailer/Commons imagery would be redistribution; hot-linking keeps it personal use and the icon guarantees no empty rows |
 | 2026-08-12 | Photos are sourced at build time into the seed data, never fetched at runtime | Call an image search API from the logging screen | Keeps the primary interaction offline-capable and free of rate limits, keys, and latency |
+| 2026-08-12 | A food has one base panel (amount + unit + macros); everything logged is a multiple of it | Store each pack size as its own food record | One truth per food means correcting a macro fixes every past and future portion at once; parallel records drift |
+| 2026-08-12 | Serving variants are labelled shortcuts to a quantity, never their own nutrition | Give each serving its own calorie figure | A serving that carries numbers can disagree with the base panel it came from |
+| 2026-08-12 | Published bases are kept exactly as printed; a per-100 line is derived for comparison | Renormalise every food to a per-100 g base | Converting a 90 g label panel to 100 g invents precision the label never claimed, and would shift the meal recipes that calculate from these foods |
+| 2026-08-12 | Serving variants render as one-tap chips, with the base always shown and marked | A dropdown | Two to four options fit inline, so tapping once beats opening a menu, and the base stays visible instead of hiding inside a closed control |
+| 2026-08-12 | Countable foods (piece/pack/scoop/serving) also get plain multiples | Only offer hand-written servings | "2 bananas" is how the food is eaten; hand-writing every multiple for every food does not scale |
 
 ## §6 Current State
 
 As of 2026-08-11, the repository lives at `/Users/kanwar/Code/Nourish`. Plan is split into Items and Meals. The seed catalogue contains 38 researched products/ingredients and 10 original meals recalculated from structured, weighed ingredient records. Source strength and links are visible; the evidence register lives in `data/NUTRITION_SOURCES.md`. Track has the approved Today/History/Trends/Purchases structure plus a quantity-first logger with live nutrition recalculation. The add action and timeline now show the exact quantity/unit at high contrast. Every food exposes editable Brand, Item Name, optional Variant, serving basis/unit, calories, protein, carbohydrate, fat, and fibre; those personal defaults persist while each diary entry retains its own snapshot. Today starts at zero, totals only KP's logged entries, and shows a Bangalore-local greeting and date. Logs are date-scoped, with a rollover guard preventing a prior day's diary from being saved into the next Bangalore day.
 
 As of 2026-08-12 the Log Food dialog is a logging session rather than a one-shot popup. A tray collects any number of foods with running kcal and macros before a single commit; the dialog stays open and refocuses search after each add. A permanent **Create a new food** action opens a blank form (brand, item, variant, photo URL, serving basis, macros) and asks whether to save it to My foods or log it for today only. Editing a researched food forks a personal copy so the reference entry is never rewritten. Logged entries can be removed from the timeline with a 10-second Undo. Meals in the logger are groups KP saves from a tray and re-logs in one tap; the 11 researched recipes remain browsable under Plan but no longer appear as loggable foods. Food rows show a hot-linked photo where one is known (14 of 37 seed foods) and a drawn food-category icon otherwise, so no row is ever an empty box. Saved state moved to `nourish.nutrition.v3`, adding user meals and photo URLs, and still reads the v2/v1 keys once so an upgrade never looks like a wiped diary.
+
+Nutrition now has one explicit hierarchy. Each food carries a single **base panel** — an amount, a unit, and the macros that describe exactly that amount — which is the source of truth and is editable. Everything logged is a multiple of it: 200 ml of a 100 ml base, 400 g of a 90 g base, 2 of a 1-piece base. Foods also carry **servings**: labelled shortcuts to a quantity in the food's own unit ("400 g tub", "1 L carton", "2 eggs", "1 tbsp · 14 g"), rendered as one-tap chips with the base always present and marked. Countable units additionally get plain multiples. Servings never carry their own nutrition, so they cannot disagree with the panel. The quantity readout states the relationship outright — "400 g · 4.44× the 90 g base" — and for weight or volume foods whose base is not 100, a derived line shows what the panel works out to per 100 without altering the stored base.
 
 The local cardIQ importer now reads the last year of deduplicated orders and writes an ignored snapshot to `public/cardiq-food-import.json`. On 2026-08-09 it produced 209 food products from 131 cardIQ orders, with 43 safely matched to the Nourish catalogue. Food logs, personal food edits, weight entries, and Plan selections survive refresh in the current browser profile; malformed stored entries are isolated and rejected without discarding unrelated valid data. Track Today now includes a compact real weight log with same-date correction and an expandable elapsed-time chart. Historical food Track data, targets, food charts, insights, and unlogged meal ideas are still preview data and are explicitly labelled Sample. This is intentionally browser-local persistence, not the backed-up local database planned for Phase 1. The working product name Nourish is not yet approved as permanent.
 
@@ -238,7 +245,10 @@ The local cardIQ importer now reads the last year of deduplicated orders and wri
 | Nandini and Epigamia seed entries rely on current label mirrors | Needs exact-pack confirmation | Reconcile barcode/variant and pack photo during cardIQ import before promotion |
 | Starter dependency audit reports four high-severity advisories | Open | Upgrade the core framework stack and rerun the audit before private-network access or deployment |
 | Recipe photography and curated source catalogue | Deferred | After interaction/design approval |
-| Food photos cover 14 of 37 seed foods; the rest fall back to drawn icons | Paused mid-way on 2026-08-12 at KP's call | Resume photo sourcing as a separate pass — see the note under §9 |
+| Food photos cover 14 of 37 seed foods; the rest fall back to drawn icons | Paused mid-way on 2026-08-12 at KP's call | Resume photo sourcing as a separate pass — see §9 Next up (2) |
+| Logging rebuild and serving hierarchy sit on a branch that has diverged from `main` | Open — both sides have work the other lacks | Re-apply onto `main`; see §9 Next up (1) |
+| Servings can only be added by editing the seed catalogue, not from the app | Deferred | Let a food you own manage its own serving list from the edit form |
+| Serving labels are hand-written per food | Acceptable for a 37-food catalogue | Revisit if the catalogue grows past a few hundred foods |
 | Exact product nutrition for unmatched cardIQ foods | In progress | Reconcile exact pack label before enabling one-tap logging |
 | Amazon Now channel identification | Known ambiguity | Secondary evidence + review queue |
 | Micronutrient targets and medical conditions | Deferred | Separate reviewed scope; never infer silently |
@@ -258,7 +268,18 @@ The local cardIQ importer now reads the last year of deduplicated orders and wri
 
 ## §9 Build phases and handoff
 
-### Next up — finish food photos (paused 2026-08-12)
+### Next up (1) — reconcile this branch with `main` (blocking, 2026-08-12)
+
+The logging rebuild and the serving hierarchy live on `claude/nourish-tailscale-server-a22d4d`, branched from `0fc9b99`. While it was being built, a parallel session put ten commits on `main` (through `0b45c81`), and the two rewrote the same files: `app/page.tsx`, `app/local-nutrition-state.ts`, `app/globals.css`, `tests/prototype-logic.test.ts`, `tests/rendered-html.test.mjs`.
+
+They do not overlap in intent, which is why both are worth keeping:
+
+- **This branch** fixes what `main` still does not: `main` closes the dialog after a single add, has no create-a-food path, no way to remove a logged entry, and still renders `food.name.charAt(0)` letter avatars.
+- **`main`** adds what this branch lacks: `app/composite-foods.ts` (everyday dishes assembled from catalogue foods with editable component weights), `app/day-history.ts`, an editable logging unit, dependency-advisory fixes, and a large amount of cardIQ matching and nutrition research.
+
+Do not attempt a plain merge. Both sides restructured the same `FoodDialog`, so a textual merge resolves without conflict markers in places where the behaviour is actually incompatible, and the loss is silent. Re-apply this branch's logging work on top of `main` instead, rebuilding the dialog against `main`'s newer version. `main`'s composite foods and this branch's base/serving hierarchy are complementary and should end up in the same quantity editor: a composite is a set of component weights, each of which is itself a multiple of that component's base.
+
+### Next up (2) — finish food photos (paused 2026-08-12)
 
 Thumbnails work end-to-end: `NutritionItem.imageUrl` is validated, hot-linked, and falls back to a drawn category icon, so nothing is blocked. What remains is coverage — 14 of 37 seed foods have a photo.
 

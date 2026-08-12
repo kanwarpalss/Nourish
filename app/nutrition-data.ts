@@ -4,11 +4,22 @@ export type NutritionSource = {
   trust: "Official label" | "Reference" | "Label mirror" | "Personal";
 };
 
+/**
+ * A named portion you actually eat, expressed in the food's own base unit.
+ * The base panel stays the source of truth; a serving is only a shortcut to a
+ * quantity, so adding pack sizes can never change what a food's nutrition says.
+ */
+export type ServingOption = {
+  label: string;
+  amount: number;
+};
+
 export type NutritionItem = {
   id: string;
   name: string;
   brand: string;
   variant: string;
+  /** The base quantity the macros below describe. Source of truth; editable. */
   amount: number;
   unit: "g" | "ml" | "scoop" | "pack" | "piece" | "serving";
   calories: number;
@@ -22,6 +33,8 @@ export type NutritionItem = {
   aliases: string[];
   /** Hot-linked photo. Absent means the food falls back to a drawn icon. */
   imageUrl?: string;
+  /** Pack sizes and everyday portions, offered as one-tap quantities. */
+  servings?: ServingOption[];
   source: NutritionSource;
   basis?: { amount: number; calories: number; protein: number; carbs: number; fat: number; fiber: number };
 };
@@ -178,13 +191,54 @@ const nutritionSeedItems: Array<Omit<NutritionItem, "brand" | "variant"> & { bra
   { id: "greek-yogurt-nonfat", name: "Greek yogurt · non-fat reference", amount: 200, unit: "g", calories: 118, protein: 20.4, carbs: 7.2, fat: 0.8, fiber: 0, category: "Ingredient", availability: "Use exact local pack when available", aliases: ["strained yogurt", "hung curd", "dahi"], source: usdaSource },
 ];
 
+/**
+ * Pack sizes and everyday portions, each expressed in that food's own base unit.
+ *
+ * These are shortcuts for logging only. The base panel above stays the source of
+ * truth, so adding or correcting a serving here can never change what a food's
+ * nutrition says — nor what the meal recipes calculate from it.
+ */
+const servingsById: Record<string, ServingOption[]> = {
+  // Retail pack sizes.
+  "nandini-goodlife-toned": [{ label: "200 ml glass", amount: 200 }, { label: "500 ml pack", amount: 500 }, { label: "1 L carton", amount: 1000 }],
+  "epigamia-natural-greek": [{ label: "400 g tub", amount: 400 }, { label: "2 cups", amount: 180 }],
+  "amul-high-protein-paneer": [{ label: "half pack · 50 g", amount: 50 }, { label: "200 g pack", amount: 200 }],
+  "muscleblaze-biozyme-whey": [{ label: "half scoop", amount: 0.5 }],
+
+  // Countable foods, in the units they are actually eaten in.
+  "whole-egg": [{ label: "2 eggs", amount: 100 }, { label: "3 eggs", amount: 150 }],
+  "egg-whites": [{ label: "1 white · 33 g", amount: 33 }, { label: "3 whites · 99 g", amount: 99 }],
+  banana: [{ label: "small · 90 g", amount: 90 }, { label: "large · 136 g", amount: 136 }, { label: "2 medium", amount: 236 }],
+  mango: [{ label: "half · 75 g", amount: 75 }, { label: "whole · 250 g", amount: 250 }],
+
+  // Spoon and handful measures.
+  oil: [{ label: "1 tsp · 5 g", amount: 5 }, { label: "1 tbsp · 14 g", amount: 14 }],
+  chia: [{ label: "1 tbsp · 12 g", amount: 12 }, { label: "2 tbsp · 24 g", amount: 24 }],
+  flax: [{ label: "1 tbsp · 10 g", amount: 10 }],
+  cocoa: [{ label: "1 tbsp · 6 g", amount: 6 }, { label: "2 tbsp · 12 g", amount: 12 }],
+  "peanut-butter": [{ label: "1 tbsp · 16 g", amount: 16 }, { label: "2 tbsp · 32 g", amount: 32 }],
+  almonds: [{ label: "10 almonds · 14 g", amount: 14 }, { label: "handful · 28 g", amount: 28 }],
+
+  // Cooked portions.
+  oats: [{ label: "small bowl · 30 g", amount: 30 }, { label: "large bowl · 60 g", amount: 60 }],
+  "chicken-breast": [{ label: "100 g", amount: 100 }, { label: "200 g", amount: 200 }],
+  "rajma-cooked": [{ label: "1 katori · 100 g", amount: 100 }, { label: "2 katori · 200 g", amount: 200 }],
+  "chickpeas-cooked": [{ label: "1 katori · 100 g", amount: 100 }, { label: "2 katori · 200 g", amount: 200 }],
+  "quinoa-cooked": [{ label: "1 katori · 100 g", amount: 100 }, { label: "2 katori · 200 g", amount: 200 }],
+  "brown-rice": [{ label: "1 katori · 100 g", amount: 100 }, { label: "2 katori · 200 g", amount: 200 }],
+  "greek-yogurt-nonfat": [{ label: "1 katori · 100 g", amount: 100 }, { label: "150 g", amount: 150 }],
+  "sweet-potato": [{ label: "small · 100 g", amount: 100 }, { label: "medium · 150 g", amount: 150 }],
+};
+
 export const nutritionItems: NutritionItem[] = nutritionSeedItems.map((food) => {
   const [name, ...variantParts] = food.name.split(" · ");
+  const servings = servingsById[food.id];
   return {
     ...food,
     brand: food.brand?.trim() || "Generic",
     name: name.trim(),
     variant: food.variant?.trim() || variantParts.join(" · ").trim(),
+    ...(servings ? { servings } : {}),
   };
 });
 
