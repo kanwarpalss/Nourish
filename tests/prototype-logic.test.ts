@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { calculateMealNutrition, meals, nutritionItems } from "../app/nutrition-data";
-import { getWeightTrendPoints, isWeightValueValid, parseSavedNutritionState, shouldPersistNutritionState, shouldRestoreSavedNutritionState, stringifySavedNutritionState, upsertWeightEntry } from "../app/local-nutrition-state";
+import { getWeightTrendPoints, isSafeImageUrl, isWeightValueValid, LEGACY_NUTRITION_STORAGE_KEYS, LOCAL_NUTRITION_STORAGE_KEY, parseSavedNutritionState, readSavedNutritionRaw, shouldPersistNutritionState, shouldRestoreSavedNutritionState, stringifySavedNutritionState, upsertWeightEntry } from "../app/local-nutrition-state";
 import { getBangaloreClock, getEnergyRunway, getNutritionDelta, getQuantityLimit, isQuantityValid, matchesRecipe, scaleNutrition, sumLoggedNutrition } from "../app/prototype-logic";
 
 test("quantity edits scale every displayed nutrient from the same serving basis", () => {
@@ -149,9 +149,10 @@ test("local on-device nutrition state accepts only well-formed entries", () => {
     logs: [{ foodId: "nandini-goodlife-toned", amount: 250 }],
     planned: [{ id: "cauli-chicken", kind: "meal" }, { id: "chia", kind: "food" }],
     customFoods: [],
+    userMeals: [],
     weights: [],
   });
-  assert.deepEqual(parseSavedNutritionState("{not json"), { dayKey: null, logs: [], planned: [], customFoods: [], weights: [] });
+  assert.deepEqual(parseSavedNutritionState("{not json"), { dayKey: null, logs: [], planned: [], customFoods: [], userMeals: [], weights: [] });
   assert.deepEqual(parseSavedNutritionState(stringifySavedNutritionState(saved)), saved);
   assert.equal(shouldRestoreSavedNutritionState(saved, "2026-08-09"), true);
   assert.equal(shouldRestoreSavedNutritionState(saved, "2026-08-10"), false);
@@ -237,4 +238,68 @@ test("Bangalore greeting and day key follow local time boundaries", () => {
   for (const [iso, greeting] of cases) assert.equal(getBangaloreClock(new Date(iso)).greeting, greeting, iso);
   assert.deepEqual(getBangaloreClock(new Date("2026-08-09T15:30:00.000Z")), { dayKey: "2026-08-09", dateLabel: "Sunday · 9 August", greeting: "Good evening" });
   assert.throws(() => getBangaloreClock(new Date("invalid")), /valid date/i);
+});
+
+test("photo links are limited to ordinary web URLs before they reach an img tag", () => {
+  assert.equal(isSafeImageUrl("https://upload.wikimedia.org/a/b.jpg"), true);
+  assert.equal(isSafeImageUrl("http://example.com/a.png"), true);
+  assert.equal(isSafeImageUrl("javascript:alert(1)"), false);
+  assert.equal(isSafeImageUrl("data:image/svg+xml;base64,PHN2Zz48L3N2Zz4="), false);
+  assert.equal(isSafeImageUrl("file:///etc/passwd"), false);
+  assert.equal(isSafeImageUrl("not a url"), false);
+  assert.equal(isSafeImageUrl(""), false);
+  assert.equal(isSafeImageUrl(null), false);
+  assert.equal(isSafeImageUrl(`https://example.com/${"a".repeat(2100)}.jpg`), false);
+});
+
+test("a saved food keeps its nutrition when its photo link is unusable", () => {
+  const seed = nutritionItems[0];
+  const withBadImage = { ...seed, id: "custom-bad-image-1", imageUrl: "javascript:alert(1)", source: { ...seed.source, trust: "Personal" as const } };
+  const saved = parseSavedNutritionState(JSON.stringify({ dayKey: "2026-08-12", logs: [], planned: [], customFoods: [withBadImage], userMeals: [], weights: [] }));
+  assert.equal(saved.customFoods.length, 1, "a bad photo link must not discard the food");
+  assert.equal(saved.customFoods[0].imageUrl, undefined, "the unusable link is dropped");
+  assert.equal(saved.customFoods[0].calories, seed.calories);
+
+  const withGoodImage = { ...withBadImage, id: "custom-good-image-1", imageUrl: "https://upload.wikimedia.org/x.jpg" };
+  const kept = parseSavedNutritionState(JSON.stringify({ dayKey: "2026-08-12", logs: [], planned: [], customFoods: [withGoodImage], userMeals: [], weights: [] }));
+  assert.equal(kept.customFoods[0].imageUrl, "https://upload.wikimedia.org/x.jpg");
+});
+
+test("saved meals survive a round trip and reject the ones that would log nothing", () => {
+  const seed = nutritionItems[0];
+  const component = { ...scaleNutrition(seed, 250) };
+  const meal = { id: "usermeal-breakfast-1", name: "My breakfast", createdAt: "2026-08-12", components: [component] };
+  const saved = parseSavedNutritionState(JSON.stringify({
+    dayKey: "2026-08-12",
+    logs: [],
+    planned: [],
+    customFoods: [],
+    userMeals: [
+      meal,
+      { ...meal, id: "usermeal-empty-1", components: [] },
+      { ...meal, id: "usermeal-junk-1", components: [{ nope: true }] },
+      { ...meal, id: "usermeal-noname-1", name: "  " },
+      { ...meal, id: "usermeal-baddate-1", createdAt: "not-a-date" },
+    ],
+    weights: [],
+  }));
+  assert.equal(saved.userMeals.length, 1, "only the well-formed meal survives");
+  assert.equal(saved.userMeals[0].name, "My breakfast");
+  assert.equal(saved.userMeals[0].components[0].calories, component.calories);
+  assert.deepEqual(parseSavedNutritionState(stringifySavedNutritionState(saved)), saved);
+});
+
+test("upgrading the storage key reads the older diary instead of showing an empty day", () => {
+  const store: Record<string, string> = {};
+  const read = (key: string) => store[key] ?? null;
+  assert.equal(readSavedNutritionRaw(read), null);
+
+  store[LEGACY_NUTRITION_STORAGE_KEYS[1]] = '{"dayKey":"2026-08-01"}';
+  assert.equal(readSavedNutritionRaw(read), '{"dayKey":"2026-08-01"}', "falls back to the oldest key");
+
+  store[LEGACY_NUTRITION_STORAGE_KEYS[0]] = '{"dayKey":"2026-08-10"}';
+  assert.equal(readSavedNutritionRaw(read), '{"dayKey":"2026-08-10"}', "a newer legacy key wins");
+
+  store[LOCAL_NUTRITION_STORAGE_KEY] = '{"dayKey":"2026-08-12"}';
+  assert.equal(readSavedNutritionRaw(read), '{"dayKey":"2026-08-12"}', "the current key always wins");
 });

@@ -20,6 +20,8 @@ export type NutritionItem = {
   availability: string;
   common?: boolean;
   aliases: string[];
+  /** Hot-linked photo. Absent means the food falls back to a drawn icon. */
+  imageUrl?: string;
   source: NutritionSource;
   basis?: { amount: number; calories: number; protein: number; carbs: number; fat: number; fiber: number };
 };
@@ -56,6 +58,7 @@ const usdaSource: NutritionSource = { label: "USDA FoodData Central", url: SOURC
 const nutritionSeedItems: Array<Omit<NutritionItem, "brand" | "variant"> & { brand?: string; variant?: string }> = [
   {
     id: "nandini-goodlife-toned",
+    imageUrl: "https://www.bbassets.com/media/uploads/p/m/100285703_15-nandini-goodlife-toned-milk.jpg",
     name: "GoodLife UHT toned milk",
     brand: "Nandini",
     amount: 100,
@@ -73,6 +76,7 @@ const nutritionSeedItems: Array<Omit<NutritionItem, "brand" | "variant"> & { bra
   },
   {
     id: "epigamia-natural-greek",
+    imageUrl: "https://www.bbassets.com/media/uploads/p/m/40046546_6-epigamia-greek-yogurt-natural.jpg",
     name: "Natural Greek yogurt",
     brand: "Epigamia",
     amount: 90,
@@ -90,6 +94,7 @@ const nutritionSeedItems: Array<Omit<NutritionItem, "brand" | "variant"> & { bra
   },
   {
     id: "muscleblaze-biozyme-whey",
+    imageUrl: "https://www.bbassets.com/media/uploads/p/m/40230229_1-muscleblaze-biozyme-whey-protein-improves-protein-absorption-by-50-rich-milk-chocolate.jpg",
     name: "Biozyme Whey · Rich Milk Chocolate",
     brand: "MuscleBlaze",
     amount: 1,
@@ -139,20 +144,20 @@ const nutritionSeedItems: Array<Omit<NutritionItem, "brand" | "variant"> & { bra
     aliases: ["low fat paneer", "cottage cheese", "amul paneer"],
     source: { label: "Amul official", url: "https://old.amul.com/products/amul-HP-tin-paneer-info.php", trust: "Official label" },
   },
-  { id: "banana", name: "Banana · medium", amount: 118, unit: "g", calories: 105, protein: 1.3, carbs: 27, fat: 0.4, fiber: 3.1, category: "Ingredient", availability: "Bengaluru staple", common: true, aliases: ["kela", "fruit"], source: usdaSource },
-  { id: "chia", name: "Chia seeds", amount: 25, unit: "g", calories: 122, protein: 4.1, carbs: 10.5, fat: 7.7, fiber: 8.6, category: "Ingredient", availability: "BigBasket · Bengaluru", common: true, aliases: ["seeds", "omega 3", "pudding"], source: usdaSource },
-  { id: "oats", name: "Rolled oats · dry", amount: 40, unit: "g", calories: 152, protein: 5.3, carbs: 27.1, fat: 2.6, fiber: 4, category: "Ingredient", availability: "Widely available in India", aliases: ["oatmeal", "porridge"], source: usdaSource },
+  { id: "banana", imageUrl: "https://upload.wikimedia.org/wikipedia/commons/thumb/3/31/Cavendish_banana_from_Maracaibo.jpg/330px-Cavendish_banana_from_Maracaibo.jpg", name: "Banana · medium", amount: 118, unit: "g", calories: 105, protein: 1.3, carbs: 27, fat: 0.4, fiber: 3.1, category: "Ingredient", availability: "Bengaluru staple", common: true, aliases: ["kela", "fruit"], source: usdaSource },
+  { id: "chia", imageUrl: "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a5/Chia_Seeds_with_the_word_Chia_spelled_out.jpg/330px-Chia_Seeds_with_the_word_Chia_spelled_out.jpg", name: "Chia seeds", amount: 25, unit: "g", calories: 122, protein: 4.1, carbs: 10.5, fat: 7.7, fiber: 8.6, category: "Ingredient", availability: "BigBasket · Bengaluru", common: true, aliases: ["seeds", "omega 3", "pudding"], source: usdaSource },
+  { id: "oats", imageUrl: "https://upload.wikimedia.org/wikipedia/commons/thumb/9/97/Rolled_oats.jpg/330px-Rolled_oats.jpg", name: "Rolled oats · dry", amount: 40, unit: "g", calories: 152, protein: 5.3, carbs: 27.1, fat: 2.6, fiber: 4, category: "Ingredient", availability: "Widely available in India", aliases: ["oatmeal", "porridge"], source: usdaSource },
   { id: "cauliflower", name: "Cauliflower · raw", amount: 250, unit: "g", calories: 63, protein: 4.8, carbs: 12.4, fat: 0.7, fiber: 5, category: "Ingredient", availability: "Bengaluru produce", aliases: ["gobi", "cauliflower rice", "vegetable"], source: usdaSource },
   { id: "chicken-breast", name: "Chicken breast · cooked", amount: 150, unit: "g", calories: 248, protein: 46.5, carbs: 0, fat: 5.4, fiber: 0, category: "Ingredient", availability: "Bengaluru poultry / quick commerce", aliases: ["boneless chicken", "roasted chicken"], source: usdaSource },
-  { id: "rajma-cooked", name: "Rajma · cooked", amount: 150, unit: "g", calories: 191, protein: 13, carbs: 34.2, fat: 0.8, fiber: 9.6, category: "Ingredient", availability: "Bengaluru staple", aliases: ["kidney beans", "beans"], source: usdaSource },
-  { id: "quinoa-cooked", name: "Quinoa · cooked", amount: 150, unit: "g", calories: 180, protein: 6.6, carbs: 31.9, fat: 2.9, fiber: 4.2, category: "Ingredient", availability: "BigBasket / supermarkets", aliases: ["grain", "seed"], source: usdaSource },
-  { id: "spinach", name: "Spinach · raw", amount: 100, unit: "g", calories: 23, protein: 2.9, carbs: 3.6, fat: 0.4, fiber: 2.2, category: "Ingredient", availability: "Bengaluru produce", aliases: ["palak", "greens"], source: usdaSource },
-  { id: "egg-whites", name: "Egg whites", amount: 100, unit: "g", calories: 52, protein: 10.9, carbs: 0.7, fat: 0.2, fiber: 0, category: "Ingredient", availability: "Bengaluru staple", aliases: ["eggs", "albumen"], source: usdaSource },
-  { id: "cocoa", name: "Unsweetened cocoa powder", amount: 20, unit: "g", calories: 46, protein: 3.9, carbs: 11.6, fat: 2.7, fiber: 7.4, category: "Ingredient", availability: "Baking aisle / online India", aliases: ["cacao", "chocolate", "brownie"], source: usdaSource },
+  { id: "rajma-cooked", imageUrl: "https://upload.wikimedia.org/wikipedia/commons/thumb/6/6a/Rajma_Red_Kidney_Bean_dish_India.jpg/330px-Rajma_Red_Kidney_Bean_dish_India.jpg", name: "Rajma · cooked", amount: 150, unit: "g", calories: 191, protein: 13, carbs: 34.2, fat: 0.8, fiber: 9.6, category: "Ingredient", availability: "Bengaluru staple", aliases: ["kidney beans", "beans"], source: usdaSource },
+  { id: "quinoa-cooked", imageUrl: "https://upload.wikimedia.org/wikipedia/commons/thumb/4/43/Red_quinoa.png/330px-Red_quinoa.png", name: "Quinoa · cooked", amount: 150, unit: "g", calories: 180, protein: 6.6, carbs: 31.9, fat: 2.9, fiber: 4.2, category: "Ingredient", availability: "BigBasket / supermarkets", aliases: ["grain", "seed"], source: usdaSource },
+  { id: "spinach", imageUrl: "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fe/Spinach_leaves.jpg/330px-Spinach_leaves.jpg", name: "Spinach · raw", amount: 100, unit: "g", calories: 23, protein: 2.9, carbs: 3.6, fat: 0.4, fiber: 2.2, category: "Ingredient", availability: "Bengaluru produce", aliases: ["palak", "greens"], source: usdaSource },
+  { id: "egg-whites", imageUrl: "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Bowl_of_egg_whites.jpg/330px-Bowl_of_egg_whites.jpg", name: "Egg whites", amount: 100, unit: "g", calories: 52, protein: 10.9, carbs: 0.7, fat: 0.2, fiber: 0, category: "Ingredient", availability: "Bengaluru staple", aliases: ["eggs", "albumen"], source: usdaSource },
+  { id: "cocoa", imageUrl: "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4d/Cocoa_powder.jpg/330px-Cocoa_powder.jpg", name: "Unsweetened cocoa powder", amount: 20, unit: "g", calories: 46, protein: 3.9, carbs: 11.6, fat: 2.7, fiber: 7.4, category: "Ingredient", availability: "Baking aisle / online India", aliases: ["cacao", "chocolate", "brownie"], source: usdaSource },
   { id: "chickpeas-cooked", name: "Chickpeas · cooked", amount: 100, unit: "g", calories: 164, protein: 8.9, carbs: 27.4, fat: 2.6, fiber: 7.6, category: "Ingredient", availability: "Bengaluru staple", aliases: ["chana", "kabuli chana", "garbanzo"], source: usdaSource },
-  { id: "green-peas-cooked", name: "Green peas · cooked", amount: 100, unit: "g", calories: 84, protein: 5.4, carbs: 15.6, fat: 0.4, fiber: 5.5, category: "Ingredient", availability: "Bengaluru produce / frozen aisle", aliases: ["matar", "peas"], source: usdaSource },
-  { id: "mango", name: "Mango · raw", amount: 150, unit: "g", calories: 90, protein: 1.2, carbs: 22.5, fat: 0.6, fiber: 2.4, category: "Ingredient", availability: "Seasonal Bengaluru produce", aliases: ["aam", "fruit"], source: usdaSource },
-  { id: "strawberries", name: "Strawberries · raw", amount: 100, unit: "g", calories: 32, protein: 0.7, carbs: 7.7, fat: 0.3, fiber: 2, category: "Ingredient", availability: "Seasonal / frozen Bengaluru", aliases: ["berries", "fruit"], source: usdaSource },
+  { id: "green-peas-cooked", imageUrl: "https://upload.wikimedia.org/wikipedia/commons/thumb/7/7a/India_-_Varanasi_green_peas_-_2714.jpg/330px-India_-_Varanasi_green_peas_-_2714.jpg", name: "Green peas · cooked", amount: 100, unit: "g", calories: 84, protein: 5.4, carbs: 15.6, fat: 0.4, fiber: 5.5, category: "Ingredient", availability: "Bengaluru produce / frozen aisle", aliases: ["matar", "peas"], source: usdaSource },
+  { id: "mango", imageUrl: "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a5/Mango_and_cross_sections.jpg/330px-Mango_and_cross_sections.jpg", name: "Mango · raw", amount: 150, unit: "g", calories: 90, protein: 1.2, carbs: 22.5, fat: 0.6, fiber: 2.4, category: "Ingredient", availability: "Seasonal Bengaluru produce", aliases: ["aam", "fruit"], source: usdaSource },
+  { id: "strawberries", imageUrl: "https://upload.wikimedia.org/wikipedia/commons/thumb/1/17/Organic-strawberries_Canada.jpg/330px-Organic-strawberries_Canada.jpg", name: "Strawberries · raw", amount: 100, unit: "g", calories: 32, protein: 0.7, carbs: 7.7, fat: 0.3, fiber: 2, category: "Ingredient", availability: "Seasonal / frozen Bengaluru", aliases: ["berries", "fruit"], source: usdaSource },
   { id: "pomegranate", name: "Pomegranate arils", amount: 100, unit: "g", calories: 83, protein: 1.7, carbs: 18.7, fat: 1.2, fiber: 4, category: "Ingredient", availability: "Bengaluru produce", aliases: ["anar", "fruit"], source: usdaSource },
   { id: "cucumber", name: "Cucumber · raw", amount: 100, unit: "g", calories: 15, protein: 0.7, carbs: 3.6, fat: 0.1, fiber: 0.5, category: "Ingredient", availability: "Bengaluru produce", aliases: ["kheera", "salad", "kachumber"], source: usdaSource },
   { id: "tomato", name: "Tomato · raw", amount: 100, unit: "g", calories: 18, protein: 0.9, carbs: 3.9, fat: 0.2, fiber: 1.2, category: "Ingredient", availability: "Bengaluru produce", aliases: ["tamatar", "salad", "kachumber"], source: usdaSource },

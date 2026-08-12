@@ -211,10 +211,21 @@ Amazon’s export does not reliably identify the Now channel by itself, so that 
 | 2026-08-09 | Every illustrative target, trend, insight, and meal suggestion is explicitly labelled Sample | Let polished preview data resemble personal history | KP must be able to distinguish researched catalogue facts, imported purchases, and UI examples at a glance |
 | 2026-08-11 | Personal food edits are versioned defaults while food logs retain snapshots | Resolve every old log against the latest mutable food record | Renaming or correcting macros must not silently rewrite what was recorded earlier |
 | 2026-08-11 | Weight tracking lives as a compact expandable card in Track Today | Add a third top-level area or a large dedicated dashboard | Keeps the two-area navigation intact while making weigh-ins and the real trend easy to reach |
+| 2026-08-12 | Logging is a session with a tray: add many foods, then commit once | Close the dialog after every single add | One-at-a-time logging made a normal multi-item meal take as many dialog round trips as it had items |
+| 2026-08-12 | Creating a food starts from a blank form with a collision-free `custom-` id | Reuse the selected food's record as the starting point for a new one | The old path had no create action at all; editing an existing food to "add" one silently overwrote that researched entry for every future log |
+| 2026-08-12 | Editing a researched food forks a personal copy; only foods you own edit in place | Write personal macro edits back onto the shared catalogue entry | A correction for one log must never rewrite a reference food other logs depend on |
+| 2026-08-12 | Saving to My foods is an explicit choice at creation time | Always persist every created food | A one-off restaurant dish should not permanently clutter the catalogue |
+| 2026-08-12 | Meals in the logger are groups KP saved; researched recipes stay in Plan only | Keep injecting the 11 researched recipes into the log catalogue as fake foods | A meal in Track should mean "something I actually eat", not an idea KP never chose |
+| 2026-08-12 | Saved meals store a snapshot of every component | Reference component foods by id | Editing or deleting a food later must not silently change a meal already trusted |
+| 2026-08-12 | Removing a logged entry is reversible via a 10-second Undo | Confirmation dialog, or a silent delete | Keeps one-tap removal fast without making a misclick destructive |
+| 2026-08-12 | Food thumbnails are hot-linked photo URLs with a drawn icon fallback | Download product images into the repository | The repo is public, so vendoring retailer/Commons imagery would be redistribution; hot-linking keeps it personal use and the icon guarantees no empty rows |
+| 2026-08-12 | Photos are sourced at build time into the seed data, never fetched at runtime | Call an image search API from the logging screen | Keeps the primary interaction offline-capable and free of rate limits, keys, and latency |
 
 ## §6 Current State
 
 As of 2026-08-11, the repository lives at `/Users/kanwar/Code/Nourish`. Plan is split into Items and Meals. The seed catalogue contains 38 researched products/ingredients and 10 original meals recalculated from structured, weighed ingredient records. Source strength and links are visible; the evidence register lives in `data/NUTRITION_SOURCES.md`. Track has the approved Today/History/Trends/Purchases structure plus a quantity-first logger with live nutrition recalculation. The add action and timeline now show the exact quantity/unit at high contrast. Every food exposes editable Brand, Item Name, optional Variant, serving basis/unit, calories, protein, carbohydrate, fat, and fibre; those personal defaults persist while each diary entry retains its own snapshot. Today starts at zero, totals only KP's logged entries, and shows a Bangalore-local greeting and date. Logs are date-scoped, with a rollover guard preventing a prior day's diary from being saved into the next Bangalore day.
+
+As of 2026-08-12 the Log Food dialog is a logging session rather than a one-shot popup. A tray collects any number of foods with running kcal and macros before a single commit; the dialog stays open and refocuses search after each add. A permanent **Create a new food** action opens a blank form (brand, item, variant, photo URL, serving basis, macros) and asks whether to save it to My foods or log it for today only. Editing a researched food forks a personal copy so the reference entry is never rewritten. Logged entries can be removed from the timeline with a 10-second Undo. Meals in the logger are groups KP saves from a tray and re-logs in one tap; the 11 researched recipes remain browsable under Plan but no longer appear as loggable foods. Food rows show a hot-linked photo where one is known (14 of 37 seed foods) and a drawn food-category icon otherwise, so no row is ever an empty box. Saved state moved to `nourish.nutrition.v3`, adding user meals and photo URLs, and still reads the v2/v1 keys once so an upgrade never looks like a wiped diary.
 
 The local cardIQ importer now reads the last year of deduplicated orders and writes an ignored snapshot to `public/cardiq-food-import.json`. On 2026-08-09 it produced 209 food products from 131 cardIQ orders, with 43 safely matched to the Nourish catalogue. Food logs, personal food edits, weight entries, and Plan selections survive refresh in the current browser profile; malformed stored entries are isolated and rejected without discarding unrelated valid data. Track Today now includes a compact real weight log with same-date correction and an expandable elapsed-time chart. Historical food Track data, targets, food charts, insights, and unlogged meal ideas are still preview data and are explicitly labelled Sample. This is intentionally browser-local persistence, not the backed-up local database planned for Phase 1. The working product name Nourish is not yet approved as permanent.
 
@@ -227,6 +238,7 @@ The local cardIQ importer now reads the last year of deduplicated orders and wri
 | Nandini and Epigamia seed entries rely on current label mirrors | Needs exact-pack confirmation | Reconcile barcode/variant and pack photo during cardIQ import before promotion |
 | Starter dependency audit reports four high-severity advisories | Open | Upgrade the core framework stack and rerun the audit before private-network access or deployment |
 | Recipe photography and curated source catalogue | Deferred | After interaction/design approval |
+| Food photos cover 14 of 37 seed foods; the rest fall back to drawn icons | Paused mid-way on 2026-08-12 at KP's call | Resume photo sourcing as a separate pass — see the note under §9 |
 | Exact product nutrition for unmatched cardIQ foods | In progress | Reconcile exact pack label before enabling one-tap logging |
 | Amazon Now channel identification | Known ambiguity | Secondary evidence + review queue |
 | Micronutrient targets and medical conditions | Deferred | Separate reviewed scope; never infer silently |
@@ -245,6 +257,22 @@ The local cardIQ importer now reads the last year of deduplicated orders and wri
 - Estimated nutrition is visibly labelled and editable.
 
 ## §9 Build phases and handoff
+
+### Next up — finish food photos (paused 2026-08-12)
+
+Thumbnails work end-to-end: `NutritionItem.imageUrl` is validated, hot-linked, and falls back to a drawn category icon, so nothing is blocked. What remains is coverage — 14 of 37 seed foods have a photo.
+
+What already works, and should be reused rather than rebuilt:
+
+- `scripts/source-product-photos.mjs` — for **branded** packs. Fetches the retailer product page named in the catalogue's own `source.url`, pulls the pack shot out of the embedded JSON (BigBasket renders through Next.js, so there is no `og:image`), and refuses any filename that does not contain the product's own tokens. That guard already caught a wrong product id resolving to a Fanta bottle. Produced exact shots for Nandini milk, Epigamia yogurt, and MuscleBlaze whey.
+- `scripts/source-food-photos.mjs` — for **generic ingredients**, via Wikimedia Commons. Resumable, because Commons rate-limits bursts.
+- `scripts/apply-food-photos.mjs` — idempotent patcher from a `{id: url}` map into the seed catalogue.
+
+Known traps, all hit once already:
+
+- Wikimedia search on a bare food name returns confident nonsense: a band photo for "milk carton", a geometry diagram for "paneer cubes", a live rooster for "chicken breast". **Every candidate needs a human look at the file title before it lands.**
+- `shop.amul.com` is a JS shell, so Amul's high-protein range yields nothing to a plain fetch; those two still need another source.
+- Pack shots are product-on-white, so thumbnails must use `object-fit: contain` — cropping to fill lands on the white margin and renders as an empty box.
 
 ### Phase 0 — Product, design system, and researched seed catalogue (current)
 

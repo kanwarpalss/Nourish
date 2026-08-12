@@ -68,6 +68,37 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
   }
   assert.match(page, /Commonly ordered/);
   assert.match(page, /Nutrition updates while you edit/);
+
+  // Logging is a session: add many foods, then commit them together.
+  assert.match(page, /addToTray\(items, scaled, nextUnique\(\)\)/, "adding a food must queue it in the tray");
+  assert.match(page, /onCommit\(tray\.map\(\(item\) => item\.food\)\)/, "the tray must log every queued food at once");
+  assert.match(page, /Add to tray/);
+  assert.match(page, /Save these as a meal/);
+  assert.doesNotMatch(page, /onAdd=\{addFood\}/, "the dialog must not close after a single add any more");
+
+  // Creating a food is its own blank flow, and saving to the library is a choice.
+  assert.match(page, /Create a new food/);
+  assert.match(page, /createCustomFood\(\{ \.\.\.draft, imageUrl: image \}, nextUnique\(\)\)/);
+  assert.match(page, /Save to My foods for next time/);
+  assert.match(page, /blankFood\(search\.trim\(\)\)/, "creating must start from a blank food, never an existing one");
+
+  // Editing a researched food forks a personal copy instead of overwriting it.
+  assert.match(page, /forkFoodForEdit\(original, nextUnique\(\)\)/);
+  assert.match(page, /The researched \$\{original\.name\} is untouched/);
+
+  // Logged entries can be removed, and the removal is reversible.
+  assert.match(page, /onDelete=\{deleteLoggedFood\}/);
+  assert.match(page, /undoRef\.current = \{ food: removed, index \}/);
+  assert.match(page, /toast-undo/);
+
+  // Meals are the user's own groups; researched recipes stay out of logging.
+  assert.match(page, /My meals/);
+  assert.match(page, /const seedLogFoods = seedFoods;/, "researched recipes must not be injected into the log catalogue");
+  assert.doesNotMatch(page, /category: "Meal",\n\s*availability: meal\.serving/, "the fake meal-as-food rows must be gone");
+
+  // Photos with a drawn fallback, never a bare letter.
+  assert.match(page, /<FoodThumb food=\{food\} \/>/);
+  assert.doesNotMatch(page, /food\.name\.charAt\(0\)/, "letter avatars must not come back");
   assert.match(page, /scaleNutrition\(selected, quantityValid \? quantity : 0\)/);
   assert.match(page, /getShownLogFoods\(dialogCatalog, nextTab, nextSearch\)/);
   assert.match(page, /Brand and item name are required\. Variant can be blank\./);
@@ -103,6 +134,10 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
   assert.match(css, /\.timeline-dot[^}]*left:\s*0/);
   assert.match(css, /\.meal-meta > \.logged-volume[^}]*color:\s*#173e2c/);
   assert.match(css, /\.quantity-control label span[^}]*color:\s*var\(--ink\)/);
+  assert.match(css, /\.food-thumb\b/, "thumbnails need styling");
+  assert.match(css, /\.food-thumb img[^}]*object-fit:\s*contain/, "pack shots must fit whole, not crop to white margin");
+  assert.match(css, /\.log-tray\b/);
+  assert.doesNotMatch(css, /\.food-initial\b/, "the letter-avatar style must be gone with the markup");
   const lineLeft = Number(css.match(/\.meal-timeline\.connected::before[^}]*left:\s*(-?\d+(?:\.\d+)?)px/)?.[1]);
   const dotLeft = Number(css.match(/\.timeline-dot[^}]*left:\s*(-?\d+(?:\.\d+)?)(?:px)?[;}]/)?.[1]);
   const dotWidth = Number(css.match(/\.timeline-dot[^}]*width:\s*(\d+(?:\.\d+)?)px/)?.[1]);

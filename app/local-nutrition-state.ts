@@ -1,7 +1,14 @@
+import type { UserMeal } from "./logging-session";
 import type { NutritionItem } from "./nutrition-data";
 
-export const LOCAL_NUTRITION_STORAGE_KEY = "nourish.nutrition.v2";
-export const LEGACY_NUTRITION_STORAGE_KEY = "nourish.nutrition.v1";
+export const LOCAL_NUTRITION_STORAGE_KEY = "nourish.nutrition.v3";
+/** Older keys are read once so an upgrade never looks like data loss. */
+export const LEGACY_NUTRITION_STORAGE_KEYS = ["nourish.nutrition.v2", "nourish.nutrition.v1"];
+export const LEGACY_NUTRITION_STORAGE_KEY = LEGACY_NUTRITION_STORAGE_KEYS[0];
+
+export const MAX_SAVED_CUSTOM_FOODS = 500;
+export const MAX_SAVED_USER_MEALS = 200;
+export const MAX_SAVED_MEAL_COMPONENTS = 40;
 
 export type SavedLogEntry = {
   foodId: string;
@@ -19,6 +26,7 @@ export type SavedNutritionState = {
   logs: SavedLogEntry[];
   planned: SavedPlanEntry[];
   customFoods: NutritionItem[];
+  userMeals: UserMeal[];
   weights: WeightEntry[];
 };
 
@@ -32,7 +40,21 @@ const unitLimits: Record<NutritionItem["unit"], number> = { g: 5000, ml: 5000, s
 const categories = new Set<NutritionItem["category"]>(["Ordered", "Product", "Ingredient", "Meal"]);
 const trustLevels = new Set<NutritionItem["source"]["trust"]>(["Official label", "Reference", "Label mirror", "Personal"]);
 
-const emptyState = (): SavedNutritionState => ({ dayKey: null, logs: [], planned: [], customFoods: [], weights: [] });
+const emptyState = (): SavedNutritionState => ({ dayKey: null, logs: [], planned: [], customFoods: [], userMeals: [], weights: [] });
+
+/**
+ * Photo links are rendered straight into an img tag, so only ordinary web URLs
+ * are kept. Anything else is dropped rather than stored and echoed back.
+ */
+export function isSafeImageUrl(value: unknown): value is string {
+  if (typeof value !== "string" || value.length > 2000) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
 
 function isDateKey(value: unknown): value is string {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -70,13 +92,36 @@ function parseFood(value: unknown): NutritionItem | null {
     || typeof food.availability !== "string"
     || !Array.isArray(food.aliases) || food.aliases.some((alias) => typeof alias !== "string")
     || !food.source || typeof food.source.label !== "string" || !food.source.label.trim() || typeof food.source.url !== "string" || !trustLevels.has(food.source.trust)) return null;
-  return {
+  const rawImageUrl = (value as { imageUrl?: unknown }).imageUrl;
+  const parsed = {
     ...food,
     id: food.id.trim(),
     name: food.name.trim(),
     brand: food.brand.trim(),
     variant: food.variant.trim(),
   } as NutritionItem;
+  // An unusable photo link loses a thumbnail, never the food itself.
+  if (isSafeImageUrl(rawImageUrl)) parsed.imageUrl = rawImageUrl;
+  else delete parsed.imageUrl;
+  return parsed;
+}
+
+function parseUserMeal(value: unknown): UserMeal | null {
+  if (!value || typeof value !== "object") return null;
+  const meal = value as { id?: unknown; name?: unknown; createdAt?: unknown; components?: unknown };
+  if (typeof meal.id !== "string" || !meal.id.trim()) return null;
+  if (typeof meal.name !== "string" || !meal.name.trim() || meal.name.trim().length > 60) return null;
+  if (typeof meal.createdAt !== "string" || !isDateKey(meal.createdAt)) return null;
+  if (!Array.isArray(meal.components)) return null;
+  const components = meal.components
+    .flatMap((component) => {
+      const parsedComponent = parseFood(component);
+      return parsedComponent ? [parsedComponent] : [];
+    })
+    .slice(0, MAX_SAVED_MEAL_COMPONENTS);
+  // A meal with nothing loggable left in it would silently log zero calories.
+  if (components.length === 0) return null;
+  return { id: meal.id.trim(), name: meal.name.trim(), createdAt: meal.createdAt, components };
 }
 
 export function upsertWeightEntry(entries: WeightEntry[], next: WeightEntry) {
@@ -110,7 +155,7 @@ export function parseSavedNutritionState(raw: string | null): SavedNutritionStat
   try {
     const parsed: unknown = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return emptyState();
-    const value = parsed as { dayKey?: unknown; logs?: unknown; planned?: unknown; customFoods?: unknown; weights?: unknown };
+    const value = parsed as { dayKey?: unknown; logs?: unknown; planned?: unknown; customFoods?: unknown; userMeals?: unknown; weights?: unknown };
     const dayKey = isDateKey(value.dayKey) ? value.dayKey : null;
     const logs = Array.isArray(value.logs) ? value.logs.flatMap((entry): SavedLogEntry[] => {
       if (!entry || typeof entry !== "object") return [];
@@ -131,8 +176,13 @@ export function parseSavedNutritionState(raw: string | null): SavedNutritionStat
     const parsedCustomFoods = Array.isArray(value.customFoods) ? value.customFoods.flatMap((food) => {
       const parsedFood = parseFood(food);
       return parsedFood ? [parsedFood] : [];
-    }).slice(0, 500) : [];
+    }).slice(0, MAX_SAVED_CUSTOM_FOODS) : [];
     const customFoods = [...new Map(parsedCustomFoods.map((food) => [food.id, food])).values()];
+    const parsedUserMeals = Array.isArray(value.userMeals) ? value.userMeals.flatMap((meal) => {
+      const parsedMeal = parseUserMeal(meal);
+      return parsedMeal ? [parsedMeal] : [];
+    }).slice(0, MAX_SAVED_USER_MEALS) : [];
+    const userMeals = [...new Map(parsedUserMeals.map((meal) => [meal.id, meal])).values()];
     const weightByDate = new Map<string, WeightEntry>();
     if (Array.isArray(value.weights)) for (const entry of value.weights) {
       if (!entry || typeof entry !== "object") continue;
@@ -142,10 +192,24 @@ export function parseSavedNutritionState(raw: string | null): SavedNutritionStat
       weightByDate.set(candidate.date, { date: candidate.date, kg: Math.round((candidate.kg as number) * 10) / 10 });
     }
     const weights = [...weightByDate.values()].sort((left, right) => left.date.localeCompare(right.date));
-    return { dayKey, logs, planned, customFoods, weights };
+    return { dayKey, logs, planned, customFoods, userMeals, weights };
   } catch {
     return emptyState();
   }
+}
+
+/**
+ * Reads the current key, falling back through older ones so a schema bump never
+ * looks like a wiped diary. Takes the reader so it can be tested without a browser.
+ */
+export function readSavedNutritionRaw(read: (key: string) => string | null): string | null {
+  const current = read(LOCAL_NUTRITION_STORAGE_KEY);
+  if (current) return current;
+  for (const key of LEGACY_NUTRITION_STORAGE_KEYS) {
+    const legacy = read(key);
+    if (legacy) return legacy;
+  }
+  return null;
 }
 
 export function stringifySavedNutritionState(state: SavedNutritionState) {
