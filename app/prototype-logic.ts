@@ -111,6 +111,14 @@ type ScalableNutrition = {
   fiber: number;
 };
 
+type LoggingUnit = "g" | "ml" | "scoop" | "pack" | "piece" | "serving";
+
+type UnitScalableNutrition = ScalableNutrition & {
+  unit: LoggingUnit;
+  conversions?: Array<{ unit: LoggingUnit; basisAmount: number; label?: string }>;
+  basis?: ScalableNutrition & { unit?: LoggingUnit };
+};
+
 export function scaleNutrition<T extends ScalableNutrition & { basis?: ScalableNutrition }>(food: T, requestedAmount: number): T {
   const amount = Number.isFinite(requestedAmount) && requestedAmount > 0 ? requestedAmount : 0;
   const basis = food.basis ?? { amount: food.amount, calories: food.calories, protein: food.protein, carbs: food.carbs, fat: food.fat, fiber: food.fiber };
@@ -130,6 +138,73 @@ export function scaleNutrition<T extends ScalableNutrition & { basis?: ScalableN
     fiber: scaled(basis.fiber),
   };
   return [result.amount, result.calories, result.protein, result.carbs, result.fat, result.fiber].every(Number.isFinite) ? result : empty() as T;
+}
+
+export function getLoggingUnits(food: UnitScalableNutrition): LoggingUnit[] {
+  const basisUnit = food.basis?.unit ?? food.unit;
+  return [basisUnit, ...(food.conversions ?? []).map((conversion) => conversion.unit)]
+    .filter((unit, index, units) => units.indexOf(unit) === index);
+}
+
+export function getLoggingUnitLabel(food: UnitScalableNutrition, unit: LoggingUnit) {
+  const basisUnit = food.basis?.unit ?? food.unit;
+  if (unit === basisUnit) return unit;
+  return food.conversions?.find((conversion) => conversion.unit === unit)?.label ?? unit;
+}
+
+export function getBasisAmountForLogging(food: UnitScalableNutrition, requestedAmount: number, requestedUnit: LoggingUnit) {
+  const basisUnit = food.basis?.unit ?? food.unit;
+  const matchingConversions = food.conversions?.filter((item) => item.unit === requestedUnit) ?? [];
+  const conversion = requestedUnit === basisUnit ? 1 : matchingConversions.length === 1 ? matchingConversions[0].basisAmount : undefined;
+  return Number.isFinite(requestedAmount) && requestedAmount > 0 && Number.isFinite(conversion) && (conversion as number) > 0
+    ? Math.round(requestedAmount * (conversion as number) * 100) / 100
+    : 0;
+}
+
+export function scaleNutritionForUnit<T extends UnitScalableNutrition>(food: T, requestedAmount: number, requestedUnit: LoggingUnit): T {
+  const source = food.basis ?? { amount: food.amount, unit: food.unit, calories: food.calories, protein: food.protein, carbs: food.carbs, fat: food.fat, fiber: food.fiber };
+  const basisUnit = source.unit ?? food.unit;
+  const matchingConversions = food.conversions?.filter((item) => item.unit === requestedUnit) ?? [];
+  const conversion = requestedUnit === basisUnit ? 1 : matchingConversions.length === 1 ? matchingConversions[0].basisAmount : undefined;
+  if (!Number.isFinite(conversion) || (conversion as number) <= 0 || !isQuantityValid(requestedUnit, requestedAmount)) {
+    return { ...food, amount: 0, unit: requestedUnit, calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, basis: { ...source, unit: basisUnit } } as T;
+  }
+  const requestedBasisAmount = getBasisAmountForLogging(food, requestedAmount, requestedUnit);
+  if (requestedBasisAmount <= 0) {
+    return { ...food, amount: 0, unit: requestedUnit, calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, basis: { ...source, unit: basisUnit } } as T;
+  }
+  const sourceFood = { ...food, ...source, unit: basisUnit, basis: undefined } as T;
+  const scaled = scaleNutrition(sourceFood, requestedBasisAmount);
+  return {
+    ...scaled,
+    amount: requestedAmount,
+    unit: requestedUnit,
+    basis: { ...source, unit: basisUnit },
+  } as T;
+}
+
+export function sumNutritionDetails(entries: ScalableNutrition[]) {
+  const total = entries.reduce((sum, entry) => {
+    const values = [entry.calories, entry.protein, entry.carbs, entry.fat, entry.fiber];
+    if (values.some((value) => !Number.isFinite(value) || value < 0)) throw new RangeError("Nutrition totals require finite non-negative values");
+    const next = {
+      calories: sum.calories + entry.calories,
+      protein: sum.protein + entry.protein,
+      carbs: sum.carbs + entry.carbs,
+      fat: sum.fat + entry.fat,
+      fiber: sum.fiber + entry.fiber,
+    };
+    if (Object.values(next).some((value) => !Number.isFinite(value))) throw new RangeError("Nutrition total is too large");
+    return next;
+  }, { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 });
+  const rounded = (value: number) => Math.round(value * 100) / 100;
+  return {
+    calories: rounded(total.calories),
+    protein: rounded(total.protein),
+    carbs: rounded(total.carbs),
+    fat: rounded(total.fat),
+    fiber: rounded(total.fiber),
+  };
 }
 
 export function getQuantityLimit(unit: string) {

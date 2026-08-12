@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { isCardIqFoodImport, type CardIqFoodImport } from "./cardiq-food";
+import { isCardIqFoodImport, sanitizeCardIqFoodImport, type CardIqFoodImport } from "./cardiq-food";
 import { getWeightTrendPoints, LEGACY_NUTRITION_STORAGE_KEY, LOCAL_NUTRITION_STORAGE_KEY, parseSavedNutritionState, shouldPersistNutritionState, shouldRestoreSavedNutritionState, stringifySavedNutritionState, upsertWeightEntry, type SavedNutritionState, type WeightEntry } from "./local-nutrition-state";
-import { getBangaloreClock, getEnergyRunway, getQuantityLimit, isQuantityValid, matchesRecipe, scaleNutrition, sumLoggedNutrition, type DashboardClock } from "./prototype-logic";
-import { meals, nutritionItems, SOURCE_LINKS, type Meal, type NutritionItem } from "./nutrition-data";
+import { getBangaloreClock, getBasisAmountForLogging, getEnergyRunway, getLoggingUnitLabel, getLoggingUnits, getQuantityLimit, isQuantityValid, matchesRecipe, scaleNutritionForUnit, sumLoggedNutrition, sumNutritionDetails, type DashboardClock } from "./prototype-logic";
+import { meals, nutritionItems, SOURCE_LINKS, type Meal, type NutritionItem, type NutritionUnit } from "./nutrition-data";
 
 type Area = "plan" | "track";
 type PlanView = "items" | "meals";
@@ -53,7 +53,7 @@ function foodLabel(food: Pick<Food, "brand" | "name" | "variant">) {
 
 function foodAtBasis(food: Food): Food {
   if (!food.basis) return food;
-  return { ...food, amount: food.basis.amount, calories: food.basis.calories, protein: food.basis.protein, carbs: food.basis.carbs, fat: food.basis.fat, fiber: food.basis.fiber, basis: undefined };
+  return { ...food, amount: food.basis.amount, unit: food.basis.unit ?? food.unit, calories: food.basis.calories, protein: food.basis.protein, carbs: food.basis.carbs, fat: food.basis.fat, fiber: food.basis.fiber, basis: undefined };
 }
 
 function mergeFoodCatalog(base: Food[], overrides: Food[]) {
@@ -63,7 +63,9 @@ function mergeFoodCatalog(base: Food[], overrides: Food[]) {
 
 function isFoodDetailsValid(food: Food) {
   return Boolean(food.brand.trim() && food.name.trim() && isQuantityValid(food.unit, food.amount))
-    && [food.amount, food.calories, food.protein, food.carbs, food.fat, food.fiber].every((value) => Number.isFinite(value) && value >= 0);
+    && [food.calories, food.protein, food.carbs, food.fat, food.fiber].every((value) => Number.isFinite(value) && value >= 0 && value <= 50_000)
+    && (food.conversions ?? []).every((conversion) => conversion.unit !== food.unit && Number.isFinite(conversion.basisAmount) && conversion.basisAmount > 0 && conversion.basisAmount <= 5000)
+    && new Set((food.conversions ?? []).map((conversion) => conversion.unit)).size === (food.conversions ?? []).length;
 }
 
 function planEntryFromFood(food: Food): PlannedEntry {
@@ -78,7 +80,7 @@ function restoreNutritionState(saved: SavedNutritionState, dayKey: string, catal
   if (!shouldRestoreSavedNutritionState(saved, dayKey)) return { extras: [] as Food[], planned: [] as PlannedEntry[] };
   const extras = saved.logs.flatMap((entry): Food[] => {
     const food = entry.snapshot ?? catalog.find((candidate) => candidate.id === entry.foodId);
-    return food && isQuantityValid(food.unit, entry.amount) ? [scaleNutrition(food, entry.amount)] : [];
+    return food && isQuantityValid(food.unit, entry.amount) ? [scaleNutritionForUnit(food, entry.amount, food.unit)] : [];
   });
   const planned = saved.planned.flatMap((entry): PlannedEntry[] => {
     if (entry.kind === "meal") {
@@ -451,6 +453,10 @@ function FoodDialog({ initialFood, editing, catalog, onClose, onAdd, onSaveFood 
   const [tab, setTab] = useState(initialFood?.category === "Meal" ? "Meals" : initialFood && !initialFood.common ? (initialFood.category === "Ingredient" ? "Ingredients" : "Products") : "Commonly ordered");
   const [selectedId, setSelectedId] = useState(initial.id);
   const [quantity, setQuantity] = useState(initialFood?.amount ?? initial.amount);
+  const [loggingUnit, setLoggingUnit] = useState<NutritionUnit>(initialFood?.unit ?? initial.unit);
+  const [combining, setCombining] = useState(false);
+  const [combinationName, setCombinationName] = useState("");
+  const [combinationLines, setCombinationLines] = useState<Array<{ key: string; food: Food }>>([]);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [draft, setDraft] = useState<Food>(initial);
   const [editedFood, setEditedFood] = useState<Food | null>(null);
@@ -461,16 +467,20 @@ function FoodDialog({ initialFood, editing, catalog, onClose, onAdd, onSaveFood 
   });
   const shown = getShownLogFoods(dialogCatalog, tab, search);
   const selected = shown.find((food) => food.id === selectedId) ?? null;
-  const step = selected?.unit === "ml" ? 50 : selected?.unit === "g" ? 10 : selected?.unit === "scoop" || selected?.unit === "serving" ? 0.25 : 1;
-  const maxQuantity = selected ? getQuantityLimit(selected.unit) : 0;
-  const quantityValid = selected ? isQuantityValid(selected.unit, quantity) : false;
-  const scaled = selected ? scaleNutrition(selected, quantityValid ? quantity : 0) : null;
+  const step = loggingUnit === "ml" || loggingUnit === "g" ? 5 : 0.25;
+  const maxQuantity = selected ? getQuantityLimit(loggingUnit) : 0;
+  const requestedBasisAmount = selected ? getBasisAmountForLogging(selected, quantity, loggingUnit) : 0;
+  const quantityValid = selected ? isQuantityValid(loggingUnit, quantity) && requestedBasisAmount > 0 && getLoggingUnits(selected).includes(loggingUnit) : false;
+  const scaled = selected ? scaleNutritionForUnit(selected, quantityValid ? quantity : 0, loggingUnit) : null;
   const labelBasis = selected ? selected.basis?.amount ?? selected.amount : 0;
+  const basisUnit = selected ? selected.basis?.unit ?? selected.unit : loggingUnit;
+  const combinationTotals = sumNutritionDetails(combinationLines.map((line) => line.food));
   const keepSelectionVisible = (nextTab: string, nextSearch: string) => {
     const candidates = getShownLogFoods(dialogCatalog, nextTab, nextSearch);
     if (candidates.some((food) => food.id === selectedId)) return;
     setSelectedId(candidates[0]?.id ?? "");
     setQuantity(candidates[0]?.amount ?? 0);
+    setLoggingUnit(candidates[0]?.unit ?? "g");
     setDetailsOpen(false);
   };
   const openDetails = () => {
@@ -490,8 +500,34 @@ function FoodDialog({ initialFood, editing, catalog, onClose, onAdd, onSaveFood 
     };
     setEditedFood(saved);
     onSaveFood(saved);
-    if (!editing || !isQuantityValid(saved.unit, quantity)) setQuantity(saved.amount);
+    if (!editing || !isQuantityValid(saved.unit, quantity)) {
+      setQuantity(saved.amount);
+      setLoggingUnit(saved.unit);
+    }
     setDetailsOpen(false);
+  };
+  const addCombinationLine = () => {
+    if (!scaled || !quantityValid) return;
+    setCombinationLines((lines) => [...lines, { key: `${selectedId}-${window.crypto.randomUUID()}`, food: scaled }]);
+  };
+  const saveCombination = () => {
+    if (combinationLines.length === 0) return;
+    const lineDescription = combinationLines.map(({ food }) => `${food.amount} ${food.unit} ${food.name}`).join(" + ");
+    const saved: Food = {
+      id: `combination-${window.crypto.randomUUID()}`,
+      brand: "My Foods",
+      name: combinationName.trim() || "Custom combination",
+      variant: lineDescription,
+      amount: 1,
+      unit: "serving",
+      ...combinationTotals,
+      category: "Meal",
+      availability: "Saved combination",
+      aliases: combinationLines.flatMap(({ food }) => [food.name, food.brand, ...food.aliases]),
+      source: { label: "Combined by you", url: "", trust: "Personal" },
+    };
+    onSaveFood(saved);
+    onAdd(saved);
   };
   const close = () => {
     setSearch("");
@@ -501,11 +537,12 @@ function FoodDialog({ initialFood, editing, catalog, onClose, onAdd, onSaveFood 
     <div className="dialog-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) close(); }}>
       <section className="food-dialog" role="dialog" aria-modal="true" aria-labelledby="log-food-title">
         <header><div><span className="eyebrow">Track</span><h2 id="log-food-title">{editing ? "Edit logged food" : "Log food"}</h2></div><button className="close-button" onClick={close} aria-label="Close food logger">×</button></header>
+        {!editing ? <div className="logging-mode-switch" aria-label="Logging mode"><button className={!combining ? "active" : ""} onClick={() => setCombining(false)}>Single item</button><button className={combining ? "active" : ""} onClick={() => setCombining(true)}>Combination</button></div> : null}
         <div className="dialog-search"><span>⌕</span><input autoFocus value={search} onChange={(event) => { const next = event.target.value; setSearch(next); keepSelectionVisible(tab, next); }} placeholder="Search food, recipe or recent purchase" /></div>
         <div className="dialog-tabs">{["Commonly ordered", "Products", "Ingredients", "Meals"].map((item) => <button className={tab === item ? "active" : ""} onClick={() => { setTab(item); keepSelectionVisible(item, search); }} key={item}>{item}</button>)}</div>
         <div className="food-dialog-body">
-          <div className="food-results">{shown.map((food) => <button className={selected?.id === food.id ? "selected" : ""} key={food.id} onClick={() => { setSelectedId(food.id); setQuantity(food.amount); setDetailsOpen(false); }}><span className="food-initial">{food.name.charAt(0)}</span><span><strong>{foodLabel(food)}</strong><small>{food.amount} {food.unit} · {food.source.trust}</small></span><span><b>{Math.round(food.calories)}</b><small>kcal</small></span><i>→</i></button>)}{shown.length === 0 ? <div className="food-results-empty"><strong>No match yet</strong><span>Try the product, brand, item, or variant name.</span></div> : null}</div>
-          {selected && scaled ? <aside className={`quantity-editor dark-card ${detailsOpen ? "details-mode" : ""}`}>
+          <div className="food-results">{shown.map((food) => <button className={selected?.id === food.id ? "selected" : ""} key={food.id} onClick={() => { setSelectedId(food.id); setQuantity(food.amount); setLoggingUnit(food.unit); setDetailsOpen(false); }}><span className="food-initial">{food.name.charAt(0)}</span><span><strong>{foodLabel(food)}</strong><small>{food.amount} {food.unit} · {food.source.trust}</small></span><span><b>{Math.round(food.calories)}</b><small>kcal</small></span><i>→</i></button>)}{shown.length === 0 ? <div className="food-results-empty"><strong>No match yet</strong><span>Try the product, brand, item, or variant name.</span></div> : null}</div>
+          {selected && scaled ? <aside className={`quantity-editor dark-card ${detailsOpen ? "details-mode" : ""} ${combining ? "combination-mode" : ""}`}>
             {detailsOpen ? <div className="food-details-editor">
               <div className="details-heading"><div><span className="eyebrow bright">Food details</span><h3>Edit anything</h3></div><button onClick={() => setDetailsOpen(false)} aria-label="Cancel food details edit">×</button></div>
               <p>Brand and item name are required. Variant can be blank.</p>
@@ -516,20 +553,26 @@ function FoodDialog({ initialFood, editing, catalog, onClose, onAdd, onSaveFood 
               </div>
               <div className="serving-fields">
                 <label><span>Nutrition basis</span><input type="number" min="0.01" step="0.01" value={draft.amount} onChange={(event) => setDraft((food) => ({ ...food, amount: Number(event.target.value) }))} /></label>
-                <label><span>Unit</span><select value={draft.unit} onChange={(event) => setDraft((food) => ({ ...food, unit: event.target.value as Food["unit"] }))}>{["g", "ml", "scoop", "pack", "piece", "serving"].map((unit) => <option key={unit}>{unit}</option>)}</select></label>
+                <label><span>Unit</span><select value={draft.unit} onChange={(event) => { const unit = event.target.value as Food["unit"]; setDraft((food) => ({ ...food, unit, conversions: food.conversions?.filter((conversion) => conversion.unit !== unit) })); }}>{["g", "ml", "scoop", "pack", "piece", "serving"].map((unit) => <option key={unit}>{unit}</option>)}</select></label>
+              </div>
+              <div className="conversion-fields">
+                <label><span>Also log by</span><select value={draft.conversions?.[0]?.unit ?? ""} onChange={(event) => { const unit = event.target.value as NutritionUnit | ""; setDraft((food) => ({ ...food, conversions: unit ? [{ unit, basisAmount: food.conversions?.[0]?.basisAmount ?? 1, label: food.conversions?.[0]?.label }] : undefined })); }}><option value="">No alternate unit</option>{(["g", "ml", "scoop", "pack", "piece", "serving"] as NutritionUnit[]).filter((unit) => unit !== draft.unit).map((unit) => <option key={unit}>{unit}</option>)}</select></label>
+                {draft.conversions?.[0] ? <><label><span>1 {draft.conversions[0].unit} equals</span><div><input type="number" min="0.01" max="5000" step="0.01" value={draft.conversions[0].basisAmount} onChange={(event) => setDraft((food) => ({ ...food, conversions: food.conversions?.map((conversion, index) => index === 0 ? { ...conversion, basisAmount: Number(event.target.value) } : conversion) }))} /><b>{draft.unit}</b></div></label><label><span>Friendly label</span><input value={draft.conversions[0].label ?? ""} onChange={(event) => setDraft((food) => ({ ...food, conversions: food.conversions?.map((conversion, index) => index === 0 ? { ...conversion, label: event.target.value } : conversion) }))} placeholder="e.g. 1 carton" /></label></> : null}
               </div>
               <div className="nutrition-fields">
-                {(["calories", "protein", "carbs", "fat", "fiber"] as const).map((field) => <label key={field}><span>{field === "fiber" ? "Fibre" : field.charAt(0).toUpperCase() + field.slice(1)}</span><div><input type="number" min="0" step="0.1" value={draft[field]} onChange={(event) => setDraft((food) => ({ ...food, [field]: Number(event.target.value) }))} /><b>{field === "calories" ? "kcal" : "g"}</b></div></label>)}
+                {(["calories", "protein", "carbs", "fat", "fiber"] as const).map((field) => <label key={field}><span>{field === "fiber" ? "Fibre" : field.charAt(0).toUpperCase() + field.slice(1)}</span><div><input type="number" min="0" max="50000" step="0.1" value={draft[field]} onChange={(event) => setDraft((food) => ({ ...food, [field]: Number(event.target.value) }))} /><b>{field === "calories" ? "kcal" : "g"}</b></div></label>)}
               </div>
               <button className="button lime full" disabled={!isFoodDetailsValid(draft)} onClick={saveDetails}>Save to My Foods</button>
             </div> : <>
-            <span className="eyebrow bright">Quantity</span><h3>{foodLabel(selected)}</h3><p>Nutrition updates while you edit.</p>
-            <div className="quantity-control"><button onClick={() => setQuantity((value) => Math.max(step, Number((value - step).toFixed(2))))} aria-label={`Decrease ${selected.name} quantity`}>−</button><label><input type="number" min={step} max={maxQuantity} step={step} value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} aria-label={`${selected.name} quantity`} /><span>{selected.unit}</span></label><button onClick={() => setQuantity((value) => Math.min(maxQuantity, Number((value + step).toFixed(2))))} aria-label={`Increase ${selected.name} quantity`}>＋</button></div>
-            <small className={`quantity-basis ${quantityValid ? "" : "error"}`}>{quantityValid ? `You are adding ${quantity} ${selected.unit} · nutrition basis ${labelBasis} ${selected.unit}` : `Enter more than 0 and no more than ${maxQuantity} ${selected.unit}`}</small>
+            <span className="eyebrow bright">{combining ? "Add ingredient" : "Quantity"}</span><h3>{foodLabel(selected)}</h3><p>Choose weight, volume, or a natural unit. Nutrition stays on the same evidence-backed basis.</p>
+            <label className="logging-unit-field"><span>Log by</span><select aria-label={`${selected.name} logging unit`} value={loggingUnit} onChange={(event) => { const unit = event.target.value as NutritionUnit; setLoggingUnit(unit); setQuantity(unit === (selected.basis?.unit ?? selected.unit) ? (selected.basis?.amount ?? selected.amount) : 1); }}>{getLoggingUnits(selected).map((unit) => <option value={unit} key={unit}>{unit === (selected.basis?.unit ?? selected.unit) ? unit : `${unit} · ${getLoggingUnitLabel(selected, unit)}`}</option>)}</select></label>
+            <div className="quantity-control"><button onClick={() => setQuantity((value) => Math.max(step, Number((value - step).toFixed(2))))} aria-label={`Decrease ${selected.name} quantity`}>−</button><label><input type="number" min={step} max={maxQuantity} step={step} value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} aria-label={`${selected.name} quantity`} /><span>{loggingUnit}</span></label><button onClick={() => setQuantity((value) => Math.min(maxQuantity, Number((value + step).toFixed(2))))} aria-label={`Increase ${selected.name} quantity`}>＋</button></div>
+            <small className={`quantity-basis ${quantityValid ? "" : "error"}`}>{quantityValid ? `You are adding ${quantity} ${loggingUnit}${loggingUnit === basisUnit ? "" : ` = ${requestedBasisAmount} ${basisUnit}`} · nutrition basis ${labelBasis} ${basisUnit}` : `Enter more than 0 and no more than ${maxQuantity} ${loggingUnit}`}</small>
             <div className="live-nutrition"><strong><b>{Math.round(scaled.calories)}</b><small>kcal</small></strong><span><b>{scaled.protein.toFixed(1)}g</b><small>protein</small></span><span><b>{scaled.carbs.toFixed(1)}g</b><small>carbs</small></span><span><b>{scaled.fat.toFixed(1)}g</b><small>fat</small></span><span><b>{scaled.fiber.toFixed(1)}g</b><small>fibre</small></span></div>
             <button className="edit-food-button" onClick={openDetails}>✎ Edit name, serving & nutrition</button>
             {selected.source.url ? <a href={selected.source.url} target="_blank" rel="noreferrer">{selected.source.label} ↗</a> : <span className="personal-source">{selected.source.label}</span>}
-            <button className="button lime full add-food-button" disabled={!quantityValid} onClick={() => onAdd(scaled)}>{editing ? "Update" : "Add"} {quantity} {selected.unit} · {Math.round(scaled.calories)} kcal</button>
+            {combining ? <button className="button outline-light full add-food-button" disabled={!quantityValid} onClick={addCombinationLine}>＋ Add {quantity} {loggingUnit} to combination</button> : <button className="button lime full add-food-button" disabled={!quantityValid} onClick={() => onAdd(scaled)}>{editing ? "Update" : "Add"} {quantity} {loggingUnit} · {Math.round(scaled.calories)} kcal</button>}
+            {combining ? <div className="combination-builder"><div><span className="eyebrow bright">Your combination</span><b>{combinationLines.length} ingredient{combinationLines.length === 1 ? "" : "s"}</b></div><label><span>Name</span><input value={combinationName} onChange={(event) => setCombinationName(event.target.value)} placeholder="e.g. Egg-white omelette" /></label>{combinationLines.length ? <div className="combination-lines">{combinationLines.map((line) => <div key={line.key}><span><b>{line.food.amount} {line.food.unit}</b>{foodLabel(line.food)}</span><small>{Math.round(line.food.calories)} kcal</small><button onClick={() => setCombinationLines((lines) => lines.filter((candidate) => candidate.key !== line.key))} aria-label={`Remove ${line.food.name} from combination`}>×</button></div>)}</div> : <p>Add ingredients one by one. Nothing is logged until you save the combination.</p>}<div className="combination-total"><strong>{Math.round(combinationTotals.calories)} kcal</strong><span>{combinationTotals.protein.toFixed(1)}P · {combinationTotals.carbs.toFixed(1)}C · {combinationTotals.fat.toFixed(1)}F</span></div><button className="button lime full" disabled={combinationLines.length === 0} onClick={saveCombination}>Log & save combination</button></div> : null}
             </>}
           </aside> : <aside className="quantity-editor quantity-editor-empty dark-card"><span className="eyebrow bright">Quantity</span><h3>Choose a food</h3><p>The quantity editor will appear when a result is selected.</p></aside>}
         </div>
@@ -626,7 +669,7 @@ export default function Home() {
     let active = true;
     fetch("/cardiq-food-import.json")
       .then((response) => response.ok ? response.json() : null)
-      .then((value: unknown) => { if (active && isCardIqFoodImport(value)) setCardIqImport(value); })
+      .then((value: unknown) => { if (active && isCardIqFoodImport(value)) setCardIqImport(sanitizeCardIqFoodImport(value)); })
       .catch(() => undefined);
     return () => { active = false; };
   }, []);

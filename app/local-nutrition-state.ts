@@ -54,19 +54,51 @@ function parseFood(value: unknown): NutritionItem | null {
   const numbers = [food.amount, food.calories, food.protein, food.carbs, food.fat, food.fiber];
   const rawBasis = (value as { basis?: unknown }).basis;
   const basis = rawBasis && typeof rawBasis === "object" ? rawBasis as NonNullable<NutritionItem["basis"]> : null;
+  const rawConversions = (value as { conversions?: unknown }).conversions;
+  const conversions = Array.isArray(rawConversions) ? rawConversions.flatMap((entry): NonNullable<NutritionItem["conversions"]> => {
+    if (!entry || typeof entry !== "object") return [];
+    const conversion = entry as { unit?: unknown; basisAmount?: unknown; label?: unknown };
+    return units.has(conversion.unit as NutritionItem["unit"])
+      && Number.isFinite(conversion.basisAmount)
+      && (conversion.basisAmount as number) > 0
+      && (conversion.basisAmount as number) <= 5000
+      && (conversion.label === undefined || typeof conversion.label === "string")
+      ? [{ unit: conversion.unit as NutritionItem["unit"], basisAmount: conversion.basisAmount as number, ...(conversion.label ? { label: conversion.label } : {}) }]
+      : [];
+  }) : [];
   const basisNumbers = basis ? [basis.amount, basis.calories, basis.protein, basis.carbs, basis.fat, basis.fiber] : [];
+  const basisUnit = basis?.unit ?? food.unit;
+  const visibleConversion = basis && food.unit !== basisUnit ? conversions.find((conversion) => conversion.unit === food.unit) : null;
+  const nutritionMatchesBasis = !basis || (() => {
+    const equivalentBasisAmount = Math.round((food.amount as number) * (food.unit === basisUnit ? 1 : visibleConversion?.basisAmount ?? 0) * 100) / 100;
+    const scale = equivalentBasisAmount / basis.amount;
+    const rounded = (number: number) => Math.round(number * scale * 100) / 100;
+    return equivalentBasisAmount > 0 && [
+      [food.calories, rounded(basis.calories)],
+      [food.protein, rounded(basis.protein)],
+      [food.carbs, rounded(basis.carbs)],
+      [food.fat, rounded(basis.fat)],
+      [food.fiber, rounded(basis.fiber)],
+    ].every(([actual, expected]) => Math.abs((actual as number) - expected) <= 0.01);
+  })();
   if (typeof food.id !== "string" || !food.id.trim()
     || typeof food.name !== "string" || !food.name.trim()
     || typeof food.brand !== "string" || !food.brand.trim()
     || typeof food.variant !== "string"
     || !units.has(food.unit as NutritionItem["unit"])
     || !categories.has(food.category as NutritionItem["category"])
-    || numbers.some((number) => !Number.isFinite(number) || (number as number) < 0)
-    || basisNumbers.some((number) => !Number.isFinite(number) || number < 0)
+    || numbers.some((number, index) => !Number.isFinite(number) || (number as number) < 0 || (index > 0 && (number as number) > 50_000))
+    || basisNumbers.some((number, index) => !Number.isFinite(number) || number < 0 || (index > 0 && number > 50_000))
+    || (basis !== null && basis.unit !== undefined && !units.has(basis.unit))
     || (rawBasis !== undefined && (!basis || !basis.amount))
+    || (rawConversions !== undefined && (!Array.isArray(rawConversions) || conversions.length !== rawConversions.length))
+    || conversions.some((conversion) => conversion.unit === basisUnit)
+    || new Set(conversions.map((conversion) => conversion.unit)).size !== conversions.length
+    || (basis !== null && food.unit !== basisUnit && !visibleConversion)
+    || !nutritionMatchesBasis
     || !food.amount
     || food.amount > (unitLimits[food.unit as NutritionItem["unit"]] ?? 0)
-    || (basis !== null && basis.amount > (unitLimits[food.unit as NutritionItem["unit"]] ?? 0))
+    || (basis !== null && basis.amount > (unitLimits[basis.unit ?? food.unit as NutritionItem["unit"]] ?? 0))
     || typeof food.availability !== "string"
     || !Array.isArray(food.aliases) || food.aliases.some((alias) => typeof alias !== "string")
     || !food.source || typeof food.source.label !== "string" || !food.source.label.trim() || typeof food.source.url !== "string" || !trustLevels.has(food.source.trust)) return null;
@@ -76,6 +108,7 @@ function parseFood(value: unknown): NutritionItem | null {
     name: food.name.trim(),
     brand: food.brand.trim(),
     variant: food.variant.trim(),
+    ...(conversions.length ? { conversions } : {}),
   } as NutritionItem;
 }
 

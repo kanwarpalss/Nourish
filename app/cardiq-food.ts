@@ -25,11 +25,17 @@ export type CardIqFoodImport = {
   items: CardIqFoodItem[];
 };
 
-const nonFoodTerms = ["diaper", "shampoo", "detergent", "toilet paper", "tissue", "garbage bag", "gift card", "fastag", "mobile bill", "book", "towel", "hanger", "glass", "pitcher", "spray", "handwash", "cleaning", "kitchen cloth", "mosquito", "car", "charger"];
+const nonFoodTerms = [
+  "diaper", "shampoo", "detergent", "toilet paper", "tissue", "garbage bag", "gift card", "fastag", "mobile bill",
+  "book", "towel", "hanger", "glass", "pitcher", "spray", "handwash", "cleaning", "kitchen cloth", "mosquito",
+  "car", "charger", "toothpaste", "lice comb", "antiseptic", "toilet cleaner", "floor cleaner", "agarbatti", "muslin cloth",
+  "dishwash", "body wash", "body washes", "shower gel", "healing balm", "skin protectant", "moisture cream", "cough formula", "cough syrup",
+  "infant formula", "psychological thriller", "face wash", "conditioner", "facial scrub",
+];
 const foodTerms = ["milk", "yogurt", "yoghurt", "curd", "paneer", "cheese", "whey", "protein", "bread", "oat", "rice", "dal", "chana", "rajma", "besan", "peanut", "makhana", "fruit", "vegetable", "carrot", "potato", "gourd", "onion", "tomato", "capsicum", "spinach", "cucumber", "broccoli", "pumpkin", "banana", "avocado", "mango", "lemon", "egg", "sugar", "tea", "coffee", "cocoa", "cookie", "biscuit", "snack", "noodle", "popcorn", "soda", "cola", "kombucha", "juice", "drink", "beverage", "chilli", "coriander", "ginger", "tamarind", "oil", "ghee", "flour", "poha", "vermicelli", "lettuce", "sprout"];
 
 function normalized(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  return value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 }
 
 function containsWholeTerm(value: string, term: string) {
@@ -39,7 +45,15 @@ function containsWholeTerm(value: string, term: string) {
 
 function numberFromUnknown(value: unknown) {
   const result = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(result) && result > 0 ? result : 1;
+  return Number.isFinite(result) && result > 0 ? Math.min(result, Number.MAX_SAFE_INTEGER) : 1;
+}
+
+function isDateValue(value: unknown) {
+  return typeof value === "string" && value.trim().length > 0 && Number.isFinite(Date.parse(value));
+}
+
+function isPositiveFinite(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
 function storeFor(order: CardIqOrder): CardIqFoodItem["store"] | null {
@@ -58,37 +72,66 @@ export function isFoodLike(name: string, store: CardIqFoodItem["store"]) {
 
 export function matchCardIqFood(name: string): Pick<CardIqFoodItem, "matchedFoodId" | "matchKind"> {
   const value = normalized(name);
-  const referenceMatches: Array<[string, string[]]> = [
-    ["banana", ["banana"]], ["carrot", ["carrot"]], ["sweet-potato", ["sweet potato"]], ["cucumber", ["cucumber"]],
-    ["tomato", ["tomato"]], ["capsicum", ["capsicum", "bell pepper"]], ["spinach", ["spinach"]], ["onion", ["onion"]],
-    ["bottle-gourd", ["bottle gourd", "doodhi", "sorekaayi"]], ["broccoli", ["broccoli"]], ["pumpkin", ["pumpkin"]],
-    ["whole-egg", ["white eggs", "eggs pack"]], ["oats", ["oat"]], ["chia", ["chia"]], ["peanut-butter", ["peanut butter"]],
+  const compactUnits = value.replace(/(\d+)\s+(g|ml|l)\b/g, "$1$2");
+  const exactMatches: Array<[string, string]> = [
+    ["amul-lactose-free", "amul lactose free milk 250ml"],
+    ["coca-cola-original", "coca cola 750ml"],
+    ["nandini-paneer", "nandini paneer 200g pack"],
+    ["coca-cola-zero", "coca cola zerotm sugar no calories soft drink pet bottle 750ml"],
+    ["coca-cola-zero-250", "coke zero zero cola sugar no calories soft drink pet bottle 250ml pack of 8"],
+    ["amul-processed-cheese-block", "amul cheese block 200g"],
+    ["raw-pressery-coconut-water", "raw pressery coconut water 200ml"],
+    ["yogabar-protein-shake-cold-coffee", "yogabar protein shake with 26g protein no added sugar pack of 1 250ml cold coffe"],
+    ["epigamia-turbo-cookies-cream", "epigamia turbo 25g protein milkshake cookies cream 250ml"],
+    ["akshayakalpa-amrutha-a2", "akshayakalpa organic amrutha a2 farm fresh organic cow milk 500ml"],
+    ["nandini-goodlife-toned", "nandini good life toned milk 1l liquid"],
+    ["kinley-soda", "kinley strong soda original 750ml"],
+    ["diet-coke", "coca cola diet soft drink 300ml cola"],
   ];
-  if (value.includes("nandini goodlife")) return { matchedFoodId: "nandini-goodlife-toned", matchKind: "Exact product" };
-  for (const [matchedFoodId, terms] of referenceMatches) {
-    if (terms.some((term) => value.includes(term))) return { matchedFoodId, matchKind: "Reference ingredient" };
-  }
+
+  const exactMatch = exactMatches.find(([, retailerTitle]) => compactUnits === retailerTitle);
+  if (exactMatch) return { matchedFoodId: exactMatch[0], matchKind: "Exact product" };
   return {};
+}
+
+export function sanitizeCardIqFoodImport(snapshot: CardIqFoodImport): CardIqFoodImport {
+  return {
+    ...snapshot,
+    items: snapshot.items
+      .filter((item) => item && typeof item.name === "string" && isFoodLike(item.name, item.store))
+      .map((item) => {
+        const purchase = { ...item };
+        delete purchase.matchedFoodId;
+        delete purchase.matchKind;
+        return { ...purchase, ...matchCardIqFood(item.name) };
+      }),
+  };
 }
 
 export function makeCardIqFoodImport(orders: CardIqOrder[], generatedAt: string, windowStart: string): CardIqFoodImport {
   const grouped = new Map<string, CardIqFoodItem>();
   let orderCount = 0;
+  const rangeStart = Date.parse(`${windowStart}T00:00:00Z`);
+  const rangeEnd = Date.parse(generatedAt);
   for (const order of orders) {
     const store = storeFor(order);
-    if (!store || !Array.isArray(order.items)) continue;
+    const orderedAt = Date.parse(order.order_at);
+    if (!store || !Array.isArray(order.items) || !Number.isFinite(orderedAt) || !Number.isFinite(rangeStart) || !Number.isFinite(rangeEnd) || orderedAt < rangeStart || orderedAt > rangeEnd) continue;
     orderCount += 1;
+    const seenInOrder = new Set<string>();
     for (const item of order.items) {
       const name = typeof item.name === "string" ? item.name.trim() : "";
       if (!isFoodLike(name, store)) continue;
       const key = `${store}:${normalized(name)}`;
       const previous = grouped.get(key);
       const latest = previous ? (previous.lastOrdered > order.order_at ? previous.lastOrdered : order.order_at) : order.order_at;
+      const firstLineInOrder = !seenInOrder.has(key);
+      seenInOrder.add(key);
       grouped.set(key, {
         name,
         store,
-        orderCount: (previous?.orderCount ?? 0) + 1,
-        units: (previous?.units ?? 0) + numberFromUnknown(item.qty),
+        orderCount: (previous?.orderCount ?? 0) + (firstLineInOrder ? 1 : 0),
+        units: Math.min(Number.MAX_SAFE_INTEGER, (previous?.units ?? 0) + numberFromUnknown(item.qty)),
         lastOrdered: latest.slice(0, 10),
         ...matchCardIqFood(name),
       });
@@ -106,5 +149,19 @@ export function makeCardIqFoodImport(orders: CardIqOrder[], generatedAt: string,
 export function isCardIqFoodImport(value: unknown): value is CardIqFoodImport {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Partial<CardIqFoodImport>;
-  return candidate.schemaVersion === 1 && Array.isArray(candidate.items) && typeof candidate.generatedAt === "string" && typeof candidate.windowStart === "string";
+  return candidate.schemaVersion === 1
+    && Array.isArray(candidate.items)
+    && candidate.items.length <= 10_000
+    && candidate.items.every((item) => item !== null
+      && typeof item === "object"
+      && typeof item.name === "string"
+      && item.name.trim().length > 0
+      && item.name.length <= 1_000
+      && ["Amazon", "BigBasket", "Instamart"].includes(item.store)
+      && isPositiveFinite(item.orderCount)
+      && isPositiveFinite(item.units)
+      && isDateValue(item.lastOrdered))
+    && isPositiveFinite(candidate.orderCount)
+    && isDateValue(candidate.generatedAt)
+    && isDateValue(candidate.windowStart);
 }

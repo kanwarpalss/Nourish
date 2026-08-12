@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { calculateMealNutrition, meals, nutritionItems } from "../app/nutrition-data";
 import { getWeightTrendPoints, isWeightValueValid, parseSavedNutritionState, shouldPersistNutritionState, shouldRestoreSavedNutritionState, stringifySavedNutritionState, upsertWeightEntry } from "../app/local-nutrition-state";
-import { getBangaloreClock, getEnergyRunway, getNutritionDelta, getQuantityLimit, isQuantityValid, matchesRecipe, scaleNutrition, sumLoggedNutrition } from "../app/prototype-logic";
+import { getBangaloreClock, getEnergyRunway, getLoggingUnits, getNutritionDelta, getQuantityLimit, isQuantityValid, matchesRecipe, scaleNutrition, scaleNutritionForUnit, sumLoggedNutrition, sumNutritionDetails } from "../app/prototype-logic";
 
 test("quantity edits scale every displayed nutrient from the same serving basis", () => {
   const milk = nutritionItems.find((food) => food.id === "nandini-goodlife-toned");
@@ -15,6 +15,37 @@ test("quantity edits scale every displayed nutrient from the same serving basis"
   assert.equal(scaled.fat, 7.75);
   assert.equal(scaled.fiber, 0);
   assert.equal(scaleNutrition(scaled, 300).calories, 180, "re-editing must use the original 100 ml basis");
+});
+
+test("one exact product can be logged by volume or its exact pack conversion", () => {
+  const milk = nutritionItems.find((food) => food.id === "nandini-goodlife-toned");
+  assert.ok(milk);
+  assert.deepEqual(getLoggingUnits(milk), ["ml", "pack"]);
+  const hundredMl = scaleNutritionForUnit(milk, 100, "ml");
+  const halfPack = scaleNutritionForUnit(milk, 0.5, "pack");
+  assert.deepEqual({ amount: hundredMl.amount, unit: hundredMl.unit, calories: hundredMl.calories }, { amount: 100, unit: "ml", calories: 60 });
+  assert.deepEqual({ amount: halfPack.amount, unit: halfPack.unit, calories: halfPack.calories, protein: halfPack.protein }, { amount: 0.5, unit: "pack", calories: 300, protein: 16.5 });
+  assert.deepEqual(halfPack.basis, { amount: 100, unit: "ml", calories: 60, protein: 3.3, carbs: 4.8, fat: 3.1, fiber: 0 });
+});
+
+test("egg counts and a measured-oil combination use explicit conversions", () => {
+  const egg = nutritionItems.find((food) => food.id === "whole-egg");
+  const whites = nutritionItems.find((food) => food.id === "egg-whites");
+  const oil = nutritionItems.find((food) => food.id === "oil");
+  assert.ok(egg && whites && oil);
+  assert.equal(scaleNutritionForUnit(egg, 1, "piece").calories, 72);
+  assert.equal(scaleNutritionForUnit(egg, 4, "piece").calories, 288);
+  const fourWhites = scaleNutritionForUnit(whites, 4, "piece");
+  const fiveMlOil = scaleNutritionForUnit(oil, 5, "ml");
+  assert.deepEqual(
+    { amount: fourWhites.amount, unit: fourWhites.unit, calories: fourWhites.calories, protein: fourWhites.protein },
+    { amount: 4, unit: "piece", calories: 68.64, protein: 14.39 },
+  );
+  assert.deepEqual(
+    { amount: fiveMlOil.amount, unit: fiveMlOil.unit, calories: fiveMlOil.calories, fat: fiveMlOil.fat },
+    { amount: 5, unit: "ml", calories: 41.4, fat: 4.6 },
+  );
+  assert.deepEqual(sumNutritionDetails([fourWhites, fiveMlOil]), { calories: 110.04, protein: 14.39, carbs: 0.92, fat: 4.86, fiber: 0 });
 });
 
 test("invalid quantities cannot create negative or infinite nutrition", () => {
@@ -116,6 +147,14 @@ test("calculation guards reject corrupt units, bases, targets, and overflow", ()
   for (const field of ["amount", "calories", "protein", "carbs", "fat", "fiber"] as const) assert.ok(Number.isFinite(overflowed[field]));
   assert.throws(() => getEnergyRunway(0, 0), /target/i);
   assert.throws(() => getEnergyRunway(100, Number.NaN), /target/i);
+  assert.throws(() => sumNutritionDetails([
+    { amount: 1, calories: Number.MAX_VALUE, protein: 0, carbs: 0, fat: 0, fiber: 0 },
+    { amount: 1, calories: Number.MAX_VALUE, protein: 0, carbs: 0, fat: 0, fiber: 0 },
+  ]), /too large/);
+  const milk = nutritionItems.find((food) => food.id === "nandini-goodlife-toned");
+  assert.ok(milk);
+  const ambiguous = { ...milk, conversions: [{ unit: "pack" as const, basisAmount: 1000 }, { unit: "pack" as const, basisAmount: 500 }] };
+  assert.equal(scaleNutritionForUnit(ambiguous, 1, "pack").amount, 0);
 });
 
 test("meal calories remain plausible against protein, digestible carbs, fat, and fibre", () => {
@@ -177,6 +216,42 @@ test("edited foods and log snapshots survive storage without rewriting history",
   assert.deepEqual(parseSavedNutritionState(JSON.stringify({ dayKey: "2026-08-11", logs: [{ foodId: seed.id, amount: 250, snapshot: corruptSnapshot }] })).logs, []);
   const mismatchedSnapshot = { ...originalSnapshot, id: "different-food" };
   assert.deepEqual(parseSavedNutritionState(JSON.stringify({ dayKey: "2026-08-11", logs: [{ foodId: seed.id, amount: 250, snapshot: mismatchedSnapshot }] })).logs, []);
+});
+
+test("alternate-unit logs retain both the visible quantity and original nutrition basis", () => {
+  const milk = nutritionItems.find((food) => food.id === "nandini-goodlife-toned");
+  assert.ok(milk);
+  const halfPack = scaleNutritionForUnit(milk, 0.5, "pack");
+  const saved = parseSavedNutritionState(JSON.stringify({
+    dayKey: "2026-08-12",
+    logs: [{ foodId: milk.id, amount: 0.5, snapshot: halfPack }],
+    customFoods: [],
+    planned: [],
+    weights: [],
+  }));
+  assert.equal(saved.logs[0].snapshot?.amount, 0.5);
+  assert.equal(saved.logs[0].snapshot?.unit, "pack");
+  assert.equal(saved.logs[0].snapshot?.basis?.unit, "ml");
+  assert.equal(saved.logs[0].snapshot?.calories, 300);
+
+  const missingConversion = { ...halfPack, conversions: undefined };
+  assert.deepEqual(parseSavedNutritionState(JSON.stringify({ logs: [{ foodId: milk.id, amount: 0.5, snapshot: missingConversion }] })).logs, []);
+  const wrongConversion = { ...halfPack, conversions: [{ unit: "pack", basisAmount: 500, label: "wrong pack" }] };
+  assert.deepEqual(parseSavedNutritionState(JSON.stringify({ logs: [{ foodId: milk.id, amount: 0.5, snapshot: wrongConversion }] })).logs, []);
+
+  const oil = nutritionItems.find((food) => food.id === "oil");
+  assert.ok(oil);
+  for (const amount of [0.05, 0.1, 0.3, 0.333, 2.5, 3.3, 5, 7.5]) {
+    const snapshot = scaleNutritionForUnit(oil, amount, "ml");
+    const parsed = parseSavedNutritionState(JSON.stringify({ logs: [{ foodId: oil.id, amount, snapshot }] }));
+    assert.equal(parsed.logs.length, 1, `${amount} ml oil should survive its own conversion rounding`);
+    assert.deepEqual(parsed.logs[0].snapshot, snapshot);
+  }
+  for (const amount of [0.001, 0.005]) {
+    const tooSmallToRepresent = scaleNutritionForUnit(oil, amount, "ml");
+    assert.equal(tooSmallToRepresent.amount, 0);
+    assert.equal(tooSmallToRepresent.calories, 0);
+  }
 });
 
 test("one malformed food cannot erase other saved nutrition and valid entries are capped after validation", () => {

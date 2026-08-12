@@ -67,12 +67,13 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
     assert.match(page, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
   assert.match(page, /Commonly ordered/);
-  assert.match(page, /Nutrition updates while you edit/);
-  assert.match(page, /scaleNutrition\(selected, quantityValid \? quantity : 0\)/);
+  assert.match(page, /Nutrition stays on the same evidence-backed basis/);
+  assert.match(page, /scaleNutritionForUnit\(selected, quantityValid \? quantity : 0, loggingUnit\)/);
   assert.match(page, /getShownLogFoods\(dialogCatalog, nextTab, nextSearch\)/);
   assert.match(page, /Brand and item name are required\. Variant can be blank\./);
   assert.match(page, /Edit name, serving & nutrition/);
-  assert.match(page, /You are adding \$\{quantity\} \$\{selected\.unit\}/);
+  assert.match(page, /You are adding \$\{quantity\} \$\{loggingUnit\}/);
+  assert.match(page, /Log & save combination/);
   assert.match(page, /Show trend chart/);
   assert.match(page, /upsertWeightEntry/);
   assert.match(page, /shouldPersistNutritionState\(storageLoaded, loadedDayRef\.current, clock\.dayKey\)/);

@@ -434,6 +434,9 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .food-dialog header { display: flex; justify-content: space-between; align-items: center; padding: 24px 26px 16px; }
 .food-dialog h2 { margin: 0; font-size: 28px; }
 .close-button { display: grid; width: 38px; height: 38px; place-items: center; border: 1px solid var(--line); border-radius: 12px; background: transparent; font-size: 24px; cursor: pointer; }
+.logging-mode-switch { display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px; margin: 0 26px 14px; padding: 4px; border-radius: 12px; background: #e8ece5; }
+.logging-mode-switch button { padding: 9px 12px; border: 0; border-radius: 9px; color: var(--muted); background: transparent; font-size: 10px; font-weight: 800; cursor: pointer; }
+.logging-mode-switch button.active { color: white; background: var(--forest); }
 .dialog-search { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: center; margin: 0 26px; padding: 0 14px; border: 2px solid var(--forest); border-radius: 14px; background: white; }
 .dialog-search input { height: 48px; border: 0; outline: 0; background: transparent; }
 .dialog-tabs { display: flex; gap: 22px; margin: 20px 26px 0; border-bottom: 1px solid var(--line); }
@@ -455,6 +458,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .quantity-editor-empty { min-height: 220px; align-content: center; }
 .quantity-editor h3 { margin: 7px 0 3px; font-size: 20px; line-height: 1.15; }
 .quantity-editor > p { margin: 0 0 20px; color: #94a199; font-size: 10px; }
+.logging-unit-field { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: center; margin-bottom: 9px; color: #d5ded8; font-size: 9px; font-weight: 750; }
+.logging-unit-field select { min-width: 0; height: 36px; padding: 0 9px; border: 0; border-radius: 9px; color: var(--ink); background: white; font-size: 10px; font-weight: 750; }
 .quantity-control { display: grid; grid-template-columns: 42px 1fr 42px; gap: 7px; }
 .quantity-control > button { border: 1px solid rgb(255 255 255 / 0.14); border-radius: 11px; color: white; background: rgb(255 255 255 / 0.07); font-size: 18px; cursor: pointer; }
 .quantity-control label { display: grid; grid-template-columns: 1fr auto; align-items: center; border-radius: 11px; background: white; }
@@ -471,20 +476,47 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .personal-source { display: block; margin-bottom: 16px; color: #c1cbc4; font-size: 8px; }
 .edit-food-button { width: 100%; margin-bottom: 12px; padding: 11px; border: 1px solid rgb(255 255 255 / 0.24); border-radius: 11px; color: white; background: rgb(255 255 255 / 0.07); font-size: 10px; font-weight: 750; cursor: pointer; }
 .add-food-button { min-height: 49px; font-size: 12px; }
-.quantity-editor.details-mode { overflow-y: auto; max-height: 100%; }
+.outline-light { border: 1px solid rgb(255 255 255 / 0.28); color: white; background: rgb(255 255 255 / 0.08); }
+.quantity-editor.details-mode, .quantity-editor.combination-mode { overflow-y: auto; max-height: 100%; }
+.quantity-editor.combination-mode .live-nutrition, .quantity-editor.combination-mode .edit-food-button, .quantity-editor.combination-mode > a, .quantity-editor.combination-mode > .personal-source { display: none; }
+.quantity-editor.combination-mode { padding: 16px; }
+.quantity-editor.combination-mode > p { display: none; }
+.quantity-editor.combination-mode .quantity-basis { margin-bottom: 10px; }
+.quantity-editor.combination-mode .combination-builder { gap: 7px; margin-top: 10px; padding-top: 10px; }
+.quantity-editor.combination-mode .combination-lines { gap: 4px; }
+.quantity-editor.combination-mode .combination-lines > div { padding: 6px; }
+.quantity-editor.combination-mode .combination-total { padding: 5px 0; }
 .food-details-editor > p { margin: 0 0 15px; color: #c0cbc4; font-size: 9px; line-height: 1.45; }
 .details-heading { display: flex; justify-content: space-between; gap: 12px; }
 .details-heading > button { width: 29px; height: 29px; border: 1px solid rgb(255 255 255 / 0.2); border-radius: 8px; color: white; background: transparent; cursor: pointer; }
-.identity-fields, .serving-fields, .nutrition-fields { display: grid; gap: 9px; margin-bottom: 12px; }
+.identity-fields, .serving-fields, .conversion-fields, .nutrition-fields { display: grid; gap: 9px; margin-bottom: 12px; }
 .serving-fields { grid-template-columns: 1fr 0.8fr; }
+.conversion-fields { padding: 10px; border: 1px solid rgb(255 255 255 / 0.14); border-radius: 10px; }
 .nutrition-fields { grid-template-columns: repeat(2, 1fr); }
-.identity-fields label, .serving-fields label, .nutrition-fields label { display: grid; gap: 5px; }
-.identity-fields label > span, .serving-fields label > span, .nutrition-fields label > span { color: #d5ded8; font-size: 8px; font-weight: 750; }
-.identity-fields input, .serving-fields input, .serving-fields select, .nutrition-fields label > div { width: 100%; height: 39px; border: 0; border-radius: 9px; color: var(--ink); background: white; }
-.identity-fields input, .serving-fields input, .serving-fields select { padding: 0 10px; font-size: 10px; font-weight: 700; }
+.identity-fields label, .serving-fields label, .conversion-fields label, .nutrition-fields label { display: grid; gap: 5px; }
+.identity-fields label > span, .serving-fields label > span, .conversion-fields label > span, .nutrition-fields label > span { color: #d5ded8; font-size: 8px; font-weight: 750; }
+.identity-fields input, .serving-fields input, .serving-fields select, .conversion-fields input, .conversion-fields select, .conversion-fields label > div, .nutrition-fields label > div { width: 100%; height: 39px; border: 0; border-radius: 9px; color: var(--ink); background: white; }
+.identity-fields input, .serving-fields input, .serving-fields select, .conversion-fields input, .conversion-fields select { padding: 0 10px; font-size: 10px; font-weight: 700; }
+.conversion-fields label > div { display: grid; grid-template-columns: 1fr auto; align-items: center; }
+.conversion-fields label > div input { min-width: 0; }
+.conversion-fields label > div b { padding-right: 9px; color: #405047; font-size: 8px; }
 .nutrition-fields label > div { display: grid; grid-template-columns: 1fr auto; align-items: center; }
 .nutrition-fields input { min-width: 0; height: 39px; padding: 0 7px 0 10px; border: 0; outline: 0; background: transparent; font-size: 10px; font-weight: 750; }
 .nutrition-fields b { padding-right: 9px; color: #405047; font-size: 8px; }
+.combination-builder { display: grid; gap: 10px; margin-top: 16px; padding-top: 15px; border-top: 1px solid rgb(255 255 255 / 0.16); }
+.combination-builder > div:first-child, .combination-total { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+.combination-builder > label { display: grid; gap: 5px; color: #d5ded8; font-size: 8px; font-weight: 750; }
+.combination-builder > label input { height: 39px; padding: 0 10px; border: 0; border-radius: 9px; color: var(--ink); background: white; font-size: 10px; font-weight: 700; }
+.combination-builder > p { margin: 0; color: #aeb9b1; font-size: 9px; line-height: 1.45; }
+.combination-lines { display: grid; gap: 6px; }
+.combination-lines > div { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; padding: 8px; border: 1px solid rgb(255 255 255 / 0.13); border-radius: 9px; }
+.combination-lines span { display: grid; gap: 2px; font-size: 8px; }
+.combination-lines span b { color: var(--lime); font-size: 9px; }
+.combination-lines small { color: #c4cec7; font-size: 8px; }
+.combination-lines button { border: 0; color: white; background: transparent; cursor: pointer; }
+.combination-total { padding: 10px 0; }
+.combination-total strong { color: var(--lime); }
+.combination-total span { color: #c4cec7; font-size: 8px; }
 .drawer-backdrop { justify-items: end; padding: 0; }
 .recipe-drawer { overflow-y: auto; width: min(520px, 100%); height: 100dvh; background: var(--paper); box-shadow: -20px 0 80px rgb(0 0 0 / 0.24); }
 .recipe-drawer > .close-button { position: absolute; top: 18px; right: 18px; z-index: 2; background: rgb(255 255 255 / 0.72); }

@@ -20,6 +20,8 @@ The product should feel like an encouraging, highly informed food partner—not 
 - A new food can be logged with serving, calories, protein, carbohydrates, and fat in under thirty seconds.
 - Item and meal selections accumulate into one transparent calorie/macro/fibre draft.
 - Changing grams, millilitres, scoops, packs, or servings recalculates every displayed nutrient immediately from one serving basis.
+- Natural counts and exact pack conversions support entries such as four eggs, half a carton, or 100 ml without changing the underlying nutrition evidence.
+- Multi-ingredient combinations can be assembled, named, saved, and logged as one reusable personal food while retaining each measured ingredient in the description.
 - Every nutrition value visibly distinguishes label/reference/calculated/estimated data.
 - Daily, weekly, and monthly views use the same canonical log entries and never disagree.
 - The complete personal database and backups live on the Mac Mini.
@@ -69,10 +71,12 @@ The current research build demonstrates:
 - Meal filtering and a complete recipe drawer with weighed ingredients, method, fibre, and calculation note.
 - One shared draft that accepts either individual items or complete meals.
 - Commonly ordered, product, ingredient, and meal tabs in Log Food.
-- Quantity editing with live calorie/protein/carbohydrate/fat/fibre recalculation before logging.
+- Single-item and combination logging with live calorie/protein/carbohydrate/fat/fibre recalculation before logging.
+- Editable Brand, Item Name, optional Variant, nutrition basis, macros, and an optional natural-unit conversion such as one pack = 1,000 ml.
 - History day selection and responsive detail.
 - Trend range switching.
-- Purchase catalogue and match/review presentation, clearly labelled as dummy data.
+- A compact real body-weight logger and elapsed-time trend chart in Track Today.
+- The local purchase catalogue with exact-match/review presentation; unresolved rows never receive look-alike nutrition.
 
 ## §4 Functional requirements
 
@@ -154,6 +158,8 @@ Supported paths:
 - log a saved recipe or planned meal;
 - add an exact recent purchase;
 - edit quantity/volume before adding or from the logged timeline while calories and all macros update live;
+- switch between evidence-backed weight/volume and explicit natural-unit conversions such as piece or pack, including fractions;
+- assemble measured ingredients into a named reusable combination, for example four egg whites plus 5 ml oil;
 - see the exact quantity and unit in both the final add action and the logged timeline;
 - rename a food or edit its brand, item name, optional variant, serving basis, calories, protein, carbohydrate, fat, and fibre;
 - quick-add only calories/macros when detail is unavailable;
@@ -211,12 +217,15 @@ Amazon’s export does not reliably identify the Now channel by itself, so that 
 | 2026-08-09 | Every illustrative target, trend, insight, and meal suggestion is explicitly labelled Sample | Let polished preview data resemble personal history | KP must be able to distinguish researched catalogue facts, imported purchases, and UI examples at a glance |
 | 2026-08-11 | Personal food edits are versioned defaults while food logs retain snapshots | Resolve every old log against the latest mutable food record | Renaming or correcting macros must not silently rewrite what was recorded earlier |
 | 2026-08-11 | Weight tracking lives as a compact expandable card in Track Today | Add a third top-level area or a large dedicated dashboard | Keeps the two-area navigation intact while making weigh-ins and the real trend easy to reach |
+| 2026-08-12 | Purchase nutrition auto-links only when the normalised retailer title equals one reviewed exact title | Accept substring, token, generic-ingredient, flavour-word, or similar-product matches | Pack sizes, freebies, multipacks, flavours, and formulations can share words while having different nutrition; an unresolved value is safer than a plausible wrong one |
+| 2026-08-12 | Logging units are explicit conversions layered over one nutrition basis | Store independent macros for “pack”, “piece”, ml, and g views | One evidence-backed basis plus reviewed conversions keeps 0.5 pack, four eggs, and 100 ml mathematically consistent |
+| 2026-08-12 | A saved combination is a personal one-serving food built from measured ingredient snapshots | Ask KP to manually total an omelette or repeatedly log every ingredient | Combination logging stays quick while oil and other easy-to-miss ingredients remain explicit |
 
 ## §6 Current State
 
-As of 2026-08-11, the repository lives at `/Users/kanwar/Code/Nourish`. Plan is split into Items and Meals. The seed catalogue contains 38 researched products/ingredients and 10 original meals recalculated from structured, weighed ingredient records. Source strength and links are visible; the evidence register lives in `data/NUTRITION_SOURCES.md`. Track has the approved Today/History/Trends/Purchases structure plus a quantity-first logger with live nutrition recalculation. The add action and timeline now show the exact quantity/unit at high contrast. Every food exposes editable Brand, Item Name, optional Variant, serving basis/unit, calories, protein, carbohydrate, fat, and fibre; those personal defaults persist while each diary entry retains its own snapshot. Today starts at zero, totals only KP's logged entries, and shows a Bangalore-local greeting and date. Logs are date-scoped, with a rollover guard preventing a prior day's diary from being saved into the next Bangalore day.
+As of 2026-08-12, the repository lives at `/Users/kanwar/Code/Nourish`. Plan is split into Items and Meals. The seed catalogue contains 64 researched products/ingredients and 10 original meals recalculated from structured, weighed ingredient records. Source strength and links are visible; the evidence register lives in `data/NUTRITION_SOURCES.md`. Track has the approved Today/History/Trends/Purchases structure plus a quantity-first logger with live nutrition recalculation. The add action and timeline show the exact quantity/unit at high contrast. Every food exposes editable Brand, Item Name, optional Variant, serving basis/unit, calories, protein, carbohydrate, fat, fibre, and an optional natural-unit conversion; those personal defaults persist while each diary entry retains its own snapshot. Foods can be logged by weight, volume, piece, pack, scoop, or serving where an explicit conversion exists, and measured ingredients can be saved and logged as a named personal combination. Today starts at zero, totals only KP's logged entries, and shows a Bangalore-local greeting and date. Logs are date-scoped, with a rollover guard preventing a prior day's diary from being saved into the next Bangalore day.
 
-The local cardIQ importer now reads the last year of deduplicated orders and writes an ignored snapshot to `public/cardiq-food-import.json`. On 2026-08-09 it produced 209 food products from 131 cardIQ orders, with 43 safely matched to the Nourish catalogue. Food logs, personal food edits, weight entries, and Plan selections survive refresh in the current browser profile; malformed stored entries are isolated and rejected without discarding unrelated valid data. Track Today now includes a compact real weight log with same-date correction and an expandable elapsed-time chart. Historical food Track data, targets, food charts, insights, and unlogged meal ideas are still preview data and are explicitly labelled Sample. This is intentionally browser-local persistence, not the backed-up local database planned for Phase 1. The working product name Nourish is not yet approved as permanent.
+The local cardIQ importer reads the last year of deduplicated orders and writes an ignored snapshot to `public/cardiq-food-import.json`. Runtime sanitation removes 16 non-food rows and re-evaluates every stored match, so old guesses cannot linger. Of 193 retained food purchase rows, 13 exactly equal reviewed retailer titles and are nutrition-ready; 180 remain deliberately unlinked pending exact identity and compatible label evidence. The complete unresolved list lives in `data/UNMATCHED_CARDIQ_FOODS.md`. Food logs, personal food edits, saved combinations, weight entries, and Plan selections survive refresh in the current browser profile; malformed or mathematically inconsistent snapshots are isolated and rejected without discarding unrelated valid data. Track Today includes a compact real weight log with same-date correction and an expandable elapsed-time chart. Historical food Track data, targets, food charts, insights, and unlogged meal ideas are still preview data and are explicitly labelled Sample. This is intentionally browser-local persistence, not the backed-up local database planned for Phase 1. The working product name Nourish is not yet approved as permanent.
 
 ## §7 Known Issues and deferred scope
 
@@ -227,7 +236,7 @@ The local cardIQ importer now reads the last year of deduplicated orders and wri
 | Nandini and Epigamia seed entries rely on current label mirrors | Needs exact-pack confirmation | Reconcile barcode/variant and pack photo during cardIQ import before promotion |
 | Starter dependency audit reports four high-severity advisories | Open | Upgrade the core framework stack and rerun the audit before private-network access or deployment |
 | Recipe photography and curated source catalogue | Deferred | After interaction/design approval |
-| Exact product nutrition for unmatched cardIQ foods | In progress | Reconcile exact pack label before enabling one-tap logging |
+| Exact product nutrition for 180 unmatched cardIQ purchase rows | Needs exact identity + pack evidence | Work through `data/UNMATCHED_CARDIQ_FOODS.md`; reconcile retailer ID/barcode and current pack photo before enabling one-tap logging |
 | Amazon Now channel identification | Known ambiguity | Secondary evidence + review queue |
 | Micronutrient targets and medical conditions | Deferred | Separate reviewed scope; never infer silently |
 | Native barcode/photo/voice logging | Later enhancement | Only after fast text/recent logging proves solid |
@@ -300,7 +309,7 @@ The local cardIQ importer now reads the last year of deduplicated orders and wri
 
 ### Current handoff
 
-KP can now test Today with food actually eaten: the diary starts empty, live quantities recalculate nutrition, the exact volume is prominent before and after adding, and any food identity, serving basis, or macro can be corrected and saved to My Foods. Older logged snapshots remain unchanged by later food edits. The compact Body Weight card accepts dated weigh-ins, corrects a repeated date, and expands into a real trend chart. Refresh restores same-day food logs, personal food defaults, and weight history; the next Bangalore day starts with an empty food diary. History, food Trends, targets, insights, and unlogged meal ideas remain Sample previews. The next build phase is backed-up local persistence and exact product reconciliation; cardIQ should remain connected only through the documented narrow import contract, without importing payment or address data.
+KP can now test Today with food actually eaten: the diary starts empty; live quantities recalculate nutrition; the exact volume, weight, count, or pack fraction is prominent before and after adding; and any food identity, serving basis, macro, or alternate-unit conversion can be corrected and saved to My Foods. Combination mode can turn measured ingredients such as four egg whites plus 5 ml oil into a named reusable food. Older logged snapshots remain unchanged by later food edits, and stored alternate-unit snapshots are accepted only when their macros agree with their saved basis and conversion. The compact Body Weight card accepts dated weigh-ins, corrects a repeated date, and expands into a real trend chart. Refresh restores same-day food logs, personal food defaults, saved combinations, and weight history; the next Bangalore day starts with an empty food diary. Only 13 reviewed cardIQ retailer titles currently auto-link; all other purchase rows are visible in the unresolved audit rather than receiving generic nutrition. History, food Trends, targets, insights, and unlogged meal ideas remain Sample previews. The next build phase is backed-up local persistence and exact product reconciliation; cardIQ should remain connected only through the documented narrow import contract, without importing payment or address data.
 
 ## §10 Deployment
 
