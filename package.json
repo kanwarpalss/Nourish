@@ -10,7 +10,7 @@
     "build": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext build",
     "start": "node scripts/require-nourish-port.mjs && WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start --port 4317 --hostname 0.0.0.0",
     "health": "curl -fsS --connect-timeout 3 http://127.0.0.1:4317/ >/dev/null && echo 'Nourish is available at http://localhost:4317'",
-    "test": "npm run build && node --test tests/rendered-html.test.mjs && node --import tsx --test tests/prototype-logic.test.ts tests/cardiq-food.test.ts",
+    "test": "npm run build && node --test tests/rendered-html.test.mjs && node --import tsx --test tests/prototype-logic.test.ts tests/cardiq-food.test.ts tests/open-food-facts.test.ts",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "import:cardiq": "node --import tsx scripts/import-cardiq-food.ts",
     "db:generate": "drizzle-kit generate"

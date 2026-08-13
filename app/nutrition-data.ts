@@ -1,59 +1,30 @@
-export type NutritionSource = {
-  label: string;
-  url: string;
-  trust: "Official label" | "Reference" | "Label mirror" | "Personal";
-};
+// Researched seed catalogue. Products carry label/reference macros; recipes
+// carry weighed components and have their macros calculated at load by
+// resolveCatalog, so a component correction flows into every recipe using it.
 
-export type NutritionItem = {
-  id: string;
-  name: string;
-  brand: string;
-  variant: string;
-  amount: number;
-  unit: "g" | "ml" | "scoop" | "pack" | "piece" | "serving";
-  calories: number;
-  protein: number;
-  carbs: number;
-  fat: number;
-  fiber: number;
-  category: "Ordered" | "Product" | "Ingredient" | "Meal";
-  availability: string;
-  common?: boolean;
-  aliases: string[];
-  source: NutritionSource;
-  basis?: { amount: number; calories: number; protein: number; carbs: number; fat: number; fiber: number };
-};
+import { resolveCatalog, type Food, type NutritionSource } from "./food-model";
 
-export type Meal = {
-  id: string;
-  name: string;
-  serving: string;
-  calories: number;
-  protein: number;
-  carbs: number;
-  fat: number;
-  fiber: number;
-  time: string;
-  totalMinutes: number;
-  tags: string[];
-  art: string;
-  description: string;
-  ingredients: string[];
-  nutritionBasis: Array<{ foodId: string; amount: number }>;
-  method: string[];
-  sourceNote: string;
-};
+export type { Food, FoodComponent, FoodImage, NutritionSource } from "./food-model";
+/** @deprecated Retained for older imports; every food is a `Food` now. */
+export type NutritionItem = Food;
 
 export const SOURCE_LINKS = {
   ifct: "https://www.nin.res.in/ebooks/IFCT2017_16122024.pdf",
   ninGuidelines: "https://www.nin.res.in/dietaryguidelines/pdfjs/locale/DGI24thJune2024fin.pdf",
   usda: "https://fdc.nal.usda.gov/",
   fssai: "https://www.fssai.gov.in/upload/uploadfiles/files/Guidelines_Nutrition_Labelling_16_08_2018.pdf",
+  openFoodFacts: "https://world.openfoodfacts.org/",
 };
 
 const usdaSource: NutritionSource = { label: "USDA FoodData Central", url: SOURCE_LINKS.usda, trust: "Reference" };
 
-const nutritionSeedItems: Array<Omit<NutritionItem, "brand" | "variant"> & { brand?: string; variant?: string }> = [
+type ProductSeed = Omit<Food, "kind" | "brand" | "variant" | "category"> & {
+  brand?: string;
+  variant?: string;
+  category?: Food["category"];
+};
+
+const productSeeds: ProductSeed[] = [
   {
     id: "nandini-goodlife-toned",
     name: "GoodLife UHT toned milk",
@@ -66,6 +37,7 @@ const nutritionSeedItems: Array<Omit<NutritionItem, "brand" | "variant"> & { bra
     fat: 3.1,
     fiber: 0,
     category: "Ordered",
+    packSize: "1 L carton",
     availability: "BigBasket · Bengaluru",
     common: true,
     aliases: ["milk", "toned milk", "good life", "kmf"],
@@ -83,6 +55,7 @@ const nutritionSeedItems: Array<Omit<NutritionItem, "brand" | "variant"> & { bra
     fat: 2,
     fiber: 0,
     category: "Ordered",
+    packSize: "90 g cup",
     availability: "Instamart-style quick commerce",
     common: true,
     aliases: ["greek yoghurt", "curd", "dahi", "epigamia"],
@@ -100,6 +73,7 @@ const nutritionSeedItems: Array<Omit<NutritionItem, "brand" | "variant"> & { bra
     fat: 1.76,
     fiber: 0,
     category: "Ordered",
+    packSize: "33 g scoop",
     availability: "Amazon India / brand store",
     common: true,
     aliases: ["whey", "protein powder", "biozyme", "shake"],
@@ -117,6 +91,7 @@ const nutritionSeedItems: Array<Omit<NutritionItem, "brand" | "variant"> & { bra
     fat: 1,
     fiber: 0,
     category: "Product",
+    packSize: "200 ml pack",
     availability: "Amul online · India",
     common: true,
     aliases: ["chaas", "buttermilk", "protein drink"],
@@ -134,10 +109,125 @@ const nutritionSeedItems: Array<Omit<NutritionItem, "brand" | "variant"> & { bra
     fat: 6,
     fiber: 0,
     category: "Product",
+    packSize: "200 g tin",
     availability: "Amul online · India",
     common: true,
     aliases: ["low fat paneer", "cottage cheese", "amul paneer"],
     source: { label: "Amul official", url: "https://old.amul.com/products/amul-HP-tin-paneer-info.php", trust: "Official label" },
+  },
+  // Branded Indian staples KP reorders. Every one of these carries a real pack
+  // label — a branded grocery almost always does, so "no label found" is a
+  // reason to search harder, not to fall back to a generic reference food.
+  {
+    id: "fortune-poha-thick",
+    name: "Poha · thick",
+    brand: "Fortune",
+    amount: 100,
+    unit: "g",
+    calories: 361.3,
+    protein: 7.4,
+    carbs: 77.2,
+    fat: 1.6,
+    fiber: 4.3,
+    sugar: 0.5,
+    sodium: 0.9,
+    category: "Ordered",
+    packSize: "500 g pouch · dry",
+    barcode: "8906008812817",
+    availability: "BigBasket / Instamart · Bengaluru",
+    common: true,
+    aliases: ["poha", "flattened rice", "avalakki", "chivda", "beaten rice"],
+    images: [{ url: "/food-images/fortune-poha-thick.jpg", kind: "pack", credit: "Open Food Facts" }],
+    source: { label: "Pack label · Open Food Facts 8906008812817", url: "https://world.openfoodfacts.org/product/8906008812817", trust: "Label mirror" },
+  },
+  {
+    id: "bambino-vermicelli",
+    name: "Long Cut Vermicelli",
+    brand: "Bambino",
+    amount: 100,
+    unit: "g",
+    calories: 347,
+    protein: 10.5,
+    carbs: 73.9,
+    // Bambino's pack declares no dietary fibre, so none is claimed here.
+    fiber: 0,
+    fat: 1,
+    sugar: 0.3,
+    sodium: 9.7,
+    category: "Ordered",
+    packSize: "450 g pack · dry",
+    availability: "BigBasket / Instamart · Bengaluru",
+    common: true,
+    aliases: ["vermicelli", "semiya", "sevai", "shavige", "upma"],
+    source: { label: "Bambino official · fibre not declared on pack", url: "https://bambinopasta.in/products/bambino-long-cut-vermicelli", trust: "Official label" },
+  },
+  {
+    id: "24-mantra-kabuli-chana",
+    name: "Organic Kabuli Chana",
+    brand: "24 Mantra Organic",
+    amount: 100,
+    unit: "g",
+    calories: 342.9,
+    protein: 22.9,
+    carbs: 60,
+    fat: 5.7,
+    fiber: 14.3,
+    sugar: 0,
+    sodium: 0,
+    category: "Ordered",
+    packSize: "500 g pouch · dry",
+    barcode: "8904083512219",
+    availability: "BigBasket / Instamart · Bengaluru",
+    common: true,
+    aliases: ["chickpea", "kabuli chana", "chana", "garbanzo", "chole", "organic chickpea"],
+    images: [{ url: "/food-images/24-mantra-kabuli-chana.jpg", kind: "pack", credit: "Open Food Facts" }],
+    source: { label: "Pack label · Open Food Facts 8904083512219 · dry weight", url: "https://world.openfoodfacts.org/product/8904083512219", trust: "Label mirror" },
+  },
+  {
+    id: "tata-sampann-toor-dal",
+    name: "Unpolished Toor Dal",
+    brand: "Tata Sampann",
+    amount: 100,
+    unit: "g",
+    calories: 364,
+    protein: 18.2,
+    carbs: 64.3,
+    fat: 1.3,
+    fiber: 11.6,
+    sugar: 0.5,
+    sodium: 14.4,
+    category: "Ordered",
+    packSize: "1 kg pouch · dry",
+    barcode: "8904043926216",
+    availability: "BigBasket / Instamart · Bengaluru",
+    common: true,
+    aliases: ["toor dal", "arhar", "tur", "pigeon pea", "dal", "sambar"],
+    images: [{ url: "/food-images/tata-sampann-toor-dal.jpg", kind: "pack", credit: "Open Food Facts" }],
+    source: { label: "Pack label · Open Food Facts 8904043926216 · dry weight", url: "https://world.openfoodfacts.org/product/8904043926216", trust: "Label mirror" },
+  },
+  {
+    // One nutrition label, eaten as a meal: stays a product, lists under Meals too.
+    id: "mtr-poha-instant",
+    name: "Instant Poha",
+    brand: "MTR",
+    amount: 1,
+    unit: "pack",
+    calories: 149,
+    protein: 2.9,
+    carbs: 24.2,
+    fat: 4.3,
+    fiber: 1.1,
+    sugar: 1.6,
+    sodium: 192,
+    category: "Ordered",
+    packSize: "60 g single-serve pouch",
+    barcode: "8901042967325",
+    preparedMeal: true,
+    availability: "Instamart / Amazon · Bengaluru",
+    aliases: ["instant poha", "ready to eat", "breakfast pouch", "mtr poha"],
+    tags: ["Breakfast", "Ready to eat"],
+    images: [{ url: "/food-images/mtr-poha-instant.jpg", kind: "pack", credit: "Open Food Facts" }],
+    source: { label: "Pack label · Open Food Facts 8901042967325 · whole 60 g pouch", url: "https://world.openfoodfacts.org/product/8901042967325", trust: "Label mirror" },
   },
   { id: "banana", name: "Banana · medium", amount: 118, unit: "g", calories: 105, protein: 1.3, carbs: 27, fat: 0.4, fiber: 3.1, category: "Ingredient", availability: "Bengaluru staple", common: true, aliases: ["kela", "fruit"], source: usdaSource },
   { id: "chia", name: "Chia seeds", amount: 25, unit: "g", calories: 122, protein: 4.1, carbs: 10.5, fat: 7.7, fiber: 8.6, category: "Ingredient", availability: "BigBasket · Bengaluru", common: true, aliases: ["seeds", "omega 3", "pudding"], source: usdaSource },
@@ -173,58 +263,26 @@ const nutritionSeedItems: Array<Omit<NutritionItem, "brand" | "variant"> & { bra
   { id: "greek-yogurt-nonfat", name: "Greek yogurt · non-fat reference", amount: 200, unit: "g", calories: 118, protein: 20.4, carbs: 7.2, fat: 0.8, fiber: 0, category: "Ingredient", availability: "Use exact local pack when available", aliases: ["strained yogurt", "hung curd", "dahi"], source: usdaSource },
 ];
 
-export const nutritionItems: NutritionItem[] = nutritionSeedItems.map((food) => {
-  const [name, ...variantParts] = food.name.split(" · ");
-  return {
-    ...food,
-    brand: food.brand?.trim() || "Generic",
-    name: name.trim(),
-    variant: food.variant?.trim() || variantParts.join(" · ").trim(),
-  };
-});
+type RecipeSeed = Omit<Food, "kind" | "brand" | "variant" | "category" | "calories" | "protein" | "carbs" | "fat" | "fiber" | "amount" | "unit" | "availability" | "aliases" | "source"> & {
+  components: Food["components"];
+  serving: string;
+  brand?: string;
+  aliases?: string[];
+  source?: NutritionSource;
+};
 
-export function calculateMealNutrition(basis: Meal["nutritionBasis"]) {
-  const totals = basis.reduce((sum, ingredient) => {
-    const food = nutritionItems.find((item) => item.id === ingredient.foodId);
-    if (!food || !Number.isFinite(ingredient.amount) || ingredient.amount <= 0 || food.amount <= 0) {
-      throw new Error(`Invalid meal ingredient: ${ingredient.foodId}`);
-    }
-    const scale = ingredient.amount / food.amount;
-    return {
-      calories: sum.calories + food.calories * scale,
-      protein: sum.protein + food.protein * scale,
-      carbs: sum.carbs + food.carbs * scale,
-      fat: sum.fat + food.fat * scale,
-      fiber: sum.fiber + food.fiber * scale,
-    };
-  }, { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 });
-  const rounded = (value: number) => Math.round(value * 10) / 10;
-  return {
-    calories: Math.round(totals.calories),
-    protein: rounded(totals.protein),
-    carbs: rounded(totals.carbs),
-    fat: rounded(totals.fat),
-    fiber: rounded(totals.fiber),
-  };
-}
-
-export const meals: Meal[] = [
+const recipeSeeds: RecipeSeed[] = [
   {
     id: "protein-brownies",
     name: "Fudgy banana protein brownies",
     serving: "¼ tray · about 3 squares",
-    calories: 254,
-    protein: 25.1,
-    carbs: 35.3,
-    fat: 3.7,
-    fiber: 6.4,
     time: "35 min",
     totalMinutes: 35,
     tags: ["High protein", "Low fat", "Vegetarian", "Dessert"],
     art: "brownie",
     description: "Dark cocoa, banana and oats keep these properly fudgy; whey and Greek yogurt lift the protein without butter or refined flour.",
     ingredients: ["2 medium bananas · 236 g", "Rolled oats · 80 g", "Biozyme whey · 2 scoops / 66 g", "Unsweetened cocoa · 30 g", "Non-fat Greek yogurt · 200 g", "Egg whites · 100 g"],
-    nutritionBasis: [{ foodId: "banana", amount: 59 }, { foodId: "oats", amount: 20 }, { foodId: "muscleblaze-biozyme-whey", amount: 0.5 }, { foodId: "cocoa", amount: 7.5 }, { foodId: "greek-yogurt-nonfat", amount: 50 }, { foodId: "egg-whites", amount: 25 }],
+    components: [{ foodId: "banana", amount: 59 }, { foodId: "oats", amount: 20 }, { foodId: "muscleblaze-biozyme-whey", amount: 0.5 }, { foodId: "cocoa", amount: 7.5 }, { foodId: "greek-yogurt-nonfat", amount: 50 }, { foodId: "egg-whites", amount: 25 }],
     method: ["Blend everything until smooth.", "Bake in a lined 20 cm tin at 175°C for 20–24 minutes.", "Cool fully; divide into four equal servings."],
     sourceNote: "Calculated as one quarter of the weighed recipe using USDA FoodData Central plus the current whey label. No added sugar or butter.",
   },
@@ -232,18 +290,13 @@ export const meals: Meal[] = [
     id: "chia-cardamom-bowl",
     name: "Cardamom chia protein bowl",
     serving: "1 breakfast bowl",
-    calories: 416,
-    protein: 41,
-    carbs: 36.4,
-    fat: 12.8,
-    fiber: 11.1,
     time: "10 min + chill",
     totalMinutes: 130,
     tags: ["High protein", "High fibre", "Vegetarian", "No cook"],
     art: "chia",
     description: "Chia pudding meets Indian shrikhand notes: cardamom, thick yogurt, berries and half a scoop of whey.",
     ingredients: ["Chia seeds · 25 g", "Non-fat Greek yogurt · 200 g", "Nandini toned milk · 100 ml", "Strawberries · 100 g", "Biozyme whey · ½ scoop", "Cardamom + pinch of salt"],
-    nutritionBasis: [{ foodId: "chia", amount: 25 }, { foodId: "greek-yogurt-nonfat", amount: 200 }, { foodId: "nandini-goodlife-toned", amount: 100 }, { foodId: "strawberries", amount: 100 }, { foodId: "muscleblaze-biozyme-whey", amount: 0.5 }],
+    components: [{ foodId: "chia", amount: 25 }, { foodId: "greek-yogurt-nonfat", amount: 200 }, { foodId: "nandini-goodlife-toned", amount: 100 }, { foodId: "strawberries", amount: 100 }, { foodId: "muscleblaze-biozyme-whey", amount: 0.5 }],
     method: ["Whisk milk, yogurt, whey and cardamom.", "Stir in chia; chill at least 2 hours.", "Top with fruit immediately before eating."],
     sourceNote: "Ingredient-weight calculation from USDA reference foods and current product labels; fruit choice can shift totals slightly.",
   },
@@ -251,18 +304,13 @@ export const meals: Meal[] = [
     id: "cauli-chicken",
     name: "Pepper chicken cauliflower rice",
     serving: "1 large bowl",
-    calories: 406,
-    protein: 56,
-    carbs: 27,
-    fat: 8.7,
-    fiber: 10.8,
     time: "30 min",
     totalMinutes: 30,
     tags: ["High protein", "Low fat", "High fibre", "Gluten free"],
     art: "cauli",
     description: "A genuinely filling cauliflower-rice bowl with pepper chicken, peas, beans, ginger and a bright lime finish.",
     ingredients: ["Cooked chicken breast · 150 g", "Cauliflower · 250 g", "Green peas · 50 g", "Green beans · 50 g", "Capsicum · 50 g", "Oil · 2 g", "Ginger, pepper, lime, coriander"],
-    nutritionBasis: [{ foodId: "chicken-breast", amount: 150 }, { foodId: "cauliflower", amount: 250 }, { foodId: "green-peas-cooked", amount: 50 }, { foodId: "green-beans", amount: 50 }, { foodId: "capsicum", amount: 50 }, { foodId: "oil", amount: 2 }],
+    components: [{ foodId: "chicken-breast", amount: 150 }, { foodId: "cauliflower", amount: 250 }, { foodId: "green-peas-cooked", amount: 50 }, { foodId: "green-beans", amount: 50 }, { foodId: "capsicum", amount: 50 }, { foodId: "oil", amount: 2 }],
     method: ["Pulse cauliflower into rice-sized pieces.", "Sear spiced chicken in a non-stick pan; set aside.", "Stir-fry vegetables and cauliflower, then fold chicken through."],
     sourceNote: "Calculated from weighed USDA reference ingredients. The 2 g oil quantity is included, not treated as a free food.",
   },
@@ -270,18 +318,13 @@ export const meals: Meal[] = [
     id: "paneer-quinoa-tikka",
     name: "High-protein paneer tikka quinoa bowl",
     serving: "1 generous bowl",
-    calories: 565,
-    protein: 58.1,
-    carbs: 55.6,
-    fat: 13.1,
-    fiber: 10.2,
     time: "35 min",
     totalMinutes: 35,
     tags: ["High protein", "Vegetarian"],
     art: "paneer",
     description: "Low-fat paneer, quinoa, charred vegetables and mint yogurt—tikka-shop satisfaction with every ingredient weighed.",
     ingredients: ["Amul High Protein Paneer · 150 g", "Cooked quinoa · 150 g", "Capsicum · 70 g", "Onion · 65 g", "Tomato · 65 g", "Non-fat mint yogurt · 100 g", "Tikka masala + lemon"],
-    nutritionBasis: [{ foodId: "amul-high-protein-paneer", amount: 150 }, { foodId: "quinoa-cooked", amount: 150 }, { foodId: "capsicum", amount: 70 }, { foodId: "onion", amount: 65 }, { foodId: "tomato", amount: 65 }, { foodId: "greek-yogurt-nonfat", amount: 100 }],
+    components: [{ foodId: "amul-high-protein-paneer", amount: 150 }, { foodId: "quinoa-cooked", amount: 150 }, { foodId: "capsicum", amount: 70 }, { foodId: "onion", amount: 65 }, { foodId: "tomato", amount: 65 }, { foodId: "greek-yogurt-nonfat", amount: 100 }],
     method: ["Marinate paneer and vegetables in half the yogurt and spices.", "Air-fry or grill until charred.", "Serve over quinoa with the remaining mint yogurt."],
     sourceNote: "Calculated from Amul’s official paneer label plus USDA reference ingredients.",
   },
@@ -289,18 +332,13 @@ export const meals: Meal[] = [
     id: "rajma-quinoa",
     name: "Rajma quinoa kachumber bowl",
     serving: "1 hearty bowl",
-    calories: 466,
-    protein: 22.6,
-    carbs: 76,
-    fat: 9.2,
-    fiber: 18.3,
     time: "25 min with cooked beans",
     totalMinutes: 25,
     tags: ["Low fat", "High fibre", "Vegan", "Meal prep"],
     art: "rajma",
     description: "Rajma comfort with quinoa, a large kachumber and controlled oil; unusually high fibre without feeling worthy or austere.",
     ingredients: ["Cooked rajma · 150 g", "Cooked quinoa · 150 g", "Tomato · 50 g", "Cucumber · 50 g", "Onion · 50 g", "Oil · 5 g", "Rajma masala, lemon, coriander"],
-    nutritionBasis: [{ foodId: "rajma-cooked", amount: 150 }, { foodId: "quinoa-cooked", amount: 150 }, { foodId: "tomato", amount: 50 }, { foodId: "cucumber", amount: 50 }, { foodId: "onion", amount: 50 }, { foodId: "oil", amount: 5 }],
+    components: [{ foodId: "rajma-cooked", amount: 150 }, { foodId: "quinoa-cooked", amount: 150 }, { foodId: "tomato", amount: 50 }, { foodId: "cucumber", amount: 50 }, { foodId: "onion", amount: 50 }, { foodId: "oil", amount: 5 }],
     method: ["Warm rajma with masala and a splash of water.", "Season the chopped kachumber with lemon.", "Layer quinoa, rajma and salad; include the measured oil in cooking."],
     sourceNote: "Calculated from cooked USDA reference foods; bean variety and retained cooking liquid can shift totals.",
   },
@@ -308,18 +346,13 @@ export const meals: Meal[] = [
     id: "oats-egg-uttapam",
     name: "Oats egg-white uttapam plate",
     serving: "3 small uttapams + yogurt",
-    calories: 410,
-    protein: 40.3,
-    carbs: 42.1,
-    fat: 8.9,
-    fiber: 8.5,
     time: "25 min",
     totalMinutes: 25,
     tags: ["High protein", "Low fat", "Breakfast"],
     art: "uttapam",
     description: "A crisp-edged oats batter packed with egg whites and vegetables, with cool yogurt instead of an oil-heavy chutney.",
     ingredients: ["Rolled oats · 40 g", "Egg whites · 200 g", "Onion · 50 g", "Tomato · 50 g", "Carrot · 50 g", "Non-fat Greek yogurt · 100 g", "Oil · 5 g", "Chilli, curry leaves, cumin"],
-    nutritionBasis: [{ foodId: "oats", amount: 40 }, { foodId: "egg-whites", amount: 200 }, { foodId: "onion", amount: 50 }, { foodId: "tomato", amount: 50 }, { foodId: "carrot", amount: 50 }, { foodId: "greek-yogurt-nonfat", amount: 100 }, { foodId: "oil", amount: 5 }],
+    components: [{ foodId: "oats", amount: 40 }, { foodId: "egg-whites", amount: 200 }, { foodId: "onion", amount: 50 }, { foodId: "tomato", amount: 50 }, { foodId: "carrot", amount: 50 }, { foodId: "greek-yogurt-nonfat", amount: 100 }, { foodId: "oil", amount: 5 }],
     method: ["Blend oats, egg whites and spices into a pourable batter.", "Fold in chopped vegetables.", "Cook three uttapams using all 5 g measured oil; serve with yogurt."],
     sourceNote: "Calculated from USDA reference ingredients. The full cooking-oil allowance is included.",
   },
@@ -327,18 +360,13 @@ export const meals: Meal[] = [
     id: "cocoa-banana-chia",
     name: "Chocolate banana chia pudding",
     serving: "1 dessert bowl",
-    calories: 417,
-    protein: 40.1,
-    carbs: 48.2,
-    fat: 11,
-    fiber: 14.9,
     time: "10 min + chill",
     totalMinutes: 130,
     tags: ["High protein", "High fibre", "Vegetarian", "Dessert"],
     art: "cocoa",
     description: "The spoonable, deeply chocolate cousin of a protein shake—banana-sweetened and loaded with chia and cocoa fibre.",
     ingredients: ["Chia seeds · 25 g", "Non-fat Greek yogurt · 200 g", "Banana · 100 g", "Unsweetened cocoa · 10 g", "Biozyme whey · ½ scoop", "Water + pinch of salt"],
-    nutritionBasis: [{ foodId: "chia", amount: 25 }, { foodId: "greek-yogurt-nonfat", amount: 200 }, { foodId: "banana", amount: 100 }, { foodId: "cocoa", amount: 10 }, { foodId: "muscleblaze-biozyme-whey", amount: 0.5 }],
+    components: [{ foodId: "chia", amount: 25 }, { foodId: "greek-yogurt-nonfat", amount: 200 }, { foodId: "banana", amount: 100 }, { foodId: "cocoa", amount: 10 }, { foodId: "muscleblaze-biozyme-whey", amount: 0.5 }],
     method: ["Blend banana, yogurt, whey, cocoa and water.", "Stir through chia.", "Chill for at least 2 hours; loosen with water if needed."],
     sourceNote: "Calculated from USDA reference ingredients and the current whey label.",
   },
@@ -346,18 +374,13 @@ export const meals: Meal[] = [
     id: "palak-paneer",
     name: "Lean palak paneer skillet",
     serving: "1 main bowl",
-    calories: 428,
-    protein: 55.5,
-    carbs: 27.8,
-    fat: 10.6,
-    fiber: 7.4,
     time: "30 min",
     totalMinutes: 30,
     tags: ["High protein", "Vegetarian", "Gluten free"],
     art: "palak",
     description: "A spinach-heavy palak paneer using high-protein paneer and yogurt for body instead of cream.",
     ingredients: ["Amul High Protein Paneer · 150 g", "Spinach · 200 g", "Onion · 75 g", "Tomato · 75 g", "Non-fat Greek yogurt · 100 g", "Oil · 2 g", "Ginger, garlic, garam masala"],
-    nutritionBasis: [{ foodId: "amul-high-protein-paneer", amount: 150 }, { foodId: "spinach", amount: 200 }, { foodId: "onion", amount: 75 }, { foodId: "tomato", amount: 75 }, { foodId: "greek-yogurt-nonfat", amount: 100 }, { foodId: "oil", amount: 2 }],
+    components: [{ foodId: "amul-high-protein-paneer", amount: 150 }, { foodId: "spinach", amount: 200 }, { foodId: "onion", amount: 75 }, { foodId: "tomato", amount: 75 }, { foodId: "greek-yogurt-nonfat", amount: 100 }, { foodId: "oil", amount: 2 }],
     method: ["Wilt and blend spinach with ginger and chilli.", "Cook onion-tomato masala in measured oil.", "Fold in spinach, yogurt and paneer; warm gently."],
     sourceNote: "Calculated from Amul’s official paneer label plus USDA reference ingredients. Yogurt replaces cream.",
   },
@@ -365,18 +388,13 @@ export const meals: Meal[] = [
     id: "tandoori-quinoa",
     name: "Tandoori chicken quinoa kachumber",
     serving: "1 dinner plate",
-    calories: 557,
-    protein: 67,
-    carbs: 49.5,
-    fat: 9.5,
-    fiber: 10.2,
     time: "40 min",
     totalMinutes: 40,
     tags: ["High protein", "Low fat", "Meal prep"],
     art: "tandoori",
     description: "Charred yogurt-marinated chicken, quinoa and a mountain of kachumber—big dinner energy with a lean macro shape.",
     ingredients: ["Cooked chicken breast · 150 g", "Cooked quinoa · 150 g", "Cucumber · 70 g", "Tomato · 65 g", "Onion · 65 g", "Non-fat Greek yogurt · 100 g", "Tandoori spices, lemon, coriander"],
-    nutritionBasis: [{ foodId: "chicken-breast", amount: 150 }, { foodId: "quinoa-cooked", amount: 150 }, { foodId: "cucumber", amount: 70 }, { foodId: "tomato", amount: 65 }, { foodId: "onion", amount: 65 }, { foodId: "greek-yogurt-nonfat", amount: 100 }],
+    components: [{ foodId: "chicken-breast", amount: 150 }, { foodId: "quinoa-cooked", amount: 150 }, { foodId: "cucumber", amount: 70 }, { foodId: "tomato", amount: 65 }, { foodId: "onion", amount: 65 }, { foodId: "greek-yogurt-nonfat", amount: 100 }],
     method: ["Marinate chicken in yogurt, lemon and spices.", "Grill or air-fry until cooked and lightly charred.", "Plate with quinoa and a large chopped kachumber."],
     sourceNote: "Calculated from USDA reference ingredients; no invisible oil is assumed.",
   },
@@ -384,19 +402,52 @@ export const meals: Meal[] = [
     id: "greek-yogurt-chaat",
     name: "Crunchy Greek-yogurt chana chaat",
     serving: "1 lunch bowl",
-    calories: 455,
-    protein: 34.6,
-    carbs: 50.6,
-    fat: 12.2,
-    fiber: 15.5,
     time: "15 min",
     totalMinutes: 15,
     tags: ["High protein", "High fibre", "Vegetarian", "No cook"],
     art: "chaat",
     description: "Creamy, tangy chaat built around yogurt and chickpeas, with chia for crunch and no fried sev hiding in the arithmetic.",
     ingredients: ["Natural Greek yogurt · 270 g", "Cooked chickpeas · 100 g", "Cucumber · 50 g", "Tomato · 50 g", "Onion · 50 g", "Chia seeds · 10 g", "Chaat masala, mint, lemon"],
-    nutritionBasis: [{ foodId: "epigamia-natural-greek", amount: 270 }, { foodId: "chickpeas-cooked", amount: 100 }, { foodId: "cucumber", amount: 50 }, { foodId: "tomato", amount: 50 }, { foodId: "onion", amount: 50 }, { foodId: "chia", amount: 10 }],
+    components: [{ foodId: "epigamia-natural-greek", amount: 270 }, { foodId: "chickpeas-cooked", amount: 100 }, { foodId: "cucumber", amount: 50 }, { foodId: "tomato", amount: 50 }, { foodId: "onion", amount: 50 }, { foodId: "chia", amount: 10 }],
     method: ["Season yogurt with mint and chaat masala.", "Fold through chickpeas and chopped vegetables.", "Finish with chia, lemon and coriander."],
     sourceNote: "Calculated from product-label yogurt and USDA reference ingredients; recheck the exact yogurt pack before production use.",
   },
-].map((meal) => ({ ...meal, ...calculateMealNutrition(meal.nutritionBasis) }));
+];
+
+/** "Brand · Name · Variant" is the display identity; seeds may fold the variant into the name with " · ". */
+function splitIdentity(food: { name: string; brand?: string; variant?: string }) {
+  const [name, ...variantParts] = food.name.split(" · ");
+  return {
+    brand: food.brand?.trim() || "Generic",
+    name: name.trim(),
+    variant: food.variant?.trim() || variantParts.join(" · ").trim(),
+  };
+}
+
+const seedProductFoods: Food[] = productSeeds.map((food) => ({
+  ...food,
+  ...splitIdentity(food),
+  kind: "product" as const,
+  category: food.category ?? "Product",
+}));
+
+const seedRecipeFoods: Food[] = recipeSeeds.map((recipe) => ({
+  ...recipe,
+  ...splitIdentity({ name: recipe.name, brand: recipe.brand ?? "Nourish kitchen" }),
+  kind: "recipe" as const,
+  category: "Meal" as const,
+  // One recipe record is one serving; components are weighed per serving.
+  amount: 1,
+  unit: "serving" as const,
+  availability: recipe.serving,
+  aliases: recipe.aliases ?? recipe.tags ?? [],
+  source: recipe.source ?? { label: "Calculated from weighed ingredients", url: SOURCE_LINKS.ifct, trust: "Reference" },
+  ...{ calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 },
+}));
+
+/** The single catalogue. Recipe macros are filled in here from their components. */
+export const seedCatalog: Food[] = resolveCatalog([...seedProductFoods, ...seedRecipeFoods]);
+
+/** Derived views over the one catalogue — filters, not parallel data. */
+export const seedProducts = seedCatalog.filter((food) => food.kind === "product");
+export const seedRecipes = seedCatalog.filter((food) => food.kind === "recipe");

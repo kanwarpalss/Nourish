@@ -53,7 +53,7 @@ test("prototype test detects a missing critical product area", () => {
 });
 
 test("keeps the prototype complete, responsive, and free of starter residue", async () => {
-  const [page, css, layout, packageJson, spec, nutrition, sources] = await Promise.all([
+  const [page, css, layout, packageJson, spec, nutrition, sources, editor, model] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
@@ -61,6 +61,8 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
     readFile(new URL("../SPEC.md", import.meta.url), "utf8"),
     readFile(new URL("../app/nutrition-data.ts", import.meta.url), "utf8"),
     readFile(new URL("../data/NUTRITION_SOURCES.md", import.meta.url), "utf8"),
+    readFile(new URL("../app/food-editor.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/food-model.ts", import.meta.url), "utf8"),
   ]);
 
   for (const label of ["Items", "Meals", "Today", "History", "Trends", "Purchases"]) {
@@ -69,8 +71,7 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
   assert.match(page, /Commonly ordered/);
   assert.match(page, /Nutrition updates while you edit/);
   assert.match(page, /scaleNutrition\(selected, quantityValid \? quantity : 0\)/);
-  assert.match(page, /getShownLogFoods\(dialogCatalog, nextTab, nextSearch\)/);
-  assert.match(page, /Brand and item name are required\. Variant can be blank\./);
+  assert.match(page, /getShownLogFoods\(catalog, nextTab, nextSearch\)/);
   assert.match(page, /Edit name, serving & nutrition/);
   assert.match(page, /You are adding \$\{quantity\} \$\{selected\.unit\}/);
   assert.match(page, /Show trend chart/);
@@ -84,7 +85,7 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
   assert.match(page, /Sample data · 7 days/);
   assert.match(page, /Track · History · Sample preview/);
   assert.match(page, /Track · Trends · Sample preview/);
-  assert.match(page, /Sample meal idea · not logged/);
+  assert.match(page, /items waiting in your draft|Nothing planned yet/);
   assert.doesNotMatch(page, /Just now ·/);
   assert.doesNotMatch(page, /Meal studio|Week plan|DiscoverView|LibraryView/);
   assert.match(nutrition, /Fudgy banana protein brownies/);
@@ -112,6 +113,19 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
   assert.doesNotMatch(page + css + layout + packageJson, /codex-preview|_sites-preview|react-loading-skeleton/i);
   assert.match(spec, /Phase 0 — Product, design system, and researched seed catalogue \(current\)/);
   assert.match(spec, /cardIQ should (?:be|remain) connected only through the documented narrow import contract/);
+
+  // One catalogue, one editor: Plan and Track must not drift apart again.
+  assert.match(page, /resolveCatalog\(mergeCatalog\(seedCatalog, customFoods\)\)/, "Plan and Track must read one resolved catalogue");
+  assert.doesNotMatch(page, /loggableMeals|seedLogFoods/, "the lossy meal-to-food bridge must stay deleted");
+  assert.match(page, /＋ New product/, "Plan · Items must be able to add a product");
+  assert.match(page, /＋ New meal/, "Plan · Meals must be able to add a meal");
+  assert.match(page, /onEdit=\{\(food\) => setEditorTarget/, "Plan cards must open the shared editor");
+  assert.match(editor, /Brand \*/, "the editor keeps brand a required field");
+  assert.match(editor, /A meal is a combination — add at least \{MIN_RECIPE_COMPONENTS\} products\./);
+  assert.match(editor, /Ready-to-eat meal/, "prepared meals must be markable as products that list under Meals");
+  assert.match(editor, /computeNutrition\(\{ \.\.\.draft, components \}, catalog\)/, "meal nutrition must be calculated, never typed in");
+  assert.match(model, /MIN_RECIPE_COMPONENTS = 2/);
+  assert.match(css, /\.food-editor \{/, "the shared editor must be styled, not unstyled markup");
 
   await assert.rejects(access(new URL("../app/_sites-preview/SkeletonPreview.tsx", import.meta.url)));
 });

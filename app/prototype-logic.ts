@@ -1,3 +1,9 @@
+import { getQuantityLimit, isQuantityValid } from "./food-model";
+
+// Serving bounds live in food-model.ts so the parser, the UI, and this module
+// cannot drift apart. Re-exported here for existing callers.
+export { getQuantityLimit, isQuantityValid };
+
 export type MacroTargets = {
   protein: number;
   carbs: number;
@@ -130,19 +136,6 @@ export function scaleNutrition<T extends ScalableNutrition & { basis?: ScalableN
     fiber: scaled(basis.fiber),
   };
   return [result.amount, result.calories, result.protein, result.carbs, result.fat, result.fiber].every(Number.isFinite) ? result : empty() as T;
-}
-
-export function getQuantityLimit(unit: string) {
-  if (unit === "g" || unit === "ml") return 5000;
-  if (unit === "scoop") return 10;
-  if (unit === "pack" || unit === "serving") return 20;
-  if (unit === "piece") return 50;
-  return 0;
-}
-
-export function isQuantityValid(unit: string, amount: number) {
-  const limit = getQuantityLimit(unit);
-  return limit > 0 && Number.isFinite(amount) && amount > 0 && amount <= limit;
 }
 
 type MacroNutrition = Pick<ScalableNutrition, "calories" | "protein" | "carbs" | "fat">;
