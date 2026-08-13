@@ -77,6 +77,25 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
   assert.match(page, /getShownLogFoods\(dialogCatalog, nextTab, nextSearch\)/);
   assert.match(page, /Brand and item name are required\. Variant can be blank\./);
   assert.match(page, /Edit name, serving & nutrition/);
+
+  // Creating a food must start blank and mint a fresh id. Reusing the selected
+  // food's id silently replaced a researched entry with a different food.
+  assert.match(page, /Create a new food/);
+  assert.match(page, /blankFood\(search\.trim\(\)\)/);
+  assert.match(page, /createCustomFood\(\{ \.\.\.draft, imageUrl: image \}, nextUnique\(\)\)/);
+  assert.match(page, /Save to My Foods for next time/);
+  assert.match(page, /forkFoodForEdit\(original, nextUnique\(\)\)/);
+
+  // A logged entry can be removed, reversibly, and against the stored entry
+  // rather than the display row.
+  assert.match(page, /onDelete=\{deleteLoggedFood\}/);
+  assert.match(page, /const logIndex = logIndices\[index\]/);
+  assert.match(page, /index === editLogIndex/, "editing must address the stored entry too");
+  assert.match(page, /toast-undo/);
+
+  // Photos with a drawn fallback, never a bare letter.
+  assert.match(page, /<FoodThumb food=\{food\} \/>/);
+  assert.doesNotMatch(page, /food\.name\.charAt\(0\)/, "letter avatars must not come back");
   assert.match(page, /You are adding \$\{quantity\} \$\{loggingUnit\}/);
   assert.match(page, /Log & save combination/);
   assert.match(page, /Show trend chart/);
@@ -118,6 +137,9 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
   assert.match(css, /\.timeline-dot[^}]*left:\s*0/);
   assert.match(css, /\.meal-meta > \.logged-volume[^}]*color:\s*#173e2c/);
   assert.match(css, /\.quantity-control label span[^}]*color:\s*var\(--ink\)/);
+  assert.match(css, /\.food-thumb\b/, "thumbnails need styling");
+  assert.match(css, /\.food-thumb img[^}]*object-fit:\s*contain/, "pack shots must fit whole, not crop to white margin");
+  assert.doesNotMatch(css, /\.food-initial\b/, "the letter-avatar style must go with the markup");
   const lineLeft = Number(css.match(/\.meal-timeline\.connected::before[^}]*left:\s*(-?\d+(?:\.\d+)?)px/)?.[1]);
   const dotLeft = Number(css.match(/\.timeline-dot[^}]*left:\s*(-?\d+(?:\.\d+)?)(?:px)?[;}]/)?.[1]);
   const dotWidth = Number(css.match(/\.timeline-dot[^}]*width:\s*(\d+(?:\.\d+)?)px/)?.[1]);

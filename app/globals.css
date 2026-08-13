@@ -419,7 +419,6 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .food-results { overflow: auto; max-height: 480px; padding: 0 8px 0 0; }
 .food-results > button { display: grid; grid-template-columns: auto 1fr auto auto; gap: 12px; align-items: center; width: 100%; padding: 13px 0; border: 0; border-bottom: 1px solid var(--line); background: transparent; text-align: left; cursor: pointer; }
 .food-results > button.selected { padding-left: 10px; border-radius: 12px; background: #e7ecdf; }
-.food-initial { display: grid; width: 39px; height: 39px; place-items: center; border-radius: 12px; color: var(--forest); background: #e1ead7; font-weight: 800; }
 .food-results button > span:nth-child(2), .food-results button > span:nth-child(3) { display: grid; gap: 3px; }
 .food-results strong { font-size: 12px; }
 .food-results small { color: var(--muted); font-size: 9px; }
@@ -743,3 +742,49 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
   /* Quick-add from Purchases. */
   .purchase-row button { min-height: 44px; min-width: 44px; }
 }
+
+/* ---- Ported: photo thumbnails, create-a-food, delete affordance ---- */
+/* Real photo when a food has one, drawn icon when it does not. */
+.food-thumb { overflow: hidden; display: grid; width: 39px; height: 39px; flex: none; place-items: center; border-radius: 12px; background: #e1ead7; }
+/* Pack shots are the product floating on white, so the whole frame must show:
+   cropping to fill lands on the white margin and reads as an empty box. */
+.food-thumb:has(img) { padding: 2px; background: white; }
+.food-thumb img { width: 100%; height: 100%; object-fit: contain; }
+.food-thumb.icon { color: var(--forest); }
+.food-thumb.icon svg { width: 23px; height: 23px; }
+.food-thumb.icon.dairy { background: #e4eefb; color: #2f5d92; }
+.food-thumb.icon.egg { background: #fdf1d8; color: #9a7318; }
+.food-thumb.icon.meat { background: #fadfd6; color: #97402f; }
+.food-thumb.icon.fish { background: #d8ecec; color: #2c6f70; }
+.food-thumb.icon.grain { background: #f6ebd2; color: #8a6822; }
+.food-thumb.icon.legume { background: #ece2d3; color: #7a5a34; }
+.food-thumb.icon.vegetable { background: #dcecd3; color: #3d6b32; }
+.food-thumb.icon.fruit { background: #fbe3e0; color: #a3423f; }
+.food-thumb.icon.nut { background: #eee4d6; color: #7d5a35; }
+.food-thumb.icon.supplement { background: #e6e3f5; color: #4e458c; }
+.food-thumb.icon.sweet { background: #e8ddd5; color: #6b4636; }
+.food-thumb.icon.oil { background: #f7f0d5; color: #8a7a1f; }
+.food-thumb.icon.beverage { background: #ddeae6; color: #35695c; }
+.food-thumb.icon.meal { background: var(--forest); color: var(--lime); }
+.food-thumb.icon.generic { background: #e1ead7; color: var(--forest); }
+.food-thumb.icon.create { color: var(--lime); background: var(--forest); font-size: 19px; font-weight: 700; }
+
+/* ---- Logging session: create row, saved meals, and the tray ---- */
+.dialog-notice { margin: 12px 26px 0; padding: 9px 13px; border-radius: 11px; color: var(--forest); background: #e7f0dd; font-size: 10px; font-weight: 700; }
+
+.create-food-row { display: grid; grid-template-columns: auto 1fr; gap: 12px; align-items: center; width: 100%; margin-bottom: 6px; padding: 13px 10px; border: 1px dashed var(--forest); border-radius: 13px; background: transparent; text-align: left; cursor: pointer; }
+.create-food-row:hover { background: #eef3e8; }
+.create-food-row strong { display: block; color: var(--forest); font-size: 12px; }
+.create-food-row small { color: var(--muted); font-size: 9px; }
+
+.save-choice { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; margin-top: 14px; padding: 12px; border-radius: 12px; background: rgb(255 255 255 / 0.08); cursor: pointer; }
+.save-choice input { width: 17px; height: 17px; margin-top: 2px; accent-color: var(--lime); }
+.save-choice strong { display: block; color: white; font-size: 11px; }
+.save-choice small { color: rgb(255 255 255 / 0.62); font-size: 9px; }
+
+.entry-buttons { display: flex; gap: 10px; }
+.entry-delete { color: #98342a !important; }
+.meal-entry > .food-thumb { align-self: start; margin-top: 2px; }
+.toast-undo { margin-left: 10px; padding: 4px 11px; border: 0; border-radius: 99px; color: var(--ink); background: var(--lime); font-size: 9px; font-weight: 800; cursor: pointer; }
+.photo-field { display: grid; gap: 5px; margin-top: 10px; }
+.photo-field input { height: 38px; padding: 0 11px; border: 0; border-radius: 10px; background: white; }

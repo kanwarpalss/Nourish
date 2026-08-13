@@ -1,3 +1,4 @@
+import type { UserMeal } from "./logging-session";
 import type { NutritionItem } from "./nutrition-data";
 
 export const LOCAL_NUTRITION_STORAGE_KEY = "nourish.nutrition.v3";
@@ -73,12 +74,14 @@ export type SavedNutritionState = {
   planned: SavedPlanEntry[];
   targets: SavedTargets | null;
   customFoods: NutritionItem[];
+  /** Groups you saved from a logging tray, each keeping its own component snapshots. */
+  userMeals: UserMeal[];
   weights: WeightEntry[];
 };
 
 const DAY_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
-export const emptyNutritionState = (): SavedNutritionState => ({ schemaVersion: 2, days: [], planned: [], targets: null, customFoods: [], weights: [] });
+export const emptyNutritionState = (): SavedNutritionState => ({ schemaVersion: 2, days: [], planned: [], targets: null, customFoods: [], userMeals: [], weights: [] });
 
 const units = new Set<NutritionItem["unit"]>(["g", "ml", "scoop", "pack", "piece", "serving"]);
 const categories = new Set<NutritionItem["category"]>(["Ordered", "Product", "Ingredient", "Meal", "Composite"]);
@@ -135,7 +138,44 @@ function parseFood(value: unknown): NutritionItem | null {
     || (basis !== null && food.unit !== basisUnit && !visibleConversion) || !nutritionMatchesBasis
     || typeof food.availability !== "string" || !Array.isArray(food.aliases) || food.aliases.some((alias) => typeof alias !== "string")
     || !food.source || typeof food.source.label !== "string" || !food.source.label.trim() || typeof food.source.url !== "string" || !trustLevels.has(food.source.trust)) return null;
-  return { ...food, id: food.id.trim(), name: food.name.trim(), brand: food.brand.trim(), variant: food.variant.trim(), ...(conversions.length ? { conversions } : {}) } as NutritionItem;
+  const rawImageUrl = (value as { imageUrl?: unknown }).imageUrl;
+  const parsed = { ...food, id: food.id.trim(), name: food.name.trim(), brand: food.brand.trim(), variant: food.variant.trim(), ...(conversions.length ? { conversions } : {}) } as NutritionItem;
+  // An unusable photo link loses a thumbnail, never the food itself.
+  if (isSafeImageUrl(rawImageUrl)) parsed.imageUrl = rawImageUrl;
+  else delete parsed.imageUrl;
+  return parsed;
+}
+
+/**
+ * Photo links are rendered straight into an img tag, so only ordinary web URLs
+ * are kept. Anything else is dropped rather than stored and echoed back.
+ */
+export function isSafeImageUrl(value: unknown): value is string {
+  if (typeof value !== "string" || value.length > 2000) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+function parseUserMeal(value: unknown): UserMeal | null {
+  if (!value || typeof value !== "object") return null;
+  const meal = value as { id?: unknown; name?: unknown; createdAt?: unknown; components?: unknown };
+  if (typeof meal.id !== "string" || !meal.id.trim()) return null;
+  if (typeof meal.name !== "string" || !meal.name.trim() || meal.name.trim().length > 60) return null;
+  if (typeof meal.createdAt !== "string" || !isDateKey(meal.createdAt)) return null;
+  if (!Array.isArray(meal.components)) return null;
+  const components = meal.components
+    .flatMap((component) => {
+      const parsedComponent = parseFood(component);
+      return parsedComponent ? [parsedComponent] : [];
+    })
+    .slice(0, 40);
+  // A meal with nothing loggable left in it would silently log zero calories.
+  if (components.length === 0) return null;
+  return { id: meal.id.trim(), name: meal.name.trim(), createdAt: meal.createdAt, components };
 }
 
 export function isWeightValueValid(value: number) {
@@ -252,7 +292,7 @@ export function parseSavedNutritionState(raw: string | null): SavedNutritionStat
   try {
     const parsed: unknown = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return emptyNutritionState();
-    const value = parsed as { schemaVersion?: unknown; days?: unknown; dayKey?: unknown; logs?: unknown; planned?: unknown; targets?: unknown; customFoods?: unknown; weights?: unknown };
+    const value = parsed as { schemaVersion?: unknown; days?: unknown; dayKey?: unknown; logs?: unknown; planned?: unknown; targets?: unknown; customFoods?: unknown; userMeals?: unknown; weights?: unknown };
     const planned = Array.isArray(value.planned) ? value.planned.flatMap(parsePlanEntry) : [];
     const targets = parseTargets(value.targets);
     const parsedCustomFoods = Array.isArray(value.customFoods) ? value.customFoods.flatMap((food) => {
@@ -260,6 +300,11 @@ export function parseSavedNutritionState(raw: string | null): SavedNutritionStat
       return parsedFood ? [parsedFood] : [];
     }).slice(0, 500) : [];
     const customFoods = [...new Map(parsedCustomFoods.map((food) => [food.id, food])).values()];
+    const parsedUserMeals = Array.isArray(value.userMeals) ? value.userMeals.flatMap((meal) => {
+      const parsedMeal = parseUserMeal(meal);
+      return parsedMeal ? [parsedMeal] : [];
+    }).slice(0, 200) : [];
+    const userMeals = [...new Map(parsedUserMeals.map((meal) => [meal.id, meal])).values()];
     const weightByDate = new Map<string, WeightEntry>();
     if (Array.isArray(value.weights)) for (const entry of value.weights) {
       if (!entry || typeof entry !== "object") continue;
@@ -274,7 +319,7 @@ export function parseSavedNutritionState(raw: string | null): SavedNutritionStat
     if (value.schemaVersion !== 2) {
       const dayKey = typeof value.dayKey === "string" && DAY_KEY_PATTERN.test(value.dayKey) ? value.dayKey : null;
       const logs = Array.isArray(value.logs) ? value.logs.flatMap(parseLogEntry) : [];
-      return { schemaVersion: 2, days: dayKey ? normaliseDays([{ dayKey, logs }]) : [], planned, targets, customFoods, weights };
+      return { schemaVersion: 2, days: dayKey ? normaliseDays([{ dayKey, logs }]) : [], planned, targets, customFoods, userMeals, weights };
     }
 
     const days = Array.isArray(value.days)
@@ -285,7 +330,7 @@ export function parseSavedNutritionState(raw: string | null): SavedNutritionStat
         return [{ dayKey: candidate.dayKey, logs: Array.isArray(candidate.logs) ? candidate.logs.flatMap(parseLogEntry) : [] }];
       })
       : [];
-    return { schemaVersion: 2, days: normaliseDays(days), planned, targets, customFoods, weights };
+    return { schemaVersion: 2, days: normaliseDays(days), planned, targets, customFoods, userMeals, weights };
   } catch {
     return emptyNutritionState();
   }
