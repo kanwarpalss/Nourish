@@ -143,6 +143,18 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
   assert.match(page, /Local import needed/);
   assert.match(page, /cardiq-food-import\.json/);
   assert.match(page, /From cardIQ/);
+
+  // Plan reads the live catalogue and can create/correct foods itself. Both
+  // areas write to the same customFoods list, so neither can drift from the
+  // other, and there is exactly one food form rather than two rule sets.
+  assert.match(page, /<ItemsView planned=\{planned\} catalog=\{foodCatalog\}/, "Plan · Items must read the live catalogue, not the frozen researched list");
+  assert.doesNotMatch(page, /const matched = foods\.filter/, "Plan · Items must not filter the module-level researched array");
+  assert.match(page, /＋ New item/, "Plan · Items must be able to add a food");
+  assert.match(page, /onEdit=\{\(food\) => setPlanFoodEditor/, "Plan · Items cards must open the editor");
+  assert.match(page, /function PlanFoodEditor/);
+  assert.match(page, /<FoodDetailsEditor/, "Plan must reuse the logger's editor rather than defining a second form");
+  assert.equal(page.match(/function FoodDetailsEditor/g)?.length, 1, "there must be exactly one food-details form");
+  assert.match(page, /forkFoodForEdit\(initial, /, "editing a researched food must fork a personal copy");
   assert.match(css, /@media \(max-width: 700px\)/);
   assert.match(css, /prefers-reduced-motion: reduce/);
   assert.match(css, /--lime:\s*#b9ed55/);

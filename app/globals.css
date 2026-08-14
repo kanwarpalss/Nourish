@@ -815,3 +815,14 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .toast-undo { margin-left: 10px; padding: 4px 11px; border: 0; border-radius: 99px; color: var(--ink); background: var(--lime); font-size: 9px; font-weight: 800; cursor: pointer; }
 .photo-field { display: grid; gap: 5px; margin-top: 10px; }
 .photo-field input { height: 38px; padding: 0 11px; border: 0; border-radius: 10px; background: white; }
+
+/* Plan-side food creation and editing. Reuses the logger's FoodDetailsEditor,
+   which is styled for a dark card, so the dialog body keeps that surface. */
+.plan-food-dialog { width: min(560px, 100%); }
+.plan-food-dialog-body { overflow-y: auto; margin: 0 22px 22px; padding: 20px; border-radius: 19px; }
+.plan-food-dialog-body .food-details-editor > .details-heading { display: none; }
+.heading-buttons { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.empty-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.owned-tag { display: inline-flex; align-items: center; padding: 4px 8px; border-radius: 999px; color: var(--forest); background: #e1ead7; font-size: 8px; font-weight: 850; letter-spacing: 0.08em; text-transform: uppercase; }
+.owned-tag.ready { color: #704520; background: var(--cream); }
+.item-card-actions .text-button { margin-left: auto; }

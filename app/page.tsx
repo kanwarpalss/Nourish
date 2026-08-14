@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { isCardIqFoodImport, refineCardIqImport, type CardIqFoodImport } from "./cardiq-food";
 import { FoodIcon, foodIconKey } from "./food-icon";
-import { addToTray, cloneUserMeal, createCustomFood, createUserMeal, forkFoodForEdit, getSingleItemKind, mergeFoodCatalog, singleItemKindLabel, upsertUserMeal, userMealToNutritionItem, userMealTotals, type SingleItemKind, type TrayItem, type UserMeal } from "./logging-session";
+import { addToTray, cloneUserMeal, createCustomFood, createUserMeal, forkFoodForEdit, getSingleItemKind, isOwnedFood, mergeFoodCatalog, singleItemKindLabel, upsertUserMeal, userMealToNutritionItem, userMealTotals, type SingleItemKind, type TrayItem, type UserMeal } from "./logging-session";
 import { defaultCompositeItems, findComponentFood } from "./composite-foods";
 import { emptyNutritionState, getWeightTrendPoints, isSafeImageUrl, LEGACY_NUTRITION_STORAGE_KEYS, LOCAL_NUTRITION_STORAGE_KEY, logsForDay, MAX_STORED_DAYS, parseSavedNutritionState, stringifySavedNutritionState, upsertWeightEntry, withDayLogs, wouldDropOldestDay, type SavedLogEntry, type SavedNutritionState, type WeightEntry } from "./local-nutrition-state";
 import { DEFAULT_TARGETS, loggableMeals, recentDayKeys, resolveLoggedFood, summariseHistory, summariseTrend, type DaySummary } from "./day-history";
@@ -588,32 +588,76 @@ function RecipeCard({ recipe, onOpen, onPlan }: { recipe: Recipe; onOpen: (recip
   );
 }
 
-function ItemsView({ planned, onPlan, onRemove }: { planned: PlannedEntry[]; onPlan: (food: Food) => void; onRemove: (index: number) => void }) {
+/**
+ * The same FoodDetailsEditor the logger uses, lifted into its own dialog so Plan
+ * can create and correct foods without going through Track. One editing surface,
+ * two doors into it — a second form would be a second set of validation rules.
+ */
+function PlanFoodEditor({ initial, onClose, onSave }: { initial: Food | null; onClose: () => void; onSave: (food: Food, isNew: boolean) => void }) {
+  const creating = initial === null;
+  // Editing a researched food forks a personal copy rather than rewriting the
+  // catalogue entry, which is what forkFoodForEdit already guarantees for Track.
+  const [draft, setDraft] = useState<Food>(() => (initial ? forkFoodForEdit(initial, `${Date.now()}`) : blankFood()));
+  return (
+    <div className="dialog-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}>
+      <section className="food-dialog plan-food-dialog" role="dialog" aria-modal="true" aria-labelledby="plan-food-editor-title">
+        <header>
+          <div><span className="eyebrow">Plan · Items</span><h2 id="plan-food-editor-title">{creating ? "Add a Single Item" : "Edit Single Item"}</h2></div>
+          <button className="close-button" onClick={onClose} aria-label={creating ? "Close new item" : "Close item editor"}>×</button>
+        </header>
+        <div className="plan-food-dialog-body quantity-editor dark-card">
+          <FoodDetailsEditor
+            draft={draft}
+            setDraft={setDraft}
+            draftIsNew={creating}
+            saveToLibrary
+            setSaveToLibrary={() => undefined}
+            onCancel={onClose}
+            onSave={() => { if (isFoodDetailsValid(draft)) onSave(draft, creating); }}
+            submitLabel={creating ? "Add to my items" : "Save changes"}
+          />
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ItemsView({ planned, catalog, onPlan, onRemove, onCreate, onEdit }: {
+  planned: PlannedEntry[];
+  catalog: Food[];
+  onPlan: (food: Food) => void;
+  onRemove: (index: number) => void;
+  onCreate: () => void;
+  onEdit: (food: Food) => void;
+}) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("All");
   const [sortByFullness, setSortByFullness] = useState(false);
   const query = search.trim().toLowerCase();
-  const matched = foods.filter((food) => (filter === "All" || food.category === filter) && (!query || [food.name, food.brand, ...food.aliases].filter(Boolean).join(" ").toLowerCase().includes(query)));
+  // The live catalogue, not the frozen researched list: anything KP adds while
+  // logging has to be here too, or Plan and Track disagree about what exists.
+  const singleItems = catalog.filter((food) => food.category !== "Meal" && food.category !== "Composite");
+  const matched = singleItems.filter((food) => (filter === "All" || food.category === filter) && (!query || [food.name, food.brand, ...food.aliases].filter(Boolean).join(" ").toLowerCase().includes(query)));
   const shown = sortByFullness ? [...matched].sort((a, b) => estimateSatiety(b) - estimateSatiety(a) || b.protein - a.protein) : matched;
   return (
     <>
-      <SectionHeading eyebrow="Plan · Items" title="Start with the exact thing" description="Search products you buy and raw ingredients you can find around Bengaluru. Every result keeps its serving basis and evidence strength." action={<span className="prototype-badge">{foods.length} researched items</span>} />
+      <SectionHeading eyebrow="Plan · Items" title="Start with the exact thing" description="Search products you buy and raw ingredients you can find around Bengaluru. Anything missing you can add here, and it is ready to log in Track straight away." action={<div className="heading-buttons"><span className="prototype-badge">{singleItems.length} items</span><button className="button primary" onClick={onCreate}>＋ New item</button></div>} />
       <PlanSummary entries={planned} onRemove={onRemove} />
       <section className="item-search-hero surface-card">
         <div className="catalogue-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} aria-label="Search products and ingredients" placeholder="Search Nandini milk, chia, chicken, paneer…" /></div>
         <div className="filter-row" aria-label="Item filters">
-          {["All", "Ordered", "Product", "Ingredient"].map((item) => <button className={`chip ${filter === item ? "active" : ""}`} key={item} onClick={() => setFilter(item)} aria-pressed={filter === item}>{item}</button>)}
+          {(["All", "Ordered", "Product", "Ingredient", "OrderedFood"] as const).map((item) => <button className={`chip ${filter === item ? "active" : ""}`} key={item} onClick={() => setFilter(item)} aria-pressed={filter === item}>{item === "OrderedFood" ? "Ready meals" : item}</button>)}
           <button className={`chip ${sortByFullness ? "active" : ""}`} onClick={() => setSortByFullness((value) => !value)} aria-pressed={sortByFullness}>Most filling first</button>
         </div>
       </section>
       <div className="item-catalogue-grid">{shown.map((food) => <article className="item-card surface-card" key={food.id}>
-        <div className="item-card-head"><span className={`trust-mark ${food.source.trust === "Label mirror" ? "review" : ""}`}>{food.source.trust}</span><small>{food.availability}</small></div>
+        <div className="item-card-head"><span className={`trust-mark ${food.source.trust === "Label mirror" ? "review" : ""}`}>{food.source.trust}</span>{isOwnedFood(food) ? <span className="owned-tag">Yours</span> : null}{food.category === "OrderedFood" ? <span className="owned-tag ready">Ready meal</span> : null}<small>{food.availability}</small></div>
         <div><span className="item-brand">{food.brand ?? food.category}</span><h2>{food.name}</h2><p>Per {food.amount} {food.unit}</p></div>
         <div className="item-nutrition"><strong>{Math.round(food.calories)}<small> kcal</small></strong><span>{food.protein}g <small>protein</small></span><span>{food.carbs}g <small>carbs</small></span><span>{food.fat}g <small>fat</small></span><span>{food.fiber}g <small>fibre</small></span></div>
         <div className="fullness-line" title="Estimated from protein, fibre and energy density"><i className="fullness-track"><span style={{ width: `${estimateSatiety(food)}%` }} /></i><small>{satietyLabel(estimateSatiety(food))} · est. {estimateSatiety(food)}/100</small></div>
-        <div className="item-card-actions"><a href={food.source.url} target="_blank" rel="noreferrer">Source ↗</a><button className="button primary" onClick={() => onPlan(food)}>＋ Plan this</button></div>
+        <div className="item-card-actions">{food.source.url ? <a href={food.source.url} target="_blank" rel="noreferrer">Source ↗</a> : <span className="personal-source">{food.source.label}</span>}<button className="text-button" onClick={() => onEdit(food)}>Edit</button><button className="button primary" onClick={() => onPlan(food)}>＋ Plan this</button></div>
       </article>)}</div>
-      {shown.length === 0 ? <div className="empty-state"><strong>No researched item matches yet.</strong><span>Try a broader name; exact cardIQ products arrive in the purchase-import phase.</span><button className="button secondary" onClick={() => { setSearch(""); setFilter("All"); }}>Clear search</button></div> : null}
+      {shown.length === 0 ? <div className="empty-state"><strong>No item matches yet.</strong><span>Try a broader name, or add the exact thing in your kitchen.</span><div className="empty-actions"><button className="button secondary" onClick={() => { setSearch(""); setFilter("All"); }}>Clear search</button><button className="button primary" onClick={onCreate}>＋ New item</button></div></div> : null}
       <div className="research-footnote"><span>Research base</span><a href={SOURCE_LINKS.ifct} target="_blank" rel="noreferrer">ICMR–NIN IFCT</a><a href={SOURCE_LINKS.usda} target="_blank" rel="noreferrer">USDA FoodData Central</a><a href={SOURCE_LINKS.fssai} target="_blank" rel="noreferrer">FSSAI labelling</a></div>
     </>
   );
@@ -925,6 +969,8 @@ export default function Home() {
   const [foodDialogMealSelection, setFoodDialogMealSelection] = useState<UserMeal | null>(null);
   const [editingFoodIndex, setEditingFoodIndex] = useState<number | null>(null);
   const [recipe, setRecipe] = useState<Recipe | null>(null);
+  /** Non-null while Plan’s food editor is open; `initial` null means creating. */
+  const [planFoodEditor, setPlanFoodEditor] = useState<{ initial: Food | null } | null>(null);
   const [toast, setToast] = useState("");
   const toastTimer = useRef<number | null>(null);
   const [storageLoaded, setStorageLoaded] = useState(false);
@@ -1039,6 +1085,20 @@ export default function Home() {
     setSaved((current) => ({ ...current, customFoods: [...current.customFoods.filter((candidate) => candidate.id !== food.id), food] }));
     notify(`${foodLabel(food)} saved to My Foods`);
   };
+  /**
+   * Plan's create/edit lands in the same customFoods list Track writes to, so a
+   * food added while planning is immediately loggable and an edit made while
+   * logging shows up in Plan.
+   */
+  const savePlanFood = (draft: Food, isNew: boolean) => {
+    const food = isNew ? createCustomFood({ ...draft, category: draft.category, imageUrl: draft.imageUrl }, `${Date.now()}`) : draft;
+    if (!food) {
+      notify("That item needs a name, a serving size, and non-negative macros");
+      return;
+    }
+    saveCustomFood(food);
+    setPlanFoodEditor(null);
+  };
   const saveWeight = (entry: WeightEntry) => {
     setSaved((current) => ({ ...current, weights: upsertWeightEntry(current.weights, entry) }));
     notify(`Weight saved · ${entry.kg.toFixed(1)} kg`);
@@ -1132,7 +1192,7 @@ export default function Home() {
       if (trackView === "trends") return <TrendsView history={history} targets={targets} />;
       return <PurchasesView cardIqImport={cardIqImport} onAdd={(food) => openFoodLogger(food)} />;
     }
-    if (planView === "items") return <ItemsView planned={planned} onPlan={addItemToPlan} onRemove={removeFromPlan} />;
+    if (planView === "items") return <ItemsView planned={planned} catalog={foodCatalog} onPlan={addItemToPlan} onRemove={removeFromPlan} onCreate={() => setPlanFoodEditor({ initial: null })} onEdit={(food) => setPlanFoodEditor({ initial: food })} />;
     return <MealsView onRecipe={setRecipe} planned={planned} onPlan={addMealToPlan} onRemove={removeFromPlan} />;
   };
 
@@ -1153,6 +1213,7 @@ export default function Home() {
       {area === "track" ? <button className="mobile-log-button" onClick={() => openFoodLogger()}>＋ Log food</button> : null}
       {foodDialog ? <FoodDialog initialFood={foodDialogSelection} initialMeal={foodDialogMealSelection} editing={editingFoodIndex !== null} catalog={foodCatalog} meals={logMeals} dayKey={clock.dayKey} onClose={() => { setFoodDialog(false); setFoodDialogSelection(null); setFoodDialogMealSelection(null); setEditingFoodIndex(null); }} onAdd={addFood} onAddMeal={addMeal} onSaveFood={saveCustomFood} onSaveMeal={saveUserMeal} /> : null}
       <RecipeDrawer recipe={recipe} onClose={() => setRecipe(null)} onPlan={addMealToPlan} />
+      {planFoodEditor ? <PlanFoodEditor initial={planFoodEditor.initial} onClose={() => setPlanFoodEditor(null)} onSave={savePlanFood} /> : null}
       <div className={`toast ${toast ? "visible" : ""}`} role="status" aria-live="polite"><i>✓</i><span>{toast}</span>{toast.includes("tap Undo") ? <button className="toast-undo" onClick={undoDelete}>Undo</button> : null}</div>
     </div>
   );
