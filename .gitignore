@@ -44,3 +44,6 @@ next-env.d.ts
 
 # Personal cardIQ purchase history is local-only and never committed.
 /public/cardiq-food-import.json
+
+# release snapshots (contain the gitignored cardIQ import — never commit)
+/releases

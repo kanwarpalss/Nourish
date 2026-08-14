@@ -279,6 +279,7 @@ The local cardIQ importer reads the last year of deduplicated orders and writes 
 | Item | State | Resolution point |
 |---|---|---|
 | Permanent product name | Open | Confirm during design review |
+| Live app froze — page rendered, nothing clickable | Fixed 2026-08-14 | The service served `dist/`, which every build and test run rewrites with new asset hashes, deleting the files the running page named. Removed structurally by release snapshots (§10.1) plus an honest `npm run health`; regression-tested in `tests/health-check.test.mjs` |
 | Exact calorie/macro target and personal dietary constraints | Sample and clearly labelled | Onboarding design before persistence |
 | Nandini and Epigamia seed entries rely on current label mirrors | Needs exact-pack confirmation | Reconcile barcode/variant and pack photo during cardIQ import before promotion |
 | Dependency audit: 2 high-severity advisories remain, down from 16 | Verified unreachable | `image-size`@2.0.2 (pinned exactly by every vinext release including its newest 1.0.0-beta.5 — there is no patched image-size release as of 2026-08-10) allows a DoS via malicious ICNS/JXL/HEIF parsing, reachable only through `@vercel/og` image generation. Confirmed by grep that Nourish's own code never calls it. Revisit when image-size publishes a fix. |
@@ -384,6 +385,43 @@ Target deployment is the always-on Mac Mini, not a public cloud product. The nam
 - Monitoring: health endpoint, process restart, disk-space check, backup-age alert, and clear plain-English status.
 - Updates: tested locally, full suite green, backup recorded, then controlled restart. Git push alone is not a deploy.
 
+### §10.1 Release snapshots — the live app never serves `dist/`
+
+Adopted 2026-08-14 after the running service spent a day serving a page whose
+JavaScript had been deleted underneath it. The page rendered and nothing was
+clickable; `npm run health` reported green throughout.
+
+Root cause: `npm test` begins with `npm run build`, and every build rewrites
+`dist/` with freshly hashed filenames and deletes the previous ones. While the
+service served `dist/` directly, **running the test suite silently broke the
+live app**. `launchd`'s `KeepAlive` never noticed, because the process had not
+crashed — it was serving a stale in-memory page quite happily.
+
+The service now serves `releases/current`, a frozen snapshot that only
+`npm run release` ever changes. Builds and tests write to `dist/`, which the
+running app no longer reads. Verified by deleting `dist/` outright while the
+app stayed healthy.
+
+| Command | Purpose |
+|---|---|
+| `npm run release` | The only sanctioned deploy: build → snapshot → swap → restart → verify → auto-rollback on failure. `-- --no-build` publishes the current `dist/`. |
+| `npm run serve` | What `launchd` runs. Serves `releases/current`; refuses to start if no release exists. |
+| `npm run health` | Fetches the page, then every asset it names (plus one level of lazy chunks). Missing or empty file = red. |
+
+- `releases/` is **gitignored** — snapshots contain the gitignored cardIQ import
+  (invariant 5).
+- Snapshots share `node_modules` with the repo by symlink; only `dist/`,
+  `package.json`, `next.config.ts` and `.env*` are copied.
+- The five most recent releases are retained so rollback is always possible.
+- Rollback is automatic and drill-tested: publishing a deliberately broken
+  release restored the previous one without intervention.
+- `npm run health` must never be weakened back into a bare reachability check.
+  Its failure-injection tests live in `tests/health-check.test.mjs` (TEST-12);
+  the old `curl / >/dev/null` check passes the very test that reproduces this
+  bug.
+
 **Operational state at 2026-08-12 wrap-up:** the merged production build and 66 automated checks plus lint passed. Port 4317 was already occupied by an older Nourish process; browser inspection reached it but reported a stale hashed client asset. No restart was performed because KP authorised merge/push/wrap-up, not deployment.
+
+**Operational state at 2026-08-14:** the stale-asset failure above recurred and was diagnosed to root cause, then removed structurally by §10.1 rather than by another restart. The `com.kanwar.nourish` LaunchAgent was reinstalled to run `npm run serve`, 108 automated checks plus lint passed, and the live app was confirmed interactive tab-by-tab in a real browser.
 
 Runbook once the Mac Mini is online: run the shared `nourish` launcher once to clone/pull GitHub `main`, then copy the checked-in LaunchAgent into `~/Library/LaunchAgents`, bootstrap it, and kickstart it. Terminal commands `nourish` and `health` are defined in the shared iCloud aliases file; on every synced Mac they pull the latest `main`, then open the local fixed-port copy. The Mac Mini was offline when this configuration was prepared on 2026-08-09, so the final always-on installation remains pending.

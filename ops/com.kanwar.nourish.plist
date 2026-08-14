@@ -9,7 +9,7 @@
     <string>/usr/bin/env</string>
     <string>npm</string>
     <string>run</string>
-    <string>start</string>
+    <string>serve</string>
   </array>
   <key>WorkingDirectory</key>
   <string>/Users/kanwar/Code/Nourish</string>
