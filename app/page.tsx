@@ -953,8 +953,14 @@ export default function Home() {
       const raw = window.localStorage.getItem(LOCAL_NUTRITION_STORAGE_KEY)
         ?? LEGACY_NUTRITION_STORAGE_KEYS.map((key) => window.localStorage.getItem(key)).find((value) => value !== null)
         ?? null;
-      setSaved(parseSavedNutritionState(raw));
+      const restored = parseSavedNutritionState(raw);
+      setSaved(restored);
       setStorageLoaded(true);
+      // Discarding a damaged record is right — guessing at it would corrupt
+      // totals — but doing it silently is not. KP gets told his diary shrank.
+      if (restored.rejected > 0) {
+        window.setTimeout(() => notify(`${restored.rejected} damaged saved ${restored.rejected === 1 ? "record" : "records"} could not be restored`, 8000), 0);
+      }
     }, 0);
     return () => window.clearTimeout(timer);
   }, []);

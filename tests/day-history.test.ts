@@ -383,3 +383,30 @@ test("weight logs validate bounds, replace same-day entries, sort, and chart saf
   assert.ok(points.every((point) => Number.isFinite(point.x) && Number.isFinite(point.y)));
   assert.deepEqual(getWeightTrendPoints([], 300, 92), []);
 });
+
+test("a load that discards damaged records reports how many, instead of shrinking the diary in silence", () => {
+  const good = nutritionItems[0];
+  const parsed = parseSavedNutritionState(JSON.stringify({
+    schemaVersion: 2,
+    days: [{ dayKey: "2026-08-13", logs: [{ foodId: good.id, amount: 100 }, { foodId: "", amount: 5 }] }, { dayKey: "not-a-day", logs: [] }],
+    planned: [{ id: good.id, kind: "food" }, { id: "", kind: "food" }],
+    customFoods: [{ ...good, id: "keeper" }, { ...good, id: "gone", brand: "" }],
+    userMeals: [{ id: "", name: "broken", createdAt: "2026-08-13T00:00:00.000Z", components: [] }],
+    weights: [{ date: "2026-08-13", kg: 72 }, { date: "not-a-date", kg: 72 }],
+  }));
+
+  // One damaged record in every section, each dropped rather than guessed at.
+  assert.equal(parsed.customFoods.length, 1);
+  assert.equal(parsed.planned.length, 1);
+  assert.equal(parsed.weights.length, 1);
+  assert.ok(parsed.rejected >= 5, `every discarded record must be counted, got ${parsed.rejected}`);
+  assert.equal(parsed.days.length, 1, "the malformed day key is dropped");
+
+  // The count describes one load and must never be written back into storage.
+  const reloaded = parseSavedNutritionState(stringifySavedNutritionState(parsed));
+  assert.equal(reloaded.rejected, 0, "a clean reload reports nothing");
+  assert.equal(JSON.parse(stringifySavedNutritionState(parsed)).rejected, undefined);
+
+  // Failure injection: intact data must not be reported as damaged.
+  assert.equal(parseSavedNutritionState(stringifySavedNutritionState(emptyNutritionState())).rejected, 0);
+});

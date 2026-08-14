@@ -71,7 +71,8 @@ export type WeightEntry = { date: string; kg: number };
  * over the same key, so the diary was destroyed every midnight. That also made a truthful
  * History or Trends view impossible, because no history was ever retained.
  */
-export type SavedNutritionState = {
+/** Exactly what is written to storage. */
+export type PersistedNutritionState = {
   schemaVersion: 2;
   days: SavedDay[];
   planned: SavedPlanEntry[];
@@ -82,9 +83,18 @@ export type SavedNutritionState = {
   weights: WeightEntry[];
 };
 
+export type SavedNutritionState = PersistedNutritionState & {
+  /**
+   * How many stored records this load discarded as malformed. Dropping a damaged
+   * record is right — guessing at it would corrupt totals — but doing it in
+   * silence is not, so Today reports the count. Never written back to storage.
+   */
+  rejected: number;
+};
+
 const DAY_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
-export const emptyNutritionState = (): SavedNutritionState => ({ schemaVersion: 2, days: [], planned: [], targets: null, customFoods: [], userMeals: [], weights: [] });
+export const emptyNutritionState = (): SavedNutritionState => ({ schemaVersion: 2, days: [], planned: [], targets: null, customFoods: [], userMeals: [], weights: [], rejected: 0 });
 
 const units = new Set<NutritionItem["unit"]>(["g", "ml", "scoop", "pack", "piece", "serving"]);
 const categories = new Set<NutritionItem["category"]>(["Ordered", "Product", "Ingredient", "OrderedFood", "Meal", "Composite"]);
@@ -304,6 +314,15 @@ function normaliseDays(days: SavedDay[]): SavedDay[] {
   return [...byKey.values()].sort((a, b) => b.dayKey.localeCompare(a.dayKey)).slice(0, MAX_STORED_DAYS);
 }
 
+/**
+ * How many stored records a parse threw away. Counted by comparing what came in
+ * against what survived, so no parse helper needs a mutable counter threaded
+ * through it. Never persisted — it describes one load, not the diary.
+ */
+function countDropped(input: unknown, kept: number) {
+  return Array.isArray(input) ? Math.max(0, input.length - kept) : 0;
+}
+
 export function parseSavedNutritionState(raw: string | null): SavedNutritionState {
   if (!raw) return emptyNutritionState();
 
@@ -332,12 +351,27 @@ export function parseSavedNutritionState(raw: string | null): SavedNutritionStat
       weightByDate.set(candidate.date, { date: candidate.date, kg: Math.round((candidate.kg as number) * 10) / 10 });
     }
     const weights = [...weightByDate.values()].sort((left, right) => left.date.localeCompare(right.date));
+    // Duplicate ids collapse legitimately, so custom foods and meals are counted
+    // against the parsed list rather than the deduplicated one.
+    const droppedSoFar = countDropped(value.planned, planned.length)
+      + countDropped(value.customFoods, parsedCustomFoods.length)
+      + countDropped(value.userMeals, parsedUserMeals.length)
+      + countDropped(value.weights, weightByDate.size);
 
     // Schema 1 held one day inline. Migrate it rather than discarding the diary.
     if (value.schemaVersion !== 2) {
       const dayKey = typeof value.dayKey === "string" && DAY_KEY_PATTERN.test(value.dayKey) ? value.dayKey : null;
       const logs = Array.isArray(value.logs) ? value.logs.flatMap(parseLogEntry) : [];
-      return { schemaVersion: 2, days: dayKey ? normaliseDays([{ dayKey, logs }]) : [], planned, targets, customFoods, userMeals, weights };
+      return {
+        schemaVersion: 2,
+        days: dayKey ? normaliseDays([{ dayKey, logs }]) : [],
+        planned,
+        targets,
+        customFoods,
+        userMeals,
+        weights,
+        rejected: droppedSoFar + countDropped(value.logs, logs.length),
+      };
     }
 
     const days = Array.isArray(value.days)
@@ -348,14 +382,29 @@ export function parseSavedNutritionState(raw: string | null): SavedNutritionStat
         return [{ dayKey: candidate.dayKey, logs: Array.isArray(candidate.logs) ? candidate.logs.flatMap(parseLogEntry) : [] }];
       })
       : [];
-    return { schemaVersion: 2, days: normaliseDays(days), planned, targets, customFoods, userMeals, weights };
+    const keptLogs = days.reduce((sum, day) => sum + day.logs.length, 0);
+    const storedLogs = Array.isArray(value.days)
+      ? value.days.reduce((sum, entry) => sum + (Array.isArray((entry as { logs?: unknown })?.logs) ? ((entry as { logs: unknown[] }).logs).length : 0), 0)
+      : 0;
+    return {
+      schemaVersion: 2,
+      days: normaliseDays(days),
+      planned,
+      targets,
+      customFoods,
+      userMeals,
+      weights,
+      rejected: droppedSoFar + countDropped(value.days, days.length) + Math.max(0, storedLogs - keptLogs),
+    };
   } catch {
     return emptyNutritionState();
   }
 }
 
-export function stringifySavedNutritionState(state: SavedNutritionState) {
-  return JSON.stringify(state);
+export function stringifySavedNutritionState(state: PersistedNutritionState) {
+  // `rejected` describes a load, not the diary, so the write type excludes it.
+  const { schemaVersion, days, planned, targets, customFoods, userMeals, weights } = state;
+  return JSON.stringify({ schemaVersion, days, planned, targets, customFoods, userMeals, weights });
 }
 
 export function logsForDay(state: SavedNutritionState, dayKey: string): SavedLogEntry[] {
