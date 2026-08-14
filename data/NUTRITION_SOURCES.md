@@ -99,6 +99,50 @@ The last two are a different kind of entry from everything above: a real publish
 
 Anything not listed here stays **needs label** with quick-add disabled. A missing number is recoverable; a wrong one silently corrupts every total it touches.
 
+### Branded cereals and pulses (2026-08-14)
+
+Poha, vermicelli and chana were previously only in the catalogue as generic
+reference grains, but they are bought by brand and every such pack carries a
+printed panel. Three brands entered, plus one ready-to-eat pouch.
+
+| Product | Basis | Source strength |
+|---|---|---|
+| Fortune Poha, thick | 361.3 kcal / 100 g dry | Open Food Facts, barcode 8906008812817, label photo |
+| Bambino Long Cut Vermicelli | 347 kcal / 100 g dry | Manufacturer's own product page — Official label |
+| 24 Mantra Organic Kabuli Chana | 342.9 kcal / 100 g dry | Open Food Facts, barcode 8904083512219, label photo |
+| MTR Instant Poha | 149 kcal / 60 g pouch | Open Food Facts, barcode 8901042967325, label photo |
+
+Two deliberate choices:
+
+- **Photos are committed to `public/food-images/`, not hot-linked.** At roughly
+  8–10 KB each a thumbnail costs almost nothing in Git, and it cannot break when
+  a retailer reorganises its CDN. The 61 hot-linked photos already in the
+  catalogue are a standing risk worth migrating the same way.
+- **Bambino's pack declares no dietary fibre**, so the entry claims none rather
+  than borrowing a plausible figure from another semolina product. Its source
+  label says so where KP can see it.
+
+Everything is **dry weight**. Cooked poha, chana and vermicelli roughly triple,
+so a serving conversion is attached where a natural portion exists rather than
+leaving KP to convert in his head.
+
+#### Rejected in this pass, and why
+
+- **Tata Sampann Unpolished Toor Dal** — the found panel (364 kcal against 18.2 g
+  protein, 64.3 g carbohydrate, 1.3 g fat, 11.6 g fibre) computes to 318.5 kcal
+  under the general Atwater calculation, a 12.5% disagreement. That clears the
+  loose bound for a raw reference food but fails the packaged bound, which is the
+  tier a brand's own pack arrives in — the same reasoning that rejected the
+  Yogabar shake. The dal is a real product KP buys and it does have a panel;
+  this particular transcription is simply not trustworthy enough to enter, and
+  it should be re-sourced from the pack in hand.
+- **Open Food Facts' Tata Sampann poha listing** — declares 722 kcal and 162.8 g
+  of carbohydrate per 100 g. Self-consistent under 4/4/9, so the energy
+  cross-check accepts it, but 100 g of food cannot contain 162.8 g of anything;
+  the values describe a 200 g serving. `scripts/audit-open-food-facts.ts` now
+  rejects any candidate whose macros outweigh their own basis, which is the check
+  that catches this class.
+
 ## Recipe method
 
 The meals in `app/nutrition-data.ts` are original recipe assemblies, not nutrition copied from recipe websites. Each ingredient has a structured food ID and specified edible weight. The app recalculates every displayed meal total from those records whenever it starts. Cooking oil is counted explicitly, and an alternative ingredient is not silently treated as nutritionally identical.
