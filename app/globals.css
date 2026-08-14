@@ -826,3 +826,38 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .owned-tag { display: inline-flex; align-items: center; padding: 4px 8px; border-radius: 999px; color: var(--forest); background: #e1ead7; font-size: 8px; font-weight: 850; letter-spacing: 0.08em; text-transform: uppercase; }
 .owned-tag.ready { color: #704520; background: var(--cream); }
 .item-card-actions .text-button { margin-left: auto; }
+
+/* Plan-side meal building, and KP's own meals shown beside the researched ones. */
+.plan-meal-dialog { width: min(620px, 100%); }
+.plan-meal-body { overflow-y: auto; display: grid; gap: 13px; padding: 20px 26px 26px; }
+.meal-name-field { display: grid; gap: 5px; }
+.meal-name-field > span { color: var(--muted); font-size: 9px; font-weight: 750; }
+.meal-name-field input { height: 42px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 11px; background: white; font-size: 13px; font-weight: 650; }
+.plan-meal-body .component-search { display: flex; gap: 9px; align-items: center; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 12px; background: white; }
+.plan-meal-body .component-search span { color: var(--muted); }
+.plan-meal-body .component-search input { width: 100%; height: 42px; border: 0; outline: 0; background: transparent; font-size: 12px; font-weight: 650; }
+.plan-meal-body .component-choices { display: grid; gap: 4px; padding: 6px; border: 1px solid var(--line); border-radius: 12px; background: rgb(255 255 255 / 0.7); }
+.plan-meal-body .component-choices button { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; padding: 9px 10px; border: 0; border-radius: 9px; background: transparent; text-align: left; cursor: pointer; }
+.plan-meal-body .component-choices button:hover { background: #e7ecdf; }
+.plan-meal-body .component-choices span { font-size: 11px; font-weight: 700; }
+.plan-meal-body .component-choices small { color: var(--muted); font-size: 9px; }
+.plan-meal-body .component-choices b { color: var(--forest); }
+.plan-meal-body .meal-component-editor { display: grid; gap: 6px; }
+.plan-meal-body .meal-component-row { display: grid; grid-template-columns: 1fr auto auto; gap: 9px; align-items: center; padding: 9px 10px; border: 1px solid var(--line); border-radius: 11px; background: white; }
+.plan-meal-body .meal-component-row span { display: grid; gap: 2px; min-width: 0; }
+.plan-meal-body .meal-component-row strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.plan-meal-body .meal-component-row small { color: var(--muted); font-size: 9px; }
+.plan-meal-body .meal-component-row label { display: flex; gap: 4px; align-items: center; }
+.plan-meal-body .meal-component-row input { width: 72px; height: 32px; padding: 0 7px; border: 1px solid var(--line-strong); border-radius: 8px; font-size: 11px; font-weight: 700; }
+.plan-meal-body .meal-component-row b { color: var(--muted); font-size: 9px; }
+.plan-meal-body .meal-component-row > button { width: 28px; height: 28px; border: 0; border-radius: 8px; color: var(--muted); background: #eceee7; cursor: pointer; }
+.plan-meal-body .meal-total { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; padding: 12px 14px; border-radius: 12px; background: #e7ecdf; }
+.plan-meal-body .meal-total strong { font-size: 19px; }
+.plan-meal-body .meal-total span { color: var(--muted); font-size: 10px; }
+.editor-hint { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.editor-hint.warn { color: #8c3f22; font-weight: 700; }
+.own-meals { max-width: 1440px; margin: 0 auto 26px; }
+.own-meal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; margin-top: 14px; }
+.own-meal-card { display: grid; gap: 13px; padding: 19px; }
+.own-meal-card h3 { margin: 0; font-size: 17px; letter-spacing: -0.03em; }
+.prepared-note { color: var(--muted); font-size: 9px; font-weight: 700; }

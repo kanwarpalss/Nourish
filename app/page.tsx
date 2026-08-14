@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { isCardIqFoodImport, refineCardIqImport, type CardIqFoodImport } from "./cardiq-food";
 import { FoodIcon, foodIconKey } from "./food-icon";
-import { addToTray, cloneUserMeal, createCustomFood, createUserMeal, forkFoodForEdit, getSingleItemKind, isOwnedFood, mergeFoodCatalog, singleItemKindLabel, upsertUserMeal, userMealToNutritionItem, userMealTotals, type SingleItemKind, type TrayItem, type UserMeal } from "./logging-session";
+import { addToTray, cloneUserMeal, createCustomFood, createUserMeal, forkFoodForEdit, getSingleItemKind, isOwnedFood, isUserMealNameValid, MAX_MEAL_NAME_LENGTH, mergeFoodCatalog, singleItemKindLabel, upsertUserMeal, userMealToNutritionItem, userMealTotals, type SingleItemKind, type TrayItem, type UserMeal } from "./logging-session";
 import { defaultCompositeItems, findComponentFood } from "./composite-foods";
 import { emptyNutritionState, getWeightTrendPoints, isSafeImageUrl, LEGACY_NUTRITION_STORAGE_KEYS, LOCAL_NUTRITION_STORAGE_KEY, logsForDay, MAX_STORED_DAYS, parseSavedNutritionState, stringifySavedNutritionState, upsertWeightEntry, withDayLogs, wouldDropOldestDay, type SavedLogEntry, type SavedNutritionState, type WeightEntry } from "./local-nutrition-state";
 import { DEFAULT_TARGETS, loggableMeals, recentDayKeys, resolveLoggedFood, summariseHistory, summariseTrend, type DaySummary } from "./day-history";
@@ -695,19 +695,38 @@ function TargetFilters({ target, onChange, onClear }: { target: Record<"maxCalor
   );
 }
 
-function MealsView({ onRecipe, planned, onPlan, onRemove }: { onRecipe: (recipe: Recipe) => void; planned: PlannedEntry[]; onPlan: (recipe: Recipe) => void; onRemove: (index: number) => void }) {
+function MealsView({ onRecipe, planned, catalog, userMeals, onPlan, onPlanFood, onRemove, onCreateMeal, onEditMeal }: {
+  onRecipe: (recipe: Recipe) => void;
+  planned: PlannedEntry[];
+  catalog: Food[];
+  userMeals: UserMeal[];
+  onPlan: (recipe: Recipe) => void;
+  onPlanFood: (food: Food) => void;
+  onRemove: (index: number) => void;
+  onCreateMeal: () => void;
+  onEditMeal: (meal: UserMeal) => void;
+}) {
   const [filter, setFilter] = useState("All");
   const [search, setSearch] = useState("");
   const [target, setTarget] = useState({ maxCalories: "", minProtein: "", maxProtein: "" });
   const [sortByFullness, setSortByFullness] = useState(false);
   const bounds: NutritionTarget = { maxCalories: boundFrom(target.maxCalories), minProtein: boundFrom(target.minProtein), maxProtein: boundFrom(target.maxProtein) };
+  const query = search.trim().toLowerCase();
+  const matchesText = (food: Food) => !query || [food.name, food.brand, food.variant, ...food.aliases].join(" ").toLowerCase().includes(query);
+  // KP's own saved meals, shown as meals rather than buried in the logger.
+  const ownMeals = userMeals
+    .map((meal) => ({ meal, food: userMealToNutritionItem(meal) }))
+    .filter(({ food }) => matchesText(food) && matchesNutritionTarget(food, bounds));
+  // A ready-to-eat pack carries one nutrition label, so it stays a product —
+  // but it is eaten as a meal, so it belongs in this list too.
+  const preparedMeals = catalog.filter((food) => food.category === "OrderedFood" && matchesText(food) && matchesNutritionTarget(food, bounds));
   const matched = recipes.filter((recipe) => matchesRecipe(recipe, search, filter) && matchesNutritionTarget(recipe, bounds));
   const shown = sortByFullness
     ? [...matched].sort((a, b) => estimateSatiety(b) - estimateSatiety(a) || b.protein - a.protein)
     : matched;
   return (
     <>
-      <SectionHeading eyebrow="Plan · Meals" title="Healthy food with actual receipts" description="Creative Indian-first meals calculated from weighed ingredients, with cooking oil counted and the evidence trail kept visible." action={<span className="prototype-badge">{recipes.length} calculated meals</span>} />
+      <SectionHeading eyebrow="Plan · Meals" title="Healthy food with actual receipts" description="Creative Indian-first meals calculated from weighed ingredients, with cooking oil counted and the evidence trail kept visible." action={<div className="heading-buttons"><span className="prototype-badge">{recipes.length + ownMeals.length + preparedMeals.length} meals</span><button className="button primary" onClick={onCreateMeal}>＋ New meal</button></div>} />
       <PlanSummary entries={planned} onRemove={onRemove} />
       <section className="discover-hero dark-card">
         <div><span className="eyebrow bright">Curated in Bengaluru</span><h2>Joy first.<br />Numbers intact.</h2><p>Brownies, chia bowls, paneer, rajma and cauliflower rice—built from ingredients you can realistically source in India.</p></div>
@@ -721,10 +740,119 @@ function MealsView({ onRecipe, planned, onPlan, onRemove }: { onRecipe: (recipe:
       </div>
       <div className="filter-definition"><span><b>High protein</b> 25g+</span><span><b>Low fat</b> ≤10g</span><span><b>High fibre</b> 8g+</span><small>Transparent app filters, not regulatory label claims.</small></div>
       <div className="result-count">{shown.length} of {recipes.length} meals{hasNutritionTarget(bounds) ? " fit your numbers" : ""}</div>
+      {ownMeals.length > 0 || preparedMeals.length > 0 ? (
+        <section className="own-meals">
+          <div className="section-title-row"><div><span className="eyebrow">Yours and ready to eat</span><h2>{ownMeals.length} saved · {preparedMeals.length} ready meals</h2></div></div>
+          <div className="own-meal-grid">
+            {ownMeals.map(({ meal, food }) => (
+              <article className="own-meal-card surface-card" key={meal.id}>
+                <div className="item-card-head"><span className="owned-tag">Yours</span><small>{meal.components.length} item{meal.components.length === 1 ? "" : "s"}</small></div>
+                <h3>{meal.name}</h3>
+                <div className="item-nutrition"><strong>{Math.round(food.calories)}<small> kcal</small></strong><span>{food.protein.toFixed(1)}g <small>protein</small></span><span>{food.carbs.toFixed(1)}g <small>carbs</small></span><span>{food.fat.toFixed(1)}g <small>fat</small></span></div>
+                <div className="item-card-actions"><button className="text-button" onClick={() => onEditMeal(meal)}>Edit</button><button className="button primary" onClick={() => onPlanFood(food)}>＋ Plan this</button></div>
+              </article>
+            ))}
+            {preparedMeals.map((food) => (
+              <article className="own-meal-card surface-card" key={food.id}>
+                <div className="item-card-head"><span className="owned-tag ready">Ready meal</span><small>{food.availability}</small></div>
+                <h3>{foodLabel(food)}</h3>
+                <div className="item-nutrition"><strong>{Math.round(food.calories)}<small> kcal</small></strong><span>{food.protein}g <small>protein</small></span><span>{food.carbs}g <small>carbs</small></span><span>{food.fat}g <small>fat</small></span></div>
+                <div className="item-card-actions"><small className="prepared-note">Also under Items</small><button className="button primary" onClick={() => onPlanFood(food)}>＋ Plan this</button></div>
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
       <div className="recipe-grid">{shown.map((recipe) => <RecipeCard recipe={recipe} onOpen={onRecipe} onPlan={onPlan} key={recipe.id} />)}</div>
       {shown.length === 0 ? <div className="empty-state"><strong>Nothing fits those numbers yet.</strong><span>{hasNutritionTarget(bounds) ? "Widen the calorie ceiling or the protein window—the catalogue is still small." : "Try a broader search or clear the active filter."}</span><button className="button secondary" onClick={() => { setSearch(""); setFilter("All"); setTarget({ maxCalories: "", minProtein: "", maxProtein: "" }); }}>Clear filters</button></div> : null}
       <div className="research-footnote"><span>Built from</span><a href={SOURCE_LINKS.ninGuidelines} target="_blank" rel="noreferrer">ICMR–NIN 2024 guidance</a><a href={SOURCE_LINKS.ifct} target="_blank" rel="noreferrer">Indian Food Composition Tables</a><a href={SOURCE_LINKS.usda} target="_blank" rel="noreferrer">USDA FoodData Central</a></div>
     </>
+  );
+}
+
+/**
+ * Builds one of KP's own meals from catalogue products. Saving goes through
+ * createUserMeal so the name, component and total bounds are the same ones the
+ * logging tray enforces — this screen adds a door, not a second rulebook.
+ */
+function PlanMealBuilder({ initial, catalog, dayKey, onClose, onSave }: {
+  initial: UserMeal | null;
+  catalog: Food[];
+  dayKey: string;
+  onClose: () => void;
+  onSave: (meal: UserMeal) => void;
+}) {
+  const creating = initial === null;
+  const [name, setName] = useState(initial?.name ?? "");
+  const [components, setComponents] = useState<Food[]>(() => (initial ? initial.components.map((food) => ({ ...food })) : []));
+  const [search, setSearch] = useState("");
+  const totals = components.reduce((sum, food) => ({
+    calories: sum.calories + food.calories,
+    protein: sum.protein + food.protein,
+    carbs: sum.carbs + food.carbs,
+    fat: sum.fat + food.fat,
+    fiber: sum.fiber + food.fiber,
+  }), { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 });
+  const choices = search.trim() ? getShownSingleItems(catalog, "all", search).slice(0, 6) : [];
+  const nameValid = isUserMealNameValid(name);
+  const canSave = nameValid && components.length > 0;
+
+  const setAmount = (index: number, amount: number) => setComponents((current) => current.map((food, foodIndex) => {
+    if (foodIndex !== index) return food;
+    const step = food.unit === "g" || food.unit === "ml" ? 5 : food.unit === "piece" ? 1 : 0.25;
+    const safe = Math.min(getQuantityLimit(food.unit), Math.max(step, Number((Number.isFinite(amount) ? amount : step).toFixed(2))));
+    return scaleNutritionForUnit(food, safe, food.unit);
+  }));
+
+  const save = () => {
+    if (!canSave) return;
+    // Reuse the tray's validation rather than hand-rolling a second version.
+    const built = createUserMeal(name, components.map((food, index) => ({ key: `plan-${index}`, food })), `${Date.now()}`, dayKey);
+    if (!built) return;
+    onSave(creating || !initial ? built : { ...built, id: initial.id, createdAt: initial.createdAt });
+  };
+
+  return (
+    <div className="dialog-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}>
+      <section className="food-dialog plan-meal-dialog" role="dialog" aria-modal="true" aria-labelledby="plan-meal-title">
+        <header>
+          <div><span className="eyebrow">Plan · Meals</span><h2 id="plan-meal-title">{creating ? "Build a meal" : "Edit meal"}</h2></div>
+          <button className="close-button" onClick={onClose} aria-label="Close meal builder">×</button>
+        </header>
+        <div className="plan-meal-body">
+          <label className="meal-name-field"><span>Meal name *</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="Poha with peanuts" /></label>
+          <div className="component-search">
+            <span>⌕</span>
+            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search an item to add…" aria-label="Search items to add to this meal" />
+          </div>
+          {choices.length > 0 ? (
+            <div className="component-choices">
+              {choices.map((food) => (
+                <button key={food.id} onClick={() => { setComponents((current) => [...current, { ...food }]); setSearch(""); }}>
+                  <span>{foodLabel(food)}</span><small>{Math.round(food.calories)} kcal / {food.amount} {food.unit}</small><b>＋</b>
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <div className="meal-component-editor">
+            {components.length === 0 ? <p className="editor-hint">Add the items this meal is made of. Each keeps its own snapshot, so correcting an item later never rewrites a meal you already logged.</p> : null}
+            {components.map((food, index) => (
+              <div className="meal-component-row" key={`${food.id}-${index}`}>
+                <span><strong>{foodLabel(food)}</strong><small>{Math.round(food.calories)} kcal</small></span>
+                <label>
+                  <input type="number" min="0.01" max={getQuantityLimit(food.unit)} step={food.unit === "g" || food.unit === "ml" ? 5 : food.unit === "piece" ? 1 : 0.25} value={food.amount} onChange={(event) => setAmount(index, Number(event.target.value))} aria-label={`${food.name} amount`} />
+                  <b>{food.unit}</b>
+                </label>
+                <button onClick={() => setComponents((current) => current.filter((_, componentIndex) => componentIndex !== index))} aria-label={`Remove ${food.name} from this meal`}>×</button>
+              </div>
+            ))}
+          </div>
+          <div className="meal-total"><strong>{Math.round(totals.calories)} kcal</strong><span>{totals.protein.toFixed(1)}P · {totals.carbs.toFixed(1)}C · {totals.fat.toFixed(1)}F · {totals.fiber.toFixed(1)} fibre</span></div>
+          {!nameValid && name.length > 0 ? <p className="editor-hint warn">Give the meal a name of {MAX_MEAL_NAME_LENGTH} characters or fewer.</p> : null}
+          <button className="button lime full" disabled={!canSave} onClick={save}>{creating ? "Save meal" : "Save changes"}</button>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -971,6 +1099,8 @@ export default function Home() {
   const [recipe, setRecipe] = useState<Recipe | null>(null);
   /** Non-null while Plan’s food editor is open; `initial` null means creating. */
   const [planFoodEditor, setPlanFoodEditor] = useState<{ initial: Food | null } | null>(null);
+  /** Non-null while Plan’s meal builder is open; `initial` null means creating. */
+  const [planMealBuilder, setPlanMealBuilder] = useState<{ initial: UserMeal | null } | null>(null);
   const [toast, setToast] = useState("");
   const toastTimer = useRef<number | null>(null);
   const [storageLoaded, setStorageLoaded] = useState(false);
@@ -1193,7 +1323,7 @@ export default function Home() {
       return <PurchasesView cardIqImport={cardIqImport} onAdd={(food) => openFoodLogger(food)} />;
     }
     if (planView === "items") return <ItemsView planned={planned} catalog={foodCatalog} onPlan={addItemToPlan} onRemove={removeFromPlan} onCreate={() => setPlanFoodEditor({ initial: null })} onEdit={(food) => setPlanFoodEditor({ initial: food })} />;
-    return <MealsView onRecipe={setRecipe} planned={planned} onPlan={addMealToPlan} onRemove={removeFromPlan} />;
+    return <MealsView onRecipe={setRecipe} planned={planned} catalog={foodCatalog} userMeals={saved.userMeals} onPlan={addMealToPlan} onPlanFood={addItemToPlan} onRemove={removeFromPlan} onCreateMeal={() => setPlanMealBuilder({ initial: null })} onEditMeal={(meal) => setPlanMealBuilder({ initial: meal })} />;
   };
 
   return (
@@ -1214,6 +1344,7 @@ export default function Home() {
       {foodDialog ? <FoodDialog initialFood={foodDialogSelection} initialMeal={foodDialogMealSelection} editing={editingFoodIndex !== null} catalog={foodCatalog} meals={logMeals} dayKey={clock.dayKey} onClose={() => { setFoodDialog(false); setFoodDialogSelection(null); setFoodDialogMealSelection(null); setEditingFoodIndex(null); }} onAdd={addFood} onAddMeal={addMeal} onSaveFood={saveCustomFood} onSaveMeal={saveUserMeal} /> : null}
       <RecipeDrawer recipe={recipe} onClose={() => setRecipe(null)} onPlan={addMealToPlan} />
       {planFoodEditor ? <PlanFoodEditor initial={planFoodEditor.initial} onClose={() => setPlanFoodEditor(null)} onSave={savePlanFood} /> : null}
+      {planMealBuilder ? <PlanMealBuilder initial={planMealBuilder.initial} catalog={foodCatalog} dayKey={clock.dayKey} onClose={() => setPlanMealBuilder(null)} onSave={(meal) => { saveUserMeal(meal); setPlanMealBuilder(null); }} /> : null}
       <div className={`toast ${toast ? "visible" : ""}`} role="status" aria-live="polite"><i>✓</i><span>{toast}</span>{toast.includes("tap Undo") ? <button className="toast-undo" onClick={undoDelete}>Undo</button> : null}</div>
     </div>
   );
