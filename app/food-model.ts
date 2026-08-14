@@ -209,6 +209,15 @@ export function validateFood(food: Food, catalog: Food[] = []): FoodValidation {
     if (catalog.length > 0) {
       const missing = missingComponents(food, catalog);
       if (missing.length > 0) problems.push(`Missing from your catalogue: ${missing.map((component) => component.foodId).join(", ")}.`);
+      // A component is a quantity of a product and obeys that product's serving
+      // bounds, exactly as a logged portion does. Without this, 9999 scoops of
+      // whey validates and yields a million-calorie meal.
+      for (const component of components) {
+        const part = catalog.find((candidate) => candidate.id === component.foodId);
+        if (part && !isQuantityValid(part.unit, component.amount)) {
+          problems.push(`${part.name}: use between 0 and ${getQuantityLimit(part.unit)} ${part.unit}.`);
+        }
+      }
     }
   } else {
     if (food.components && food.components.length > 0) problems.push("A product has one nutrition label, not a component list.");

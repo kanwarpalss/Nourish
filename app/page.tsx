@@ -26,6 +26,7 @@ import {
   shouldRestoreSavedNutritionState,
   stringifySavedNutritionState,
   upsertWeightEntry,
+  type PersistedNutritionState,
   type SavedNutritionState,
   type SavedPlanEntry,
   type WeightEntry,
@@ -679,6 +680,12 @@ export default function Home() {
       setWeights(saved.weights);
       loadedDayRef.current = clock.dayKey;
       setStorageLoaded(true);
+      // Saved data that fails validation is dropped rather than guessed at, but
+      // KP has to be told it happened — silently shrinking his diary is worse
+      // than an error.
+      if (saved.rejected > 0) {
+        window.setTimeout(() => notify(`${saved.rejected} damaged saved ${saved.rejected === 1 ? "record" : "records"} could not be restored`), 0);
+      }
     }, 0);
     return () => window.clearTimeout(timer);
   }, [clock.dayKey]);
@@ -687,7 +694,7 @@ export default function Home() {
     // Rebuilt from customFoods alone so this effect depends only on what it
     // saves, rather than on a catalogue recomputed every render.
     const catalogForSave = resolveCatalog(mergeCatalog(seedCatalog, customFoods));
-    const saved: SavedNutritionState = {
+    const saved: PersistedNutritionState = {
       dayKey: clock.dayKey,
       logs: extras.map((food) => ({ foodId: food.id, amount: food.amount, snapshot: food })),
       planned,

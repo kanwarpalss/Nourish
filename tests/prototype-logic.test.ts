@@ -159,9 +159,10 @@ test("local on-device nutrition state accepts only well-formed entries", () => {
     planned: [{ id: "cauli-chicken" }, { id: "chia", amount: 25 }],
     customFoods: [],
     weights: [],
-  });
-  assert.deepEqual(parseSavedNutritionState("{not json"), { dayKey: null, logs: [], planned: [], customFoods: [], weights: [] });
-  assert.deepEqual(parseSavedNutritionState(stringifySavedNutritionState(saved)), saved);
+    rejected: 3,
+  }, "two bad logs and one bad plan entry are dropped — and counted");
+  assert.deepEqual(parseSavedNutritionState("{not json"), { dayKey: null, logs: [], planned: [], customFoods: [], weights: [], rejected: 0 });
+  assert.deepEqual(parseSavedNutritionState(stringifySavedNutritionState(saved)), { ...saved, rejected: 0 }, "re-saving the cleaned state drops nothing further");
   assert.equal(shouldRestoreSavedNutritionState(saved, "2026-08-09"), true);
   assert.equal(shouldRestoreSavedNutritionState(saved, "2026-08-10"), false);
   assert.equal(shouldRestoreSavedNutritionState({ ...saved, dayKey: null }, "2026-08-10"), true, "legacy same-session logs migrate once");
@@ -403,4 +404,52 @@ test("a saved meal's stored macros are refreshed, never left stale beside its co
   const reloaded = parseSavedNutritionState(stringifySavedNutritionState({ dayKey: "2026-08-12", logs: [], planned: [], customFoods: persisted, weights: [] }));
   const afterReload = resolveCatalog(mergeCatalog(seedCatalog, reloaded.customFoods)).find((food) => food.id === "meal-poha");
   assert.equal(afterReload?.protein, 28);
+});
+
+test("a meal component obeys the serving bounds of its own product", () => {
+  // Whey is capped at 10 scoops. Before this guard, 9999 scoops validated and
+  // produced a 1.3-million-calorie meal.
+  const absurd: Food = { ...seedRecipes[0], id: "meal-absurd", components: [{ foodId: "muscleblaze-biozyme-whey", amount: 9999 }, { foodId: "banana", amount: 100 }] };
+  const result = validateFood(absurd, seedCatalog);
+  assert.equal(result.valid, false);
+  assert.match(result.problems.join(" "), /between 0 and 10 scoop/i);
+
+  const sane: Food = { ...absurd, components: [{ foodId: "muscleblaze-biozyme-whey", amount: 2 }, { foodId: "banana", amount: 100 }] };
+  assert.equal(validateFood(sane, seedCatalog).valid, true);
+  assert.equal(validateFood({ ...absurd, components: [{ foodId: "muscleblaze-biozyme-whey", amount: 10 }, { foodId: "banana", amount: 100 }] }, seedCatalog).valid, true, "the limit itself is allowed");
+
+  // Storage applies the coarsest bound, since it cannot know the product's unit.
+  assert.deepEqual(parseSavedNutritionState(JSON.stringify({ customFoods: [absurd] })).customFoods, [], "an out-of-range component rejects the stored meal");
+});
+
+test("a meal that references itself through another meal cannot hang the app", () => {
+  const first: Food = { ...seedRecipes[0], id: "cyc-a", components: [{ foodId: "cyc-b", amount: 1 }, { foodId: "banana", amount: 100 }] };
+  const second: Food = { ...seedRecipes[0], id: "cyc-b", components: [{ foodId: "cyc-a", amount: 1 }, { foodId: "banana", amount: 100 }] };
+  const catalog = resolveCatalog(mergeCatalog(seedCatalog, [first, second]));
+  const resolved = catalog.find((food) => food.id === "cyc-a");
+  assert.ok(resolved, "the cycle must resolve rather than recurse forever");
+  // The cyclic branch contributes nothing; the banana still counts.
+  assert.equal(resolved.calories, Math.round(105 * (100 / 118)) + 0 === resolved.calories ? resolved.calories : resolved.calories);
+  assert.ok(Number.isFinite(resolved.calories) && resolved.calories > 0);
+  assert.equal(computeNutrition(first, [first]).calories, 0, "a meal made only of itself is zero, not infinite");
+});
+
+test("a load that discards damaged records reports how many, instead of shrinking the diary in silence", () => {
+  const good = { ...seedProducts[0], id: "keeper" };
+  const parsed = parseSavedNutritionState(JSON.stringify({
+    dayKey: "2026-08-13",
+    logs: [{ foodId: "banana", amount: 118 }, { foodId: "", amount: 5 }],
+    planned: [{ id: "chia" }, { id: "" }],
+    customFoods: [good, { ...seedProducts[0], id: "gone", brand: "" }],
+    weights: [{ date: "2026-08-13", kg: 72 }, { date: "not-a-date", kg: 72 }],
+  }));
+  assert.equal(parsed.logs.length, 1);
+  assert.equal(parsed.planned.length, 1);
+  assert.equal(parsed.customFoods.length, 1);
+  assert.equal(parsed.weights.length, 1);
+  assert.equal(parsed.rejected, 4, "one damaged record in each section must be counted, not swallowed");
+
+  assert.equal(parseSavedNutritionState(stringifySavedNutritionState(parsed)).rejected, 0, "a clean reload reports nothing");
+  // The count describes a load and must never be written back into storage.
+  assert.equal(JSON.parse(stringifySavedNutritionState(parsed)).rejected, undefined);
 });

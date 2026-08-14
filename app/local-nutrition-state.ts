@@ -34,7 +34,8 @@ export type WeightEntry = {
   kg: number;
 };
 
-export type SavedNutritionState = {
+/** Exactly what is written to storage. */
+export type PersistedNutritionState = {
   dayKey: string | null;
   logs: SavedLogEntry[];
   planned: SavedPlanEntry[];
@@ -42,13 +43,24 @@ export type SavedNutritionState = {
   weights: WeightEntry[];
 };
 
+export type SavedNutritionState = PersistedNutritionState & {
+  /**
+   * How many stored records were rejected as malformed on this load. Never
+   * persisted — it exists so a load that quietly discards KP's data can say so
+   * instead of the data simply disappearing.
+   */
+  rejected: number;
+};
+
 const categories = new Set<Food["category"]>(FOOD_CATEGORIES);
 const trustLevels = new Set<Food["source"]["trust"]>(SOURCE_TRUSTS);
 const imageKinds = new Set<FoodImage["kind"]>(["pack", "label", "dish"]);
 const MAX_CUSTOM_FOODS = 500;
 const MAX_WEIGHT_ENTRIES = 5000;
+/** Coarsest serving bound across all units; the exact one is applied by validateFood. */
+const MAX_COMPONENT_AMOUNT = Math.max(...Object.values(UNIT_LIMITS));
 
-const emptyState = (): SavedNutritionState => ({ dayKey: null, logs: [], planned: [], customFoods: [], weights: [] });
+const emptyState = (): SavedNutritionState => ({ dayKey: null, logs: [], planned: [], customFoods: [], weights: [], rejected: 0 });
 
 function isDateKey(value: unknown): value is string {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -101,6 +113,10 @@ function parseComponents(value: unknown): FoodComponent[] | null {
     if (!entry || typeof entry !== "object") return [];
     const candidate = entry as { foodId?: unknown; amount?: unknown };
     if (typeof candidate.foodId !== "string" || !candidate.foodId.trim() || !isPositiveNumber(candidate.amount)) return [];
+    // The parser cannot know the component product's unit, so it applies the
+    // coarsest serving bound here; validateFood applies the exact per-product
+    // limit once the catalogue is available.
+    if (candidate.amount > MAX_COMPONENT_AMOUNT) return [];
     return [{ foodId: candidate.foodId.trim(), amount: candidate.amount }];
   });
   // A dropped component would silently change a meal's nutrition, so reject the
@@ -252,50 +268,56 @@ export function parseSavedNutritionState(raw: string | null): SavedNutritionStat
     const value = parsed as { dayKey?: unknown; logs?: unknown; planned?: unknown; customFoods?: unknown; weights?: unknown };
     const dayKey = isDateKey(value.dayKey) ? value.dayKey : null;
 
+    let rejected = 0;
+    const drop = <T,>(): T[] => { rejected += 1; return []; };
+
     const logs = Array.isArray(value.logs) ? value.logs.flatMap((entry): SavedLogEntry[] => {
-      if (!entry || typeof entry !== "object") return [];
+      if (!entry || typeof entry !== "object") return drop<SavedLogEntry>();
       const candidate = entry as { foodId?: unknown; amount?: unknown; snapshot?: unknown };
-      if (typeof candidate.foodId !== "string" || !candidate.foodId.trim() || !isPositiveNumber(candidate.amount)) return [];
+      if (typeof candidate.foodId !== "string" || !candidate.foodId.trim() || !isPositiveNumber(candidate.amount)) return drop<SavedLogEntry>();
       const parsedSnapshot = candidate.snapshot === undefined ? undefined : parseFood(candidate.snapshot);
-      if (candidate.snapshot !== undefined && !parsedSnapshot) return [];
+      if (candidate.snapshot !== undefined && !parsedSnapshot) return drop<SavedLogEntry>();
       const foodId = candidate.foodId.trim();
-      if (parsedSnapshot && parsedSnapshot.id !== foodId) return [];
+      if (parsedSnapshot && parsedSnapshot.id !== foodId) return drop<SavedLogEntry>();
       return [{ foodId, amount: candidate.amount, ...(parsedSnapshot ? { snapshot: parsedSnapshot } : {}) }];
     }) : [];
 
     // v2 wrote { id, kind }. `kind` is now derived from the catalogue, so it is
     // read and discarded; `amount` is new and optional.
     const planned = Array.isArray(value.planned) ? value.planned.flatMap((entry): SavedPlanEntry[] => {
-      if (!entry || typeof entry !== "object") return [];
+      if (!entry || typeof entry !== "object") return drop<SavedPlanEntry>();
       const candidate = entry as { id?: unknown; amount?: unknown };
-      if (typeof candidate.id !== "string" || !candidate.id.trim()) return [];
+      if (typeof candidate.id !== "string" || !candidate.id.trim()) return drop<SavedPlanEntry>();
       return [{ id: candidate.id.trim(), ...(isPositiveNumber(candidate.amount) ? { amount: candidate.amount } : {}) }];
     }) : [];
 
     const parsedCustomFoods = Array.isArray(value.customFoods) ? value.customFoods.flatMap((food) => {
       const parsedFood = parseFood(food);
-      return parsedFood ? [parsedFood] : [];
+      if (!parsedFood) { rejected += 1; return []; }
+      return [parsedFood];
     }).slice(0, MAX_CUSTOM_FOODS) : [];
     const customFoods = [...new Map(parsedCustomFoods.map((food) => [food.id, food])).values()];
 
     const weightByDate = new Map<string, WeightEntry>();
     if (Array.isArray(value.weights)) for (const entry of value.weights) {
-      if (!entry || typeof entry !== "object") continue;
+      if (!entry || typeof entry !== "object") { rejected += 1; continue; }
       const candidate = entry as { date?: unknown; kg?: unknown };
-      if (!isDateKey(candidate.date) || !isWeightValueValid(candidate.kg as number) || (dayKey !== null && candidate.date > dayKey)) continue;
+      if (!isDateKey(candidate.date) || !isWeightValueValid(candidate.kg as number) || (dayKey !== null && candidate.date > dayKey)) { rejected += 1; continue; }
       if (weightByDate.size >= MAX_WEIGHT_ENTRIES && !weightByDate.has(candidate.date)) continue;
       weightByDate.set(candidate.date, { date: candidate.date, kg: Math.round((candidate.kg as number) * 10) / 10 });
     }
     const weights = [...weightByDate.values()].sort((left, right) => left.date.localeCompare(right.date));
 
-    return { dayKey, logs, planned, customFoods, weights };
+    return { dayKey, logs, planned, customFoods, weights, rejected };
   } catch {
     return emptyState();
   }
 }
 
-export function stringifySavedNutritionState(state: SavedNutritionState) {
-  return JSON.stringify(state);
+export function stringifySavedNutritionState(state: PersistedNutritionState) {
+  // `rejected` describes a load, not the diary, so the write type excludes it.
+  const { dayKey, logs, planned, customFoods, weights } = state;
+  return JSON.stringify({ dayKey, logs, planned, customFoods, weights });
 }
 
 export function shouldRestoreSavedNutritionState(state: SavedNutritionState, dayKey: string) {
