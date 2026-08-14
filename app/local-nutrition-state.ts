@@ -1,5 +1,6 @@
-import type { UserMeal } from "./logging-session";
+import { MAX_MEAL_COMPONENTS, MAX_NUTRITION_VALUE, MAX_USER_MEALS, userMealTotals, type UserMeal } from "./logging-session";
 import type { NutritionItem } from "./nutrition-data";
+import { isQuantityValid } from "./prototype-logic";
 
 export const LOCAL_NUTRITION_STORAGE_KEY = "nourish.nutrition.v3";
 export const LEGACY_NUTRITION_STORAGE_KEYS = ["nourish.nutrition.v2", "nourish.nutrition.v1"] as const;
@@ -31,6 +32,8 @@ export type SavedLogEntry = {
   amount: number;
   /** Exact food identity, displayed unit and calculated totals at the moment of logging. */
   snapshot?: NutritionItem;
+  /** A grouped Meal stays one diary row while retaining its expandable item snapshots. */
+  mealSnapshot?: UserMeal;
   /**
    * Only set for composite dishes. The edited component weights must be saved, otherwise a
    * chapati rolled from 45 g of atta would come back after a refresh as the 30 g default.
@@ -84,7 +87,7 @@ const DAY_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 export const emptyNutritionState = (): SavedNutritionState => ({ schemaVersion: 2, days: [], planned: [], targets: null, customFoods: [], userMeals: [], weights: [] });
 
 const units = new Set<NutritionItem["unit"]>(["g", "ml", "scoop", "pack", "piece", "serving"]);
-const categories = new Set<NutritionItem["category"]>(["Ordered", "Product", "Ingredient", "Meal", "Composite"]);
+const categories = new Set<NutritionItem["category"]>(["Ordered", "Product", "Ingredient", "OrderedFood", "Meal", "Composite"]);
 const trustLevels = new Set<NutritionItem["source"]["trust"]>(["Official label", "Reference", "Label mirror", "Estimated", "Personal"]);
 
 function isDateKey(value: unknown): value is string {
@@ -128,8 +131,9 @@ function parseFood(value: unknown): NutritionItem | null {
   if (typeof food.id !== "string" || !food.id.trim() || typeof food.name !== "string" || !food.name.trim()
     || typeof food.brand !== "string" || !food.brand.trim() || typeof food.variant !== "string"
     || !units.has(food.unit as NutritionItem["unit"]) || !categories.has(food.category as NutritionItem["category"])
-    || numbers.some((number) => !Number.isFinite(number) || (number as number) < 0 || (number as number) > 50_000)
-    || !food.amount || basisNumbers.some((number) => !Number.isFinite(number) || number < 0 || number > 50_000)
+    || numbers.some((number) => !Number.isFinite(number) || (number as number) < 0 || (number as number) > MAX_NUTRITION_VALUE)
+    || !isQuantityValid(food.unit as string, food.amount as number)
+    || basisNumbers.some((number) => !Number.isFinite(number) || number < 0 || number > MAX_NUTRITION_VALUE)
     || (basis !== null && basis.unit !== undefined && !units.has(basis.unit))
     || (rawBasis !== undefined && (!basis || !basis.amount))
     || (rawConversions !== undefined && (!Array.isArray(rawConversions) || conversions.length !== rawConversions.length))
@@ -172,10 +176,12 @@ function parseUserMeal(value: unknown): UserMeal | null {
       const parsedComponent = parseFood(component);
       return parsedComponent ? [parsedComponent] : [];
     })
-    .slice(0, 40);
+    .slice(0, MAX_MEAL_COMPONENTS);
   // A meal with nothing loggable left in it would silently log zero calories.
   if (components.length === 0) return null;
-  return { id: meal.id.trim(), name: meal.name.trim(), createdAt: meal.createdAt, components };
+  const parsed = { id: meal.id.trim(), name: meal.name.trim(), createdAt: meal.createdAt, components };
+  if (Object.values(userMealTotals(parsed)).some((total) => total > MAX_NUTRITION_VALUE)) return null;
+  return parsed;
 }
 
 export function isWeightValueValid(value: number) {
@@ -226,7 +232,7 @@ function parseLogOverride(value: unknown): SavedLogOverride | undefined {
 
 function parseLogEntry(entry: unknown): SavedLogEntry[] {
   if (!entry || typeof entry !== "object") return [];
-  const candidate = entry as { foodId?: unknown; amount?: unknown; snapshot?: unknown; components?: unknown; override?: unknown };
+  const candidate = entry as { foodId?: unknown; amount?: unknown; snapshot?: unknown; mealSnapshot?: unknown; components?: unknown; override?: unknown };
   if (typeof candidate.foodId !== "string" || candidate.foodId.length === 0) return [];
   if (!Number.isFinite(candidate.amount) || (candidate.amount as number) <= 0) return [];
   const components = Array.isArray(candidate.components)
@@ -243,6 +249,18 @@ function parseLogEntry(entry: unknown): SavedLogEntry[] {
   if (candidate.snapshot !== undefined && (!snapshot || snapshot.id !== candidate.foodId)) return [];
   if (snapshot) {
     saved.snapshot = snapshot;
+    const mealSnapshot = candidate.mealSnapshot === undefined ? null : parseUserMeal(candidate.mealSnapshot);
+    if (mealSnapshot) {
+      const totals = userMealTotals(mealSnapshot);
+      const fields = ["calories", "protein", "carbs", "fat", "fiber"] as const;
+      const identityMatches = snapshot.category === "Meal"
+        && snapshot.unit === "serving"
+        && snapshot.amount === 1
+        && candidate.amount === 1
+        && mealSnapshot.id === snapshot.id
+        && mealSnapshot.name === snapshot.name;
+      if (identityMatches && fields.every((field) => Math.abs(totals[field] - snapshot[field]) <= 0.01)) saved.mealSnapshot = mealSnapshot;
+    }
     return [saved];
   }
   const override = parseLogOverride(candidate.override);
@@ -300,11 +318,11 @@ export function parseSavedNutritionState(raw: string | null): SavedNutritionStat
       return parsedFood ? [parsedFood] : [];
     }).slice(0, 500) : [];
     const customFoods = [...new Map(parsedCustomFoods.map((food) => [food.id, food])).values()];
-    const parsedUserMeals = Array.isArray(value.userMeals) ? value.userMeals.flatMap((meal) => {
+    const parsedUserMeals = Array.isArray(value.userMeals) ? value.userMeals.slice(0, 5000).flatMap((meal) => {
       const parsedMeal = parseUserMeal(meal);
       return parsedMeal ? [parsedMeal] : [];
-    }).slice(0, 200) : [];
-    const userMeals = [...new Map(parsedUserMeals.map((meal) => [meal.id, meal])).values()];
+    }) : [];
+    const userMeals = [...new Map(parsedUserMeals.map((meal) => [meal.id, meal])).values()].slice(-MAX_USER_MEALS);
     const weightByDate = new Map<string, WeightEntry>();
     if (Array.isArray(value.weights)) for (const entry of value.weights) {
       if (!entry || typeof entry !== "object") continue;

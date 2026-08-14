@@ -71,25 +71,32 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
   for (const label of ["Items", "Meals", "Today", "History", "Trends", "Purchases"]) {
     assert.match(page, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
-  assert.match(page, /Commonly ordered/);
+  assert.match(page, /Single Items/);
+  assert.match(page, /Packaged Food/);
+  assert.match(page, /Open Ingredient/);
+  assert.match(page, /Ordered Food/);
   assert.match(page, /Nutrition stays on the same evidence-backed basis/);
   assert.match(page, /scaleNutritionForUnit\(selected, quantityValid \? quantity : 0, loggingUnit\)/);
-  assert.match(page, /getShownLogFoods\(dialogCatalog, nextTab, nextSearch\)/);
-  assert.match(page, /Brand and item name are required\. Variant can be blank\./);
+  assert.match(page, /getShownSingleItems\(dialogCatalog, itemKind, search\)/);
+  assert.match(page, /No brand is needed/);
+  assert.match(page, /specific Subway sandwich/);
   assert.match(page, /Edit name, serving & nutrition/);
 
   // Creating a food must start blank and mint a fresh id. Reusing the selected
   // food's id silently replaced a researched entry with a different food.
-  assert.match(page, /Create a new food/);
+  assert.match(page, /Add a new Single Item/);
   assert.match(page, /blankFood\(search\.trim\(\)\)/);
   assert.match(page, /createCustomFood\(\{ \.\.\.draft, imageUrl: image \}, nextUnique\(\)\)/);
-  assert.match(page, /Save to My Foods for next time/);
+  assert.match(page, /Save to Single Items for next time/);
   assert.match(page, /forkFoodForEdit\(original, nextUnique\(\)\)/);
+  // The create editor must render from detailsOpen itself. Requiring an existing selected
+  // result here is the exact bug that made "add Subway" do nothing after a zero-result search.
+  assert.match(page, /detailsOpen \? <FoodDetailsEditor/);
 
   // A logged entry can be removed, reversibly, and against the stored entry
   // rather than the display row.
   assert.match(page, /onDelete=\{deleteLoggedFood\}/);
-  assert.match(page, /const logIndex = logIndices\[index\]/);
+  assert.match(page, /const logIndex = removed\.logIndex/);
   assert.match(page, /index === editLogIndex/, "editing must address the stored entry too");
   assert.match(page, /toast-undo/);
 
@@ -97,7 +104,14 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
   assert.match(page, /<FoodThumb food=\{food\} \/>/);
   assert.doesNotMatch(page, /food\.name\.charAt\(0\)/, "letter avatars must not come back");
   assert.match(page, /You are adding \$\{quantity\} \$\{loggingUnit\}/);
-  assert.match(page, /Log & save combination/);
+  assert.match(page, /Save & log Meal/);
+  assert.match(page, /mealSnapshot/);
+  assert.match(page, /Adjustments here apply only to today’s diary entry/);
+  assert.match(page, /Show \$\{meal\.components\.length\} item/);
+  assert.doesNotMatch(page, />Combination</, "the rejected Combination label must not return");
+  // Modal scroll belongs to the logger and the body is explicitly frozen while it is open.
+  assert.match(page, /document\.body\.style\.overflow = "hidden"/);
+  assert.match(css, /\.food-dialog \{ overflow-y: auto; overscroll-behavior: contain;/);
   assert.match(page, /Show trend chart/);
   assert.match(page, /upsertWeightEntry/);
   assert.match(page, /if \(!storageLoaded\) return/);
@@ -137,6 +151,8 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
   assert.match(css, /\.timeline-dot[^}]*left:\s*0/);
   assert.match(css, /\.meal-meta > \.logged-volume[^}]*color:\s*#173e2c/);
   assert.match(css, /\.quantity-control label span[^}]*color:\s*var\(--ink\)/);
+  assert.match(css, /\.quantity-control input[^}]*color:\s*var\(--ink\)/, "quantity values must remain readable on their white field");
+  assert.match(css, /\.meal-component-row input[^}]*color:\s*var\(--ink\)/, "Meal amounts must remain readable on their white field");
   assert.match(css, /\.food-thumb\b/, "thumbnails need styling");
   assert.match(css, /\.food-thumb img[^}]*object-fit:\s*contain/, "pack shots must fit whole, not crop to white margin");
   assert.doesNotMatch(css, /\.food-initial\b/, "the letter-avatar style must go with the markup");

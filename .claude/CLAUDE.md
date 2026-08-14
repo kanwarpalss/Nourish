@@ -42,8 +42,10 @@ Local-only, single user, no cloud backend.
     immutable nutrition snapshot so later catalogue edits never rewrite history. User edits
     are stored in `customFoods` with provenance tier "Personal"; the researched seed catalogue
     in `nutrition-data.ts` remains unchanged. Legacy `override` entries remain readable.
-11. **Brand and item name are mandatory; variant may be blank.** Commercial products must
-    never be collapsed into a generic/category match merely because they share an ingredient.
+11. **Identity requirements follow the Single Item type.** Packaged Food requires Brand +
+    Item Name; Ordered Food requires Restaurant/Brand + Menu Item; Open Ingredient requires
+    only its ingredient name. Variant may be blank. Commercial products must never be
+    collapsed into a generic/category match merely because they share an ingredient.
 
 ## Critical files (read before modifying)
 

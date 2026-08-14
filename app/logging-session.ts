@@ -8,6 +8,20 @@ export const MAX_TRAY_ITEMS = 60;
 export const MAX_USER_MEALS = 200;
 export const MAX_MEAL_COMPONENTS = 40;
 export const MAX_MEAL_NAME_LENGTH = 60;
+export const MAX_NUTRITION_VALUE = 50_000;
+
+const NON_VISIBLE_IDENTITY_CHARACTERS = /[\u200B\u200E\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/g;
+const DAY_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+function normaliseIdentityText(value: unknown) {
+  return typeof value === "string" ? value.replace(NON_VISIBLE_IDENTITY_CHARACTERS, "").trim() : "";
+}
+
+function isDateKey(value: unknown): value is string {
+  if (typeof value !== "string" || !DAY_KEY_PATTERN.test(value)) return false;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
 
 export type TrayItem = {
   key: string;
@@ -20,6 +34,25 @@ export type UserMeal = {
   createdAt: string;
   components: NutritionItem[];
 };
+
+export type SingleItemKind = "packaged" | "ingredient" | "ordered-food";
+
+/**
+ * The old `Ordered` category means "a packaged grocery seen in order history". It must
+ * stay Packaged Food in the UI; only the explicit new `OrderedFood` value represents a
+ * prepared restaurant/menu order such as Subway.
+ */
+export function getSingleItemKind(food: Pick<NutritionItem, "category">): SingleItemKind {
+  if (food.category === "Ingredient") return "ingredient";
+  if (food.category === "OrderedFood") return "ordered-food";
+  return "packaged";
+}
+
+export function singleItemKindLabel(kind: SingleItemKind) {
+  if (kind === "ingredient") return "Open Ingredient";
+  if (kind === "ordered-food") return "Ordered Food";
+  return "Packaged Food";
+}
 
 export type NutritionTotals = {
   calories: number;
@@ -71,11 +104,13 @@ export type CustomFoodDraft = Pick<
 > & { category?: NutritionItem["category"]; imageUrl?: string };
 
 export function isCustomFoodDraftValid(draft: CustomFoodDraft) {
+  if (!draft || typeof draft !== "object" || typeof draft.variant !== "string") return false;
   const numbers = [draft.amount, draft.calories, draft.protein, draft.carbs, draft.fat, draft.fiber];
-  return Boolean(draft.name.trim())
-    && Boolean(draft.brand.trim())
+  const brandIsValid = draft.category === "Ingredient" || Boolean(normaliseIdentityText(draft.brand));
+  return Boolean(normaliseIdentityText(draft.name))
+    && brandIsValid
     && isQuantityValid(draft.unit, draft.amount)
-    && numbers.every((value) => Number.isFinite(value) && value >= 0 && value <= 50_000);
+    && numbers.every((value) => Number.isFinite(value) && value >= 0 && value <= MAX_NUTRITION_VALUE);
 }
 
 /**
@@ -84,11 +119,12 @@ export function isCustomFoodDraftValid(draft: CustomFoodDraft) {
  */
 export function createCustomFood(draft: CustomFoodDraft, unique: string): NutritionItem | null {
   if (!isCustomFoodDraftValid(draft)) return null;
-  const name = draft.name.trim();
+  const name = normaliseIdentityText(draft.name);
+  const brand = normaliseIdentityText(draft.brand);
   return {
     id: makeCustomFoodId(name, unique),
     name,
-    brand: draft.brand.trim(),
+    brand: draft.category === "Ingredient" ? brand || "Generic" : brand,
     variant: draft.variant.trim(),
     amount: draft.amount,
     unit: draft.unit,
@@ -169,7 +205,7 @@ export function trayTotals(items: TrayItem[]): NutritionTotals {
 }
 
 export function isUserMealNameValid(name: string) {
-  const trimmed = name.trim();
+  const trimmed = normaliseIdentityText(name);
   return trimmed.length > 0 && trimmed.length <= MAX_MEAL_NAME_LENGTH;
 }
 
@@ -178,13 +214,15 @@ export function isUserMealNameValid(name: string) {
  * deleting a food later can never silently rewrite a meal you already trust.
  */
 export function createUserMeal(name: string, items: TrayItem[], unique: string, createdAt: string): UserMeal | null {
-  if (!isUserMealNameValid(name)) return null;
+  if (!isUserMealNameValid(name) || !isDateKey(createdAt)) return null;
   const components = items
     .map((item) => item.food)
     .filter((food) => isQuantityValid(food.unit, food.amount))
     .slice(0, MAX_MEAL_COMPONENTS);
   if (components.length === 0) return null;
-  const trimmed = name.trim();
+  const totals = sumNutrition(components);
+  if (Object.values(totals).some((value) => value < 0 || value > MAX_NUTRITION_VALUE)) return null;
+  const trimmed = normaliseIdentityText(name);
   return {
     id: makeUserMealId(trimmed, unique),
     name: trimmed,
@@ -195,6 +233,33 @@ export function createUserMeal(name: string, items: TrayItem[], unique: string, 
 
 export function userMealTotals(meal: UserMeal): NutritionTotals {
   return sumNutrition(meal.components);
+}
+
+/** A diary edit receives its own component objects, never the reusable saved Meal. */
+export function cloneUserMeal(meal: UserMeal): UserMeal {
+  return { ...meal, components: meal.components.map((food) => ({ ...food })) };
+}
+
+/** One aggregate diary row backed by expandable component snapshots. */
+export function userMealToNutritionItem(meal: UserMeal, trust: NutritionItem["source"]["trust"] = "Personal"): NutritionItem {
+  const totals = userMealTotals(meal);
+  return {
+    id: meal.id,
+    name: meal.name,
+    brand: trust === "Personal" ? "My Meal" : "Nourish",
+    variant: `${meal.components.length} item${meal.components.length === 1 ? "" : "s"}`,
+    amount: 1,
+    unit: "serving",
+    ...totals,
+    category: "Meal",
+    availability: "Saved meal",
+    aliases: meal.components.flatMap((food) => [food.name, food.brand, ...food.aliases]),
+    source: {
+      label: trust === "Personal" ? "Grouped by you" : "Calculated from weighed ingredients",
+      url: "",
+      trust,
+    },
+  };
 }
 
 export function upsertUserMeal(meals: UserMeal[], next: UserMeal): UserMeal[] {

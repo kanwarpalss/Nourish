@@ -29,7 +29,12 @@ export type NutritionItem = {
   carbs: number;
   fat: number;
   fiber: number;
-  category: "Ordered" | "Product" | "Ingredient" | "Meal" | "Composite";
+  /**
+   * `Ordered` is the legacy name for packaged groceries discovered through cardIQ.
+   * New restaurant/menu entries use `OrderedFood`; keeping the values distinct prevents
+   * Nandini milk from becoming an ordered meal merely because it came from Instamart.
+   */
+  category: "Ordered" | "Product" | "Ingredient" | "OrderedFood" | "Meal" | "Composite";
   availability: string;
   common?: boolean;
   aliases: string[];

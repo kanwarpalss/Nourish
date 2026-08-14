@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   addToTray,
+  cloneUserMeal,
   createCustomFood,
   createUserMeal,
   forkFoodForEdit,
+  getSingleItemKind,
   isCustomFoodDraftValid,
   isOwnedFood,
   isUserMealNameValid,
@@ -16,9 +18,11 @@ import {
   removeUserMeal,
   slugifyFoodName,
   sumNutrition,
+  singleItemKindLabel,
   trayTotals,
   upsertUserMeal,
   userMealToFoods,
+  userMealToNutritionItem,
   userMealTotals,
   type CustomFoodDraft,
   type TrayItem,
@@ -125,6 +129,35 @@ test("custom food drafts reject the values that would poison daily totals", () =
   assert.equal(createCustomFood(draft({ name: "" }), "1"), null);
 });
 
+test("Single Item kinds follow the food itself, not the online purchase channel", () => {
+  assert.equal(getSingleItemKind(food({ category: "Ordered" })), "packaged", "legacy cardIQ groceries are packaged foods");
+  assert.equal(getSingleItemKind(food({ category: "Product" })), "packaged");
+  assert.equal(getSingleItemKind(food({ category: "Ingredient" })), "ingredient");
+  assert.equal(getSingleItemKind(food({ category: "OrderedFood" })), "ordered-food");
+  assert.equal(singleItemKindLabel("packaged"), "Packaged Food");
+  assert.equal(singleItemKindLabel("ingredient"), "Open Ingredient");
+  assert.equal(singleItemKindLabel("ordered-food"), "Ordered Food");
+});
+
+test("Open Ingredients need no brand while Packaged and Ordered Foods do", () => {
+  const ingredient = draft({ name: "Fenugreek", brand: "", category: "Ingredient" });
+  assert.ok(isCustomFoodDraftValid(ingredient));
+  const createdIngredient = createCustomFood(ingredient, "fenugreek");
+  assert.ok(createdIngredient);
+  assert.equal(createdIngredient.brand, "Generic", "storage keeps a safe internal identity without asking KP for a fake brand");
+
+  assert.equal(isCustomFoodDraftValid(draft({ brand: "", category: "Product" })), false);
+  assert.equal(isCustomFoodDraftValid(draft({ brand: "", category: "OrderedFood" })), false);
+  assert.ok(isCustomFoodDraftValid(draft({ brand: "Subway", name: "Paneer tikka sub", category: "OrderedFood" })));
+});
+
+test("invisible or malformed commercial identities cannot masquerade as a brand", () => {
+  assert.equal(isCustomFoodDraftValid(draft({ brand: "\u200B\u200E" })), false);
+  assert.equal(isCustomFoodDraftValid(draft({ name: "\u200B" })), false);
+  assert.doesNotThrow(() => isCustomFoodDraftValid(draft({ brand: null as unknown as string })));
+  assert.equal(isCustomFoodDraftValid(draft({ brand: null as unknown as string })), false);
+});
+
 test("the tray adds, removes, totals, and refuses impossible quantities", () => {
   let tray: TrayItem[] = [];
   tray = addToTray(tray, food({ calories: 120, protein: 8, carbs: 12, fat: 4, fiber: 1 }), "a");
@@ -166,6 +199,7 @@ test("saved meals need a real name and at least one usable component", () => {
   assert.equal(createUserMeal("a".repeat(61), items, "1", "2026-08-12"), null);
   assert.equal(createUserMeal("Breakfast", [], "1", "2026-08-12"), null);
   assert.equal(createUserMeal("Breakfast", [{ key: "t", food: food({ amount: 0 }) }], "1", "2026-08-12"), null);
+  assert.equal(createUserMeal("Breakfast", items, "1", "2026-02-30"), null, "impossible dates must not create meals that disappear on reload");
   assert.ok(isUserMealNameValid("a".repeat(60)));
   assert.equal(isUserMealNameValid("a".repeat(61)), false);
 
@@ -173,6 +207,14 @@ test("saved meals need a real name and at least one usable component", () => {
   assert.ok(meal);
   assert.equal(meal.name, "My breakfast", "names are trimmed before they are stored");
   assert.ok(meal.id.startsWith("usermeal-"));
+});
+
+test("a Meal that cannot survive storage limits is rejected before it is saved", () => {
+  const oversized: TrayItem[] = Array.from({ length: MAX_MEAL_COMPONENTS }, (_, index) => ({
+    key: `large-${index}`,
+    food: food({ id: `large-food-${index}`, calories: 2000 }),
+  }));
+  assert.equal(createUserMeal("Impossible feast", oversized, "large", "2026-08-14"), null);
 });
 
 test("a saved meal keeps its own snapshot when the source food later changes", () => {
@@ -184,6 +226,16 @@ test("a saved meal keeps its own snapshot when the source food later changes", (
   assert.equal(meal.components[0].calories, 200);
   assert.equal(meal.components[0].name, "Test food");
   assert.deepEqual(userMealTotals(meal), { calories: 200, protein: 20, carbs: 10, fat: 5, fiber: 2 });
+});
+
+test("editing today's Meal clone never changes the reusable saved Meal", () => {
+  const saved = createUserMeal("Usual breakfast", [{ key: "t1", food: food({ amount: 100 }) }], "clone", "2026-08-14");
+  assert.ok(saved);
+  const today = cloneUserMeal(saved);
+  today.components[0].amount = 250;
+  today.components[0].calories = 250;
+  assert.equal(saved.components[0].amount, 100);
+  assert.equal(saved.components[0].calories, 100);
 });
 
 test("expanding a saved meal reproduces the same nutrition it was saved with", () => {
@@ -198,6 +250,21 @@ test("expanding a saved meal reproduces the same nutrition it was saved with", (
   assert.deepEqual(sumNutrition(expanded), userMealTotals(meal));
   assert.equal(expanded[0].amount, 200);
   assert.equal(expanded[1].amount, 2);
+});
+
+test("a Meal becomes one aggregate diary row while retaining its component totals", () => {
+  const meal = createUserMeal("Usual breakfast", [
+    { key: "milk", food: food({ id: "milk", amount: 200, calories: 120, protein: 6.6, carbs: 9.6, fat: 6.2 }) },
+    { key: "eggs", food: food({ id: "eggs", amount: 2, unit: "piece", calories: 143, protein: 12.6, carbs: 0.7, fat: 9.5 }) },
+  ], "meal", "2026-08-14");
+  assert.ok(meal);
+  const row = userMealToNutritionItem(meal);
+  assert.equal(row.amount, 1);
+  assert.equal(row.unit, "serving");
+  assert.equal(row.category, "Meal");
+  assert.equal(row.calories, 263);
+  assert.equal(row.protein, 19.2);
+  assert.equal(meal.components.length, 2, "the expandable items remain on the Meal snapshot");
 });
 
 test("meals cap their component count and replace rather than duplicate on save", () => {
@@ -253,8 +320,6 @@ test("icon keywords match whole words, not fragments hiding inside longer ones",
   assert.equal(pick("Almonds"), "nut");
   assert.equal(pick("Eggs"), "egg");
 });
-
-
 
 
 

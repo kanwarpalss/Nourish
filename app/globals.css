@@ -405,8 +405,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .grocery-groups span { color: var(--muted); font-size: 8px; font-weight: 800; text-transform: uppercase; }
 .grocery-groups strong { font-size: 11px; }
 
-.dialog-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 18px; background: rgb(9 15 19 / 0.65); backdrop-filter: blur(10px); }
-.food-dialog { overflow: hidden; width: min(980px, 100%); max-height: min(780px, 92dvh); border-radius: 24px; background: var(--paper); box-shadow: 0 28px 90px rgb(0 0 0 / 0.28); }
+.dialog-backdrop { position: fixed; inset: 0; z-index: 100; overflow-y: auto; overscroll-behavior: contain; display: grid; place-items: center; padding: 18px; background: rgb(9 15 19 / 0.65); backdrop-filter: blur(10px); }
+.food-dialog { overflow-y: auto; overscroll-behavior: contain; width: min(980px, 100%); max-height: min(780px, 92dvh); border-radius: 24px; background: var(--paper); box-shadow: 0 28px 90px rgb(0 0 0 / 0.28); }
 .food-dialog header { display: flex; justify-content: space-between; align-items: center; padding: 24px 26px 16px; }
 .food-dialog h2 { margin: 0; font-size: 28px; }
 .close-button { display: grid; width: 38px; height: 38px; place-items: center; border: 1px solid var(--line); border-radius: 12px; background: transparent; font-size: 24px; cursor: pointer; }
@@ -415,7 +415,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .dialog-tabs { display: flex; gap: 22px; margin: 20px 26px 0; border-bottom: 1px solid var(--line); }
 .dialog-tabs button { padding: 0 0 10px; border: 0; border-bottom: 2px solid transparent; color: var(--muted); background: transparent; font-size: 10px; font-weight: 750; cursor: pointer; }
 .dialog-tabs button.active { border-color: var(--forest); color: var(--forest); }
-.food-dialog-body { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 18px; padding: 18px 26px 26px; }
+.food-dialog-body { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 18px; min-height: 0; padding: 18px 26px 26px; }
 .food-results { overflow: auto; max-height: 480px; padding: 0 8px 0 0; }
 .food-results > button { display: grid; grid-template-columns: auto 1fr auto auto; gap: 12px; align-items: center; width: 100%; padding: 13px 0; border: 0; border-bottom: 1px solid var(--line); background: transparent; text-align: left; cursor: pointer; }
 .food-results > button.selected { padding-left: 10px; border-radius: 12px; background: #e7ecdf; }
@@ -433,7 +433,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .quantity-control { display: grid; grid-template-columns: 42px 1fr 42px; gap: 7px; }
 .quantity-control > button { border: 1px solid rgb(255 255 255 / 0.14); border-radius: 11px; color: white; background: rgb(255 255 255 / 0.07); font-size: 18px; cursor: pointer; }
 .quantity-control label { display: grid; grid-template-columns: 1fr auto; align-items: center; border-radius: 11px; background: white; }
-.quantity-control input { min-width: 0; height: 48px; padding: 0 8px 0 13px; border: 0; outline: 0; background: transparent; font-size: 17px; font-weight: 800; }
+.quantity-control input { min-width: 0; height: 48px; padding: 0 8px 0 13px; border: 0; outline: 0; color: var(--ink); background: transparent; font-size: 17px; font-weight: 800; }
 .quantity-control label span { padding-right: 12px; color: var(--ink); font-size: 10px; font-weight: 850; }
 .quantity-basis { display: block; margin: 7px 0 18px; color: #7f8d84; font-size: 8px; }
 .quantity-basis.error { color: #ff976e; }
@@ -686,20 +686,20 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .conversion-fields label > div, .nutrition-fields label > div { display: grid; grid-template-columns: 1fr auto; align-items: center; }
 .conversion-fields label > div input, .nutrition-fields input { min-width: 0; height: 39px; padding: 0 7px 0 10px; border: 0; outline: 0; background: transparent; font-size: 10px; font-weight: 750; }
 .conversion-fields label > div b, .nutrition-fields b { padding-right: 9px; color: #405047; font-size: 8px; }
-.combination-builder { display: grid; gap: 10px; margin-top: 16px; padding-top: 15px; border-top: 1px solid rgb(255 255 255 / 0.16); }
-.combination-builder > div:first-child, .combination-total { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
-.combination-builder > label { display: grid; gap: 5px; color: #d5ded8; font-size: 8px; font-weight: 750; }
-.combination-builder > label input { height: 39px; padding: 0 10px; border: 0; border-radius: 9px; color: var(--ink); background: white; font-size: 10px; font-weight: 700; }
-.combination-builder > p { margin: 0; color: #aeb9b1; font-size: 9px; line-height: 1.45; }
-.combination-lines { display: grid; gap: 6px; }
-.combination-lines > div { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; padding: 8px; border: 1px solid rgb(255 255 255 / 0.13); border-radius: 9px; }
-.combination-lines span { display: grid; gap: 2px; font-size: 8px; }
-.combination-lines span b { color: var(--lime); font-size: 9px; }
-.combination-lines small { color: #c4cec7; font-size: 8px; }
-.combination-lines button { border: 0; color: white; background: transparent; cursor: pointer; }
-.combination-total { padding: 10px 0; }
-.combination-total strong { color: var(--lime); }
-.combination-total span { color: #c4cec7; font-size: 8px; }
+.meal-builder { display: grid; gap: 10px; margin-top: 16px; padding-top: 15px; border-top: 1px solid rgb(255 255 255 / 0.16); }
+.meal-builder > div:first-child, .meal-total { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+.meal-builder > label { display: grid; gap: 5px; color: #d5ded8; font-size: 8px; font-weight: 750; }
+.meal-builder > label input { height: 39px; padding: 0 10px; border: 0; border-radius: 9px; color: var(--ink); background: white; font-size: 10px; font-weight: 700; }
+.meal-builder > p { margin: 0; color: #aeb9b1; font-size: 9px; line-height: 1.45; }
+.meal-builder-lines { display: grid; gap: 6px; }
+.meal-builder-lines > div { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; padding: 8px; border: 1px solid rgb(255 255 255 / 0.13); border-radius: 9px; }
+.meal-builder-lines span { display: grid; gap: 2px; font-size: 8px; }
+.meal-builder-lines span b { color: var(--lime); font-size: 9px; }
+.meal-builder-lines small { color: #c4cec7; font-size: 8px; }
+.meal-builder-lines button { border: 0; color: white; background: transparent; cursor: pointer; }
+.meal-total { padding: 10px 0; }
+.meal-total strong { color: var(--lime); }
+.meal-total span { color: #c4cec7; font-size: 8px; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
@@ -731,6 +731,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
   /* Logger controls. The dish component steppers are dense by design on desktop; on a
      phone they get room, because these are the buttons used most while cooking. */
   .dialog-tabs button { min-height: 44px; }
+  .single-item-filters button { min-height: 44px; }
   .component-control > button,
   .component-control input { min-height: 40px; }
   .component-row { grid-template-columns: 1fr auto; grid-template-areas: "name kcal" "control control"; row-gap: 8px; }
@@ -738,6 +739,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
   .component-row > b { grid-area: kcal; }
   .component-control { grid-area: control; grid-template-columns: 44px 1fr 44px; }
   .quantity-editor > a { display: inline-flex; min-height: 44px; align-items: center; }
+  .meal-component-row { grid-template-columns: 1fr 96px 44px; }
+  .meal-component-row input, .meal-component-row > button { min-height: 44px; }
 
   /* Quick-add from Purchases. */
   .purchase-row button { min-height: 44px; min-width: 44px; }
@@ -771,6 +774,30 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 
 /* ---- Logging session: create row, saved meals, and the tray ---- */
 .dialog-notice { margin: 12px 26px 0; padding: 9px 13px; border-radius: 11px; color: var(--forest); background: #e7f0dd; font-size: 10px; font-weight: 700; }
+
+.single-item-filters { display: flex; gap: 7px; overflow-x: auto; margin: 14px 26px 0; padding-bottom: 2px; scrollbar-width: none; }
+.single-item-filters button { flex: 0 0 auto; min-height: 34px; padding: 0 11px; border: 1px solid var(--line); border-radius: 99px; color: var(--muted); background: transparent; font-size: 9px; font-weight: 800; cursor: pointer; }
+.single-item-filters button.active { border-color: var(--forest); color: white; background: var(--forest); }
+.food-type-field { display: grid; gap: 5px; margin-bottom: 10px; }
+.food-type-field span { color: #d5ded8; font-size: 8px; font-weight: 750; }
+.food-type-field select { width: 100%; height: 39px; padding: 0 10px; border: 0; border-radius: 9px; color: var(--ink); background: white; font-size: 10px; font-weight: 750; }
+
+.meal-component-editor { display: grid; gap: 7px; margin: 14px 0; }
+.meal-component-row { display: grid; grid-template-columns: minmax(0, 1fr) 92px 28px; gap: 7px; align-items: center; padding: 9px; border: 1px solid rgb(255 255 255 / 0.12); border-radius: 11px; }
+.meal-component-row > span { display: grid; gap: 2px; min-width: 0; }
+.meal-component-row > span strong { overflow: hidden; color: #e4ebe6; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.meal-component-row > span small { color: #8f9c94; font-size: 8px; }
+.meal-component-row label { display: grid; grid-template-columns: 1fr auto; align-items: center; border-radius: 8px; background: white; }
+.meal-component-row input { min-width: 0; height: 34px; padding: 0 4px 0 8px; border: 0; outline: 0; color: var(--ink); background: transparent; font-size: 11px; font-weight: 800; }
+.meal-component-row label b { padding-right: 7px; color: var(--muted); font-size: 8px; }
+.meal-component-row > button { height: 28px; border: 0; color: white; background: transparent; font-size: 16px; cursor: pointer; }
+
+.meal-expand-button { width: fit-content; padding: 5px 0; border: 0; color: var(--forest); background: transparent; font-size: 9px; font-weight: 800; cursor: pointer; }
+.logged-meal-components { display: grid; gap: 5px; margin-top: 4px; padding: 9px 11px; border-radius: 10px; background: rgb(20 40 30 / 0.05); }
+.logged-meal-components > div { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 9px; }
+.logged-meal-components span { display: grid; gap: 1px; }
+.logged-meal-components span b { color: var(--forest); }
+.logged-meal-components strong { flex: none; color: var(--text); font-size: 9px; }
 
 .create-food-row { display: grid; grid-template-columns: auto 1fr; gap: 12px; align-items: center; width: 100%; margin-bottom: 6px; padding: 13px 10px; border: 1px dashed var(--forest); border-radius: 13px; background: transparent; text-align: left; cursor: pointer; }
 .create-food-row:hover { background: #eef3e8; }

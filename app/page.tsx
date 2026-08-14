@@ -3,8 +3,8 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { isCardIqFoodImport, refineCardIqImport, type CardIqFoodImport } from "./cardiq-food";
 import { FoodIcon, foodIconKey } from "./food-icon";
-import { createCustomFood, forkFoodForEdit, mergeFoodCatalog } from "./logging-session";
-import { buildCompositeItem, componentNutrition, defaultCompositeItems, findCompositeByLogId, findComponentFood, type CompositeComponent } from "./composite-foods";
+import { addToTray, cloneUserMeal, createCustomFood, createUserMeal, forkFoodForEdit, getSingleItemKind, mergeFoodCatalog, singleItemKindLabel, upsertUserMeal, userMealToNutritionItem, userMealTotals, type SingleItemKind, type TrayItem, type UserMeal } from "./logging-session";
+import { defaultCompositeItems, findComponentFood } from "./composite-foods";
 import { emptyNutritionState, getWeightTrendPoints, isSafeImageUrl, LEGACY_NUTRITION_STORAGE_KEYS, LOCAL_NUTRITION_STORAGE_KEY, logsForDay, MAX_STORED_DAYS, parseSavedNutritionState, stringifySavedNutritionState, upsertWeightEntry, withDayLogs, wouldDropOldestDay, type SavedLogEntry, type SavedNutritionState, type WeightEntry } from "./local-nutrition-state";
 import { DEFAULT_TARGETS, loggableMeals, recentDayKeys, resolveLoggedFood, summariseHistory, summariseTrend, type DaySummary } from "./day-history";
 import { estimateSatiety, getBangaloreClock, getBasisAmountForLogging, getEnergyRunway, getLoggingUnitLabel, getLoggingUnits, getQuantityLimit, hasNutritionTarget, isQuantityValid, matchesNutritionTarget, matchesRecipe, satietyLabel, scaleNutrition, scaleNutritionForUnit, sumLoggedNutrition, sumNutritionDetails, type DashboardClock, type NutritionTarget } from "./prototype-logic";
@@ -38,7 +38,7 @@ const suggestedMeal = recipes.find((recipe) => recipe.id === "cauli-chicken") ??
 const baseLogFoods = [...compositeItems, ...foods, ...loggableMeals];
 
 function foodLabel(food: Pick<Food, "brand" | "name" | "variant">) {
-  return [food.brand, food.name, food.variant].map((part) => part.trim()).filter(Boolean).join(" · ");
+  return [food.brand.trim() === "Generic" ? "" : food.brand, food.name, food.variant].map((part) => part.trim()).filter(Boolean).join(" · ");
 }
 
 function foodAtBasis(food: Food): Food {
@@ -69,9 +69,43 @@ function blankFood(name = ""): Food {
 }
 
 function isFoodDetailsValid(food: Food) {
-  return Boolean(food.brand.trim() && food.name.trim() && isQuantityValid(food.unit, food.amount))
+  const brandIsValid = food.category === "Ingredient" || Boolean(food.brand.trim());
+  return Boolean(brandIsValid && food.name.trim() && isQuantityValid(food.unit, food.amount))
     && [food.calories, food.protein, food.carbs, food.fat, food.fiber].every((value) => Number.isFinite(value) && value >= 0 && value <= 50_000);
 }
+
+function itemCategoryForKind(kind: SingleItemKind): Food["category"] {
+  if (kind === "ingredient") return "Ingredient";
+  if (kind === "ordered-food") return "OrderedFood";
+  return "Product";
+}
+
+function templateComponent(foodId: string, amount: number): Food | null {
+  const food = findComponentFood(foodId);
+  return food ? scaleNutrition(food, amount) : null;
+}
+
+/** Existing calculated dishes become ordinary flat Meals in Log Food. */
+const builtInUserMeals: UserMeal[] = [
+  ...compositeItems.map((food) => ({
+    id: `builtin-${food.id}`,
+    name: food.name,
+    createdAt: "2026-08-08",
+    components: (food.components ?? []).flatMap((component) => {
+      const item = templateComponent(component.foodId, component.amount);
+      return item ? [item] : [];
+    }),
+  })),
+  ...recipes.map((meal) => ({
+    id: `builtin-meal-${meal.id}`,
+    name: meal.name,
+    createdAt: "2026-08-08",
+    components: meal.nutritionBasis.flatMap((component) => {
+      const item = templateComponent(component.foodId, component.amount);
+      return item ? [item] : [];
+    }),
+  })),
+].filter((meal) => meal.components.length > 0);
 
 function planEntryFromFood(food: Food): PlannedEntry {
   return { id: food.id, kind: "food", name: foodLabel(food), serving: `${food.amount} ${food.unit}`, calories: food.calories, protein: food.protein, carbs: food.carbs, fat: food.fat, fiber: food.fiber };
@@ -96,18 +130,31 @@ function foodToLogEntry(food: Food): SavedLogEntry {
   return { foodId: food.id, amount: food.amount, snapshot: food };
 }
 
-function restoreDayLogIndices(saved: SavedNutritionState, dayKey: string, catalog: Food[] = baseLogFoods): number[] {
-  const indices: number[] = [];
-  logsForDay(saved, dayKey).forEach((entry, index) => {
-    if (resolveLoggedFood(entry, catalog)) indices.push(index);
-  });
-  return indices;
+function mealToLogEntry(meal: UserMeal, trust: Food["source"]["trust"] = "Personal"): SavedLogEntry {
+  const snapshot = userMealToNutritionItem(meal, trust);
+  return { foodId: snapshot.id, amount: 1, snapshot, mealSnapshot: cloneUserMeal(meal) };
 }
 
-function restoreDayLogs(saved: SavedNutritionState, dayKey: string, catalog: Food[] = baseLogFoods): Food[] {
-  return logsForDay(saved, dayKey).flatMap((entry) => {
+type LoggedDisplayEntry = { food: Food; logIndex: number; meal: UserMeal | null };
+
+function legacyMealSnapshot(food: Food, dayKey: string): UserMeal {
+  const knownComponents = (food.components ?? []).flatMap((component) => {
+    const item = templateComponent(component.foodId, component.amount);
+    return item ? [item] : [];
+  });
+  return {
+    id: `legacy-log-${food.id}`,
+    name: food.name,
+    createdAt: dayKey,
+    components: knownComponents.length > 0 ? knownComponents : [{ ...food, id: `legacy-log-item-${food.id}`, brand: "Legacy", category: "Product" }],
+  };
+}
+
+function restoreDayEntries(saved: SavedNutritionState, dayKey: string, catalog: Food[] = baseLogFoods): LoggedDisplayEntry[] {
+  return logsForDay(saved, dayKey).flatMap((entry, logIndex) => {
     const food = resolveLoggedFood(entry, catalog);
-    return food ? [food] : [];
+    const meal = food && (food.category === "Meal" || food.category === "Composite") ? entry.mealSnapshot ?? legacyMealSnapshot(food, dayKey) : null;
+    return food ? [{ food, logIndex, meal }] : [];
   });
 }
 
@@ -206,11 +253,29 @@ function WeightCard({ dayKey, entries, onSave }: { dayKey: string; entries: Weig
   );
 }
 
-function TodayView({ clock, calories, macros, extras, quickFoods, weights, hasCardIqImport, targets, targetsAreDefaults, history, onLog, onAdd, onEdit, onDelete, onSaveWeight, onOpenMeals, onSaveTargets }: {
+function DiaryEntryRow({ entry, index, onEdit, onDelete }: { entry: LoggedDisplayEntry; index: number; onEdit: (index: number) => void; onDelete: (index: number) => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const { food, meal } = entry;
+  return (
+    <article className={`meal-entry added ${meal ? "grouped-meal-entry" : ""}`}>
+      <i className="timeline-dot" />
+      <div className="meal-meta">
+        <span className="logged-volume">Logged today · {meal ? "1 meal" : `${food.amount} ${food.unit}${food.amount === 1 ? "" : food.unit === "piece" || food.unit === "serving" || food.unit === "scoop" || food.unit === "pack" ? "s" : ""}`}</span>
+        <strong>{meal ? meal.name : foodLabel(food)}</strong>
+        <small>{food.protein.toFixed(1)}P · {food.carbs.toFixed(1)}C · {food.fat.toFixed(1)}F · {food.fiber.toFixed(1)} fibre</small>
+        {meal ? <button className="meal-expand-button" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}>{expanded ? "Hide items" : `Show ${meal.components.length} item${meal.components.length === 1 ? "" : "s"}`}</button> : null}
+        {expanded && meal ? <div className="logged-meal-components">{meal.components.map((component, componentIndex) => <div key={`${component.id}-${componentIndex}`}><span><b>{component.amount} {component.unit}</b>{foodLabel(component)}</span><strong>{Math.round(component.calories)} kcal</strong></div>)}</div> : null}
+      </div>
+      <div className="entry-actions"><b>{Math.round(food.calories)} kcal</b><div className="entry-buttons"><button onClick={() => onEdit(index)}>Edit</button><button className="entry-delete" onClick={() => onDelete(index)} aria-label={`Remove ${meal?.name ?? foodLabel(food)} from today’s diary`}>Remove</button></div></div>
+    </article>
+  );
+}
+
+function TodayView({ clock, calories, macros, entries, quickFoods, weights, hasCardIqImport, targets, targetsAreDefaults, history, onLog, onAdd, onEdit, onDelete, onSaveWeight, onOpenMeals, onSaveTargets }: {
   clock: DashboardClock;
   calories: number;
   macros: Record<MacroKey, number>;
-  extras: Food[];
+  entries: LoggedDisplayEntry[];
   quickFoods: Food[];
   weights: WeightEntry[];
   hasCardIqImport: boolean;
@@ -238,7 +303,7 @@ function TodayView({ clock, calories, macros, extras, quickFoods, weights, hasCa
   // drawn as a gap, never as a zero, because not logging is not the same as not eating.
   const weekKeys = recentDayKeys(clock.dayKey, 7);
   const week = weekKeys.map((dayKey) => {
-    const logged = dayKey === clock.dayKey ? { dayKey, calories, entryCount: extras.length } : history.find((day) => day.dayKey === dayKey);
+    const logged = dayKey === clock.dayKey ? { dayKey, calories, entryCount: entries.length } : history.find((day) => day.dayKey === dayKey);
     return { dayKey, calories: logged?.calories ?? null, isToday: dayKey === clock.dayKey };
   });
   const weekLogged = week.filter((day) => day.calories !== null);
@@ -282,16 +347,10 @@ function TodayView({ clock, calories, macros, extras, quickFoods, weights, hasCa
         <section className="timeline-panel">
           <div className="section-title-row">
             <div><span className="eyebrow">Food diary</span><h2>Today’s timeline</h2></div>
-            <span className="soft-badge">{extras.length} {extras.length === 1 ? "item" : "items"} logged</span>
+            <span className="soft-badge">{entries.length} {entries.length === 1 ? "entry" : "entries"} logged</span>
           </div>
-          <div className={`meal-timeline ${extras.length > 1 ? "connected" : ""}`}>
-            {extras.length === 0 ? <div className="timeline-empty"><strong>No food logged yet</strong><span>Your actual entries—and only your actual entries—will appear here.</span><button className="text-button" onClick={onLog}>Log your first food</button></div> : extras.map((food, index) => (
-              <article className="meal-entry added" key={`${food.name}-${index}`}>
-                <i className="timeline-dot" />
-                <div className="meal-meta"><span className="logged-volume">Logged today · {food.amount} {food.unit}{food.amount === 1 ? "" : food.unit === "piece" ? "s" : food.unit === "serving" || food.unit === "scoop" || food.unit === "pack" ? "s" : ""}</span><strong>{foodLabel(food)}</strong><small>{food.protein.toFixed(1)}P · {food.carbs.toFixed(1)}C · {food.fat.toFixed(1)}F · {food.fiber.toFixed(1)} fibre</small>{food.source.trust === "Estimated" || food.source.trust === "Personal" ? <em>Edited by you</em> : null}</div>
-                <div className="entry-actions"><b>{Math.round(food.calories)} kcal</b><div className="entry-buttons"><button onClick={() => onEdit(index)}>Edit</button><button className="entry-delete" onClick={() => onDelete(index)} aria-label={`Remove ${foodLabel(food)} from today’s diary`}>Remove</button></div></div>
-              </article>
-            ))}
+          <div className={`meal-timeline ${entries.length > 1 ? "connected" : ""}`}>
+            {entries.length === 0 ? <div className="timeline-empty"><strong>No food logged yet</strong><span>Your actual entries—and only your actual entries—will appear here.</span><button className="text-button" onClick={onLog}>Log your first food</button></div> : entries.map((entry, index) => <DiaryEntryRow entry={entry} index={index} onEdit={onEdit} onDelete={onDelete} key={`${entry.logIndex}-${entry.food.id}`} />)}
           </div>
         </section>
 
@@ -625,68 +684,113 @@ function MealsView({ onRecipe, planned, onPlan, onRemove }: { onRecipe: (recipe:
   );
 }
 
-function ComponentEditor({ components, onChange }: { components: CompositeComponent[]; onChange: (next: CompositeComponent[]) => void }) {
-  return <div className="component-editor">{components.map((component, index) => {
-    const food = findComponentFood(component.foodId);
-    if (!food) return null;
-    const step = food.unit === "ml" ? 10 : food.unit === "g" ? 5 : food.unit === "piece" ? 1 : 0.25;
-    const value = componentNutrition(component);
-    const update = (amount: number) => onChange(components.map((entry, entryIndex) => entryIndex === index ? { ...entry, amount: Math.min(getQuantityLimit(food.unit), Math.max(0, Number(amount.toFixed(2)))) } : entry));
-    return <div className="component-row" key={`${component.foodId}-${index}`}><span className="component-name">{food.name.split(" · ")[0]}</span><div className="component-control"><button onClick={() => update(component.amount - step)} aria-label={`Less ${food.name}`}>−</button><label><input type="number" min={0} max={getQuantityLimit(food.unit)} step={step} value={component.amount} onChange={(event) => update(Number(event.target.value))} aria-label={`${food.name} amount in ${food.unit}`} /><span>{food.unit}</span></label><button onClick={() => update(component.amount + step)} aria-label={`More ${food.name}`}>＋</button></div><b>{Math.round(value.calories)}<small> kcal</small></b></div>;
-  })}</div>;
-}
-
-function getShownLogFoods(catalog: Food[], tab: string, search: string) {
+function getShownSingleItems(catalog: Food[], kind: "all" | SingleItemKind, search: string) {
   const query = search.trim().toLowerCase();
   return catalog.filter((food) => {
-    const matchesTab = query ? true : tab === "Commonly ordered" ? food.common : tab === "Dishes" ? food.category === "Composite" : tab === "Products" ? food.category === "Ordered" || food.category === "Product" : tab === "Ingredients" ? food.category === "Ingredient" : food.category === "Meal";
+    if (food.category === "Meal" || food.category === "Composite") return false;
+    const matchesKind = kind === "all" || getSingleItemKind(food) === kind;
     const matchesSearch = !query || [food.name, food.brand, food.variant, ...food.aliases].join(" ").toLowerCase().includes(query);
-    return matchesTab && matchesSearch;
+    return matchesKind && matchesSearch;
   });
 }
 
-function FoodDialog({ initialFood, editing, catalog, onClose, onAdd, onSaveFood }: { initialFood: Food | null; editing: boolean; catalog: Food[]; onClose: () => void; onAdd: (food: Food) => void; onSaveFood: (food: Food) => void }) {
-  const initial = initialFood ? foodAtBasis(initialFood) : catalog.find((food) => food.common) ?? catalog[0];
+function FoodDetailsEditor({ draft, setDraft, draftIsNew, saveToLibrary, setSaveToLibrary, onCancel, onSave, submitLabel }: {
+  draft: Food;
+  setDraft: React.Dispatch<React.SetStateAction<Food>>;
+  draftIsNew: boolean;
+  saveToLibrary: boolean;
+  setSaveToLibrary: (value: boolean) => void;
+  onCancel: () => void;
+  onSave: () => void;
+  submitLabel: string;
+}) {
+  const kind = getSingleItemKind(draft);
+  const brandLabel = kind === "ordered-food" ? "Restaurant / brand *" : "Brand *";
+  return <div className="food-details-editor">
+    <div className="details-heading"><div><span className="eyebrow bright">{draftIsNew ? "New Single Item" : "Single Item details"}</span><h3>{draftIsNew ? "Add it yourself" : "Edit anything"}</h3></div><button onClick={onCancel} aria-label="Cancel food details edit">×</button></div>
+    <label className="food-type-field"><span>Food type</span><select value={kind} onChange={(event) => setDraft((food) => ({ ...food, category: itemCategoryForKind(event.target.value as SingleItemKind), brand: event.target.value === "ingredient" ? "" : food.brand === "Generic" ? "" : food.brand }))}>{(["packaged", "ingredient", "ordered-food"] as SingleItemKind[]).map((value) => <option value={value} key={value}>{singleItemKindLabel(value)}</option>)}</select></label>
+    <p>{kind === "ingredient" ? "Use this for a generic raw or cooked ingredient. No brand is needed." : kind === "ordered-food" ? "Use this only for a prepared meal ordered online, such as a specific Subway sandwich." : "Use this for a product with its own pack or nutrition label."}</p>
+    <div className="identity-fields">
+      {kind === "ingredient" ? null : <label><span>{brandLabel}</span><input value={draft.brand} onChange={(event) => setDraft((food) => ({ ...food, brand: event.target.value }))} /></label>}
+      <label><span>{kind === "ordered-food" ? "Menu item *" : "Item name *"}</span><input value={draft.name} onChange={(event) => setDraft((food) => ({ ...food, name: event.target.value }))} /></label>
+      <label><span>Variant</span><input value={draft.variant} onChange={(event) => setDraft((food) => ({ ...food, variant: event.target.value }))} placeholder={kind === "ordered-food" ? "Optional, e.g. 6-inch / toasted" : "Optional, e.g. Slim / 1 L"} /></label>
+    </div>
+    <div className="serving-fields">
+      <label><span>Nutrition basis</span><input type="number" min="0.01" step="0.01" value={draft.amount} onChange={(event) => setDraft((food) => ({ ...food, amount: Number(event.target.value) }))} /></label>
+      <label><span>Unit</span><select value={draft.unit} onChange={(event) => { const unit = event.target.value as Food["unit"]; setDraft((food) => ({ ...food, unit, conversions: food.conversions?.filter((conversion) => conversion.unit !== unit) })); }}>{["g", "ml", "scoop", "pack", "piece", "serving"].map((unit) => <option key={unit}>{unit}</option>)}</select></label>
+    </div>
+    <div className="conversion-fields">
+      <label><span>Also log by</span><select value={draft.conversions?.[0]?.unit ?? ""} onChange={(event) => { const unit = event.target.value as NutritionUnit | ""; setDraft((food) => ({ ...food, conversions: unit ? [{ unit, basisAmount: food.conversions?.[0]?.basisAmount ?? 1, label: food.conversions?.[0]?.label }] : undefined })); }}><option value="">No alternate unit</option>{(["g", "ml", "scoop", "pack", "piece", "serving"] as NutritionUnit[]).filter((unit) => unit !== draft.unit).map((unit) => <option key={unit}>{unit}</option>)}</select></label>
+      {draft.conversions?.[0] ? <><label><span>1 {draft.conversions[0].unit} equals</span><div><input type="number" min="0.01" max="5000" step="0.01" value={draft.conversions[0].basisAmount} onChange={(event) => setDraft((food) => ({ ...food, conversions: food.conversions?.map((conversion, index) => index === 0 ? { ...conversion, basisAmount: Number(event.target.value) } : conversion) }))} /><b>{draft.unit}</b></div></label><label><span>Friendly label</span><input value={draft.conversions[0].label ?? ""} onChange={(event) => setDraft((food) => ({ ...food, conversions: food.conversions?.map((conversion, index) => index === 0 ? { ...conversion, label: event.target.value } : conversion) }))} placeholder="e.g. 1 carton" /></label></> : null}
+    </div>
+    <div className="nutrition-fields">{(["calories", "protein", "carbs", "fat", "fiber"] as const).map((field) => <label key={field}><span>{field === "fiber" ? "Fibre" : field.charAt(0).toUpperCase() + field.slice(1)}</span><div><input type="number" min="0" max="50000" step="0.1" value={draft[field]} onChange={(event) => setDraft((food) => ({ ...food, [field]: Number(event.target.value) }))} /><b>{field === "calories" ? "kcal" : "g"}</b></div></label>)}</div>
+    {draftIsNew ? <label className="save-choice"><input type="checkbox" checked={saveToLibrary} onChange={(event) => setSaveToLibrary(event.target.checked)} /><span><strong>Save to Single Items for next time</strong><small>{saveToLibrary ? "It will be waiting here tomorrow." : "This one is used today only."}</small></span></label> : null}
+    <label className="photo-field"><span>Photo URL</span><input value={draft.imageUrl ?? ""} onChange={(event) => setDraft((food) => ({ ...food, imageUrl: event.target.value }))} placeholder="Optional https:// link to a picture" /></label>
+    <button className="button lime full" disabled={!isFoodDetailsValid(draft)} onClick={onSave}>{submitLabel}</button>
+  </div>;
+}
+
+function MealEditor({ meal, onChange, onLog, buttonLabel }: { meal: UserMeal; onChange: (meal: UserMeal) => void; onLog: () => void; buttonLabel: string }) {
+  const totals = userMealTotals(meal);
+  const updateAmount = (index: number, amount: number) => {
+    const component = meal.components[index];
+    if (!component) return;
+    const step = component.unit === "g" || component.unit === "ml" ? 5 : component.unit === "piece" ? 1 : 0.25;
+    const safeAmount = Math.min(getQuantityLimit(component.unit), Math.max(step, Number((Number.isFinite(amount) ? amount : step).toFixed(2))));
+    onChange({ ...meal, components: meal.components.map((food, foodIndex) => foodIndex === index ? scaleNutritionForUnit(food, safeAmount, food.unit) : food) });
+  };
+  return <aside className="quantity-editor dark-card meal-editor">
+    <span className="eyebrow bright">Meal</span><h3>{meal.name}</h3><p>Adjustments here apply only to today’s diary entry.</p>
+    <div className="meal-component-editor">{meal.components.map((component, index) => <div className="meal-component-row" key={`${component.id}-${index}`}><span><strong>{foodLabel(component)}</strong><small>{Math.round(component.calories)} kcal</small></span><label><input type="number" min="0.01" max={getQuantityLimit(component.unit)} step={component.unit === "g" || component.unit === "ml" ? 5 : component.unit === "piece" ? 1 : 0.25} value={component.amount} onChange={(event) => updateAmount(index, Number(event.target.value))} aria-label={`${component.name} amount`} /><b>{component.unit}</b></label><button onClick={() => onChange({ ...meal, components: meal.components.filter((_, componentIndex) => componentIndex !== index) })} aria-label={`Remove ${component.name} from this meal`}>×</button></div>)}</div>
+    <div className="meal-total"><strong>{Math.round(totals.calories)} kcal</strong><span>{totals.protein.toFixed(1)}P · {totals.carbs.toFixed(1)}C · {totals.fat.toFixed(1)}F</span></div>
+    <button className="button lime full" disabled={meal.components.length === 0} onClick={onLog}>{buttonLabel}</button>
+  </aside>;
+}
+
+function FoodDialog({ initialFood, initialMeal, editing, catalog, meals: mealOptions, dayKey, onClose, onAdd, onAddMeal, onSaveFood, onSaveMeal }: { initialFood: Food | null; initialMeal: UserMeal | null; editing: boolean; catalog: Food[]; meals: UserMeal[]; dayKey: string; onClose: () => void; onAdd: (food: Food) => void; onAddMeal: (meal: UserMeal) => void; onSaveFood: (food: Food) => void; onSaveMeal: (meal: UserMeal) => void }) {
+  const singleItems = catalog.filter((food) => food.category !== "Meal" && food.category !== "Composite");
+  const initial = initialFood && initialFood.category !== "Meal" ? foodAtBasis(initialFood) : singleItems.find((food) => food.common) ?? singleItems[0];
+  const [mode, setMode] = useState<"items" | "meals">(initialMeal ? "meals" : "items");
   const [search, setSearch] = useState("");
-  const [tab, setTab] = useState(initialFood?.category === "Composite" ? "Dishes" : initialFood?.category === "Meal" ? "Meals" : initialFood && !initialFood.common ? (initialFood.category === "Ingredient" ? "Ingredients" : "Products") : "Commonly ordered");
-  const [selectedId, setSelectedId] = useState(initial.id);
-  const [quantity, setQuantity] = useState(initialFood?.amount ?? initial.amount);
-  const [loggingUnit, setLoggingUnit] = useState<NutritionUnit>(initialFood?.unit ?? initial.unit);
-  const [components, setComponents] = useState<CompositeComponent[]>(initialFood?.components ?? findCompositeByLogId(initial.id)?.components ?? []);
-  const [combining, setCombining] = useState(false);
-  const [combinationName, setCombinationName] = useState("");
-  const [combinationLines, setCombinationLines] = useState<Array<{ key: string; food: Food }>>([]);
+  const [itemKind, setItemKind] = useState<"all" | SingleItemKind>("all");
+  const [selectedId, setSelectedId] = useState(initial?.id ?? "");
+  const [quantity, setQuantity] = useState(initialFood?.amount ?? initial?.amount ?? 0);
+  const [loggingUnit, setLoggingUnit] = useState<NutritionUnit>(initialFood?.unit ?? initial?.unit ?? "g");
+  const [buildingMeal, setBuildingMeal] = useState(false);
+  const [mealName, setMealName] = useState("");
+  const [mealLines, setMealLines] = useState<TrayItem[]>([]);
+  const [mealDraft, setMealDraft] = useState<UserMeal | null>(initialMeal ? cloneUserMeal(initialMeal) : mealOptions[0] ? cloneUserMeal(mealOptions[0]) : null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [draftIsNew, setDraftIsNew] = useState(false);
   const [saveToLibrary, setSaveToLibrary] = useState(true);
-  const [draft, setDraft] = useState<Food>(initial);
+  const [draft, setDraft] = useState<Food>(initial ?? blankFood());
   const [editedFood, setEditedFood] = useState<Food | null>(null);
   const dialogCatalog = catalog.map((food) => {
     if (editedFood?.id === food.id) return editedFood;
     if (editing && initialFood?.id === food.id) return foodAtBasis(initialFood);
     return food;
   });
-  const shown = getShownLogFoods(dialogCatalog, tab, search);
-  const listed = shown.find((food) => food.id === selectedId) ?? null;
-  const composite = listed ? findCompositeByLogId(listed.id) : null;
-  const selected = composite && components.length > 0 ? buildCompositeItem(composite, components) : listed;
-  const step = loggingUnit === "ml" || loggingUnit === "g" ? 5 : 0.25;
+  const shownItems = getShownSingleItems(dialogCatalog, itemKind, search);
+  const selected = shownItems.find((food) => food.id === selectedId) ?? null;
+  const shownMeals = mealOptions.filter((meal) => {
+    const query = search.trim().toLowerCase();
+    return !query || [meal.name, ...meal.components.flatMap((food) => [food.name, food.brand, food.variant])].join(" ").toLowerCase().includes(query);
+  });
+  const visibleMealDraft = mealDraft && shownMeals.some((meal) => meal.id === mealDraft.id) ? mealDraft : null;
+  const step = loggingUnit === "ml" || loggingUnit === "g" ? 5 : loggingUnit === "piece" ? 1 : 0.25;
   const maxQuantity = selected ? getQuantityLimit(loggingUnit) : 0;
   const requestedBasisAmount = selected ? getBasisAmountForLogging(selected, quantity, loggingUnit) : 0;
   const quantityValid = selected ? isQuantityValid(loggingUnit, quantity) && requestedBasisAmount > 0 && getLoggingUnits(selected).includes(loggingUnit) : false;
   const scaled = selected ? scaleNutritionForUnit(selected, quantityValid ? quantity : 0, loggingUnit) : null;
   const labelBasis = selected ? selected.basis?.amount ?? selected.amount : 0;
   const basisUnit = selected ? selected.basis?.unit ?? selected.unit : loggingUnit;
-  const combinationTotals = sumNutritionDetails(combinationLines.map((line) => line.food));
-  const keepSelectionVisible = (nextTab: string, nextSearch: string) => {
-    const candidates = getShownLogFoods(dialogCatalog, nextTab, nextSearch);
-    if (candidates.some((food) => food.id === selectedId)) return;
-    setSelectedId(candidates[0]?.id ?? "");
-    setQuantity(candidates[0]?.amount ?? 0);
-    setLoggingUnit(candidates[0]?.unit ?? "g");
-    setComponents(candidates[0]?.components ?? findCompositeByLogId(candidates[0]?.id ?? "")?.components ?? []);
-    setDetailsOpen(false);
-  };
+  const mealTotals = sumNutritionDetails(mealLines.map((line) => line.food));
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = previousOverflow; };
+  }, []);
+  const chooseFood = (food: Food) => { setSelectedId(food.id); setQuantity(food.amount); setLoggingUnit(food.unit); setDetailsOpen(false); };
   const openDetails = () => {
     if (!selected) return;
     setDraft(foodAtBasis(selected));
@@ -694,7 +798,9 @@ function FoodDialog({ initialFood, editing, catalog, onClose, onAdd, onSaveFood 
   };
   const nextUnique = () => window.crypto.randomUUID().slice(0, 8);
   const startCreate = () => {
-    setDraft(blankFood(search.trim()));
+    const next = blankFood(search.trim());
+    next.category = itemKind === "all" ? "Product" : itemCategoryForKind(itemKind);
+    setDraft(next);
     setDraftIsNew(true);
     setSaveToLibrary(true);
     setDetailsOpen(true);
@@ -716,7 +822,9 @@ function FoodDialog({ initialFood, editing, catalog, onClose, onAdd, onSaveFood 
       setLoggingUnit(withConversions.unit);
       setDraftIsNew(false);
       setDetailsOpen(false);
-      onAdd(scaleNutritionForUnit(withConversions, withConversions.amount, withConversions.unit));
+      const ready = scaleNutritionForUnit(withConversions, withConversions.amount, withConversions.unit);
+      if (buildingMeal) setMealLines((lines) => addToTray(lines, ready, window.crypto.randomUUID()));
+      else onAdd(ready);
       return;
     }
 
@@ -727,7 +835,7 @@ function FoodDialog({ initialFood, editing, catalog, onClose, onAdd, onSaveFood 
     const saved: Food = {
       ...draft,
       id: forked.id,
-      brand: draft.brand.trim(),
+      brand: draft.category === "Ingredient" ? draft.brand.trim() || "Generic" : draft.brand.trim(),
       name: draft.name.trim(),
       variant: draft.variant.trim(),
       basis: undefined,
@@ -744,28 +852,16 @@ function FoodDialog({ initialFood, editing, catalog, onClose, onAdd, onSaveFood 
     }
     setDetailsOpen(false);
   };
-  const addCombinationLine = () => {
+  const addMealLine = () => {
     if (!scaled || !quantityValid) return;
-    setCombinationLines((lines) => [...lines, { key: `${selectedId}-${window.crypto.randomUUID()}`, food: scaled }]);
+    setMealLines((lines) => addToTray(lines, scaled, window.crypto.randomUUID()));
   };
-  const saveCombination = () => {
-    if (combinationLines.length === 0) return;
-    const lineDescription = combinationLines.map(({ food }) => `${food.amount} ${food.unit} ${food.name}`).join(" + ");
-    const saved: Food = {
-      id: `combination-${window.crypto.randomUUID()}`,
-      brand: "My Foods",
-      name: combinationName.trim() || "Custom combination",
-      variant: lineDescription,
-      amount: 1,
-      unit: "serving",
-      ...combinationTotals,
-      category: "Meal",
-      availability: "Saved combination",
-      aliases: combinationLines.flatMap(({ food }) => [food.name, food.brand, ...food.aliases]),
-      source: { label: "Combined by you", url: "", trust: "Personal" },
-    };
-    onSaveFood(saved);
-    onAdd(saved);
+  const saveBuiltMeal = () => {
+    const meal = createUserMeal(mealName, mealLines, nextUnique(), dayKey);
+    if (!meal) return;
+    onSaveMeal(meal);
+    onAddMeal(meal);
+    onClose();
   };
   const close = () => {
     setSearch("");
@@ -775,53 +871,24 @@ function FoodDialog({ initialFood, editing, catalog, onClose, onAdd, onSaveFood 
     <div className="dialog-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) close(); }}>
       <section className="food-dialog" role="dialog" aria-modal="true" aria-labelledby="log-food-title">
         <header><div><span className="eyebrow">Track</span><h2 id="log-food-title">{editing ? "Edit logged food" : "Log food"}</h2></div><button className="close-button" onClick={close} aria-label="Close food logger">×</button></header>
-        {!editing ? <div className="logging-mode-switch" aria-label="Logging mode"><button className={!combining ? "active" : ""} onClick={() => setCombining(false)}>Single item</button><button className={combining ? "active" : ""} onClick={() => setCombining(true)}>Combination</button></div> : null}
-        <div className="dialog-search"><span>⌕</span><input autoFocus value={search} onChange={(event) => { const next = event.target.value; setSearch(next); keepSelectionVisible(tab, next); }} placeholder="Search food, recipe or recent purchase" /></div>
-        <div className="dialog-tabs">{["Commonly ordered", "Dishes", "Products", "Ingredients", "Meals"].map((item) => <button className={tab === item ? "active" : ""} onClick={() => { setTab(item); keepSelectionVisible(item, search); }} key={item}>{item}</button>)}</div>
+        {!editing ? <div className="logging-mode-switch" aria-label="Food type"><button className={mode === "items" ? "active" : ""} onClick={() => { setMode("items"); setBuildingMeal(false); setSearch(""); setDetailsOpen(false); }}>Single Items</button><button className={mode === "meals" ? "active" : ""} onClick={() => { setMode("meals"); setBuildingMeal(false); setSearch(""); setDetailsOpen(false); }}>Meals</button></div> : null}
+        <div className="dialog-search"><span>⌕</span><input autoFocus value={search} onChange={(event) => setSearch(event.target.value)} placeholder={mode === "meals" && !buildingMeal ? "Search saved Meals" : "Search Single Items"} /></div>
+        {mode === "items" || buildingMeal ? <div className="single-item-filters" aria-label="Single Item filters"><button className={itemKind === "all" ? "active" : ""} onClick={() => setItemKind("all")}>All</button>{(["packaged", "ingredient", "ordered-food"] as SingleItemKind[]).map((kind) => <button className={itemKind === kind ? "active" : ""} onClick={() => setItemKind(kind)} key={kind}>{singleItemKindLabel(kind)}</button>)}</div> : null}
         <div className="food-dialog-body">
-          <div className="food-results">{editing ? null : (
-            <button className="create-food-row" onClick={startCreate}>
-              <span className="food-thumb icon create" aria-hidden="true">＋</span>
-              <span><strong>{search.trim() ? `Create “${search.trim()}” as a new food` : "Create a new food"}</strong><small>Your own brand, serving size and macros</small></span>
-            </button>
-          )}{shown.map((food) => <button className={selected?.id === food.id ? "selected" : ""} key={food.id} onClick={() => { setSelectedId(food.id); setQuantity(food.amount); setLoggingUnit(food.unit); setComponents(food.components ?? findCompositeByLogId(food.id)?.components ?? []); setDetailsOpen(false); }}><FoodThumb food={food} /><span><strong>{foodLabel(food)}</strong><small>{food.amount} {food.unit} · {food.source.trust}</small></span><span><b>{Math.round(food.calories)}</b><small>kcal</small></span><i>→</i></button>)}{shown.length === 0 ? <div className="food-results-empty"><strong>No match yet</strong><span>Try the brand or item name — or create it as a new food.</span></div> : null}</div>
-          {selected && scaled ? <aside className={`quantity-editor dark-card ${detailsOpen ? "details-mode" : ""} ${combining ? "combination-mode" : ""}`}>
-            {detailsOpen ? <div className="food-details-editor">
-              <div className="details-heading"><div><span className="eyebrow bright">{draftIsNew ? "New food" : "Food details"}</span><h3>{draftIsNew ? "Add it yourself" : "Edit anything"}</h3></div><button onClick={() => { setDetailsOpen(false); setDraftIsNew(false); }} aria-label="Cancel food details edit">×</button></div>
-              <p>Brand and item name are required. Variant can be blank.</p>
-              <div className="identity-fields">
-                <label><span>Brand *</span><input value={draft.brand} onChange={(event) => setDraft((food) => ({ ...food, brand: event.target.value }))} /></label>
-                <label><span>Item name *</span><input value={draft.name} onChange={(event) => setDraft((food) => ({ ...food, name: event.target.value }))} /></label>
-                <label><span>Variant</span><input value={draft.variant} onChange={(event) => setDraft((food) => ({ ...food, variant: event.target.value }))} placeholder="Optional, e.g. Slim / 100 ml" /></label>
-              </div>
-              <div className="serving-fields">
-                <label><span>Nutrition basis</span><input type="number" min="0.01" step="0.01" value={draft.amount} onChange={(event) => setDraft((food) => ({ ...food, amount: Number(event.target.value) }))} /></label>
-                <label><span>Unit</span><select value={draft.unit} onChange={(event) => { const unit = event.target.value as Food["unit"]; setDraft((food) => ({ ...food, unit, conversions: food.conversions?.filter((conversion) => conversion.unit !== unit) })); }}>{["g", "ml", "scoop", "pack", "piece", "serving"].map((unit) => <option key={unit}>{unit}</option>)}</select></label>
-              </div>
-              <div className="conversion-fields">
-                <label><span>Also log by</span><select value={draft.conversions?.[0]?.unit ?? ""} onChange={(event) => { const unit = event.target.value as NutritionUnit | ""; setDraft((food) => ({ ...food, conversions: unit ? [{ unit, basisAmount: food.conversions?.[0]?.basisAmount ?? 1, label: food.conversions?.[0]?.label }] : undefined })); }}><option value="">No alternate unit</option>{(["g", "ml", "scoop", "pack", "piece", "serving"] as NutritionUnit[]).filter((unit) => unit !== draft.unit).map((unit) => <option key={unit}>{unit}</option>)}</select></label>
-                {draft.conversions?.[0] ? <><label><span>1 {draft.conversions[0].unit} equals</span><div><input type="number" min="0.01" max="5000" step="0.01" value={draft.conversions[0].basisAmount} onChange={(event) => setDraft((food) => ({ ...food, conversions: food.conversions?.map((conversion, index) => index === 0 ? { ...conversion, basisAmount: Number(event.target.value) } : conversion) }))} /><b>{draft.unit}</b></div></label><label><span>Friendly label</span><input value={draft.conversions[0].label ?? ""} onChange={(event) => setDraft((food) => ({ ...food, conversions: food.conversions?.map((conversion, index) => index === 0 ? { ...conversion, label: event.target.value } : conversion) }))} placeholder="e.g. 1 carton" /></label></> : null}
-              </div>
-              <div className="nutrition-fields">
-                {(["calories", "protein", "carbs", "fat", "fiber"] as const).map((field) => <label key={field}><span>{field === "fiber" ? "Fibre" : field.charAt(0).toUpperCase() + field.slice(1)}</span><div><input type="number" min="0" max="50000" step="0.1" value={draft[field]} onChange={(event) => setDraft((food) => ({ ...food, [field]: Number(event.target.value) }))} /><b>{field === "calories" ? "kcal" : "g"}</b></div></label>)}
-              </div>
-              {draftIsNew ? (
-                <label className="save-choice"><input type="checkbox" checked={saveToLibrary} onChange={(event) => setSaveToLibrary(event.target.checked)} /><span><strong>Save to My Foods for next time</strong><small>{saveToLibrary ? "It will be waiting here tomorrow." : "This one is logged for today only."}</small></span></label>
-              ) : null}
-              <label className="photo-field"><span>Photo URL</span><input value={draft.imageUrl ?? ""} onChange={(event) => setDraft((food) => ({ ...food, imageUrl: event.target.value }))} placeholder="Optional https:// link to a picture" /></label>
-              <button className="button lime full" disabled={!isFoodDetailsValid(draft)} onClick={saveDetails}>{draftIsNew ? "Create & log it" : "Save changes"}</button>
-            </div> : <>
-            <span className="eyebrow bright">{combining ? "Add ingredient" : composite ? "Dish" : "Quantity"}</span><h3>{foodLabel(selected)}</h3><p>Choose weight, volume, or a natural unit. Nutrition stays on the same evidence-backed basis.</p>{composite ? <><ComponentEditor components={components} onChange={setComponents} /><small className="component-note">{composite.note}</small></> : null}
+          <div className="food-results">{mode === "meals" && !buildingMeal ? <>{editing ? null : <button className="create-food-row" onClick={() => { setBuildingMeal(true); setSearch(""); setMealName(""); setMealLines([]); }}><span className="food-thumb icon create" aria-hidden="true">＋</span><span><strong>Create a Meal</strong><small>Group one or more Single Items for quick logging</small></span></button>}{shownMeals.map((meal) => { const totals = userMealTotals(meal); return <button className={visibleMealDraft?.id === meal.id ? "selected" : ""} key={meal.id} onClick={() => setMealDraft(cloneUserMeal(meal))}><span className="food-thumb icon meal" aria-hidden="true"><FoodIcon name="meal" /></span><span><strong>{meal.name}</strong><small>{meal.components.length} item{meal.components.length === 1 ? "" : "s"}</small></span><span><b>{Math.round(totals.calories)}</b><small>kcal</small></span><i>→</i></button>; })}{shownMeals.length === 0 ? <div className="food-results-empty"><strong>No Meal found</strong><span>Create one from your Single Items.</span></div> : null}</> : <>{editing ? null : <button className="create-food-row" onClick={startCreate}><span className="food-thumb icon create" aria-hidden="true">＋</span><span><strong>{search.trim() ? `Add “${search.trim()}” as a new Single Item` : "Add a new Single Item"}</strong><small>Packaged Food, Open Ingredient, or Ordered Food</small></span></button>}{shownItems.map((food) => <button className={selected?.id === food.id ? "selected" : ""} key={food.id} onClick={() => chooseFood(food)}><FoodThumb food={food} /><span><strong>{foodLabel(food)}</strong><small>{singleItemKindLabel(getSingleItemKind(food))} · {food.amount} {food.unit}</small></span><span><b>{Math.round(food.calories)}</b><small>kcal</small></span><i>→</i></button>)}{shownItems.length === 0 ? <div className="food-results-empty"><strong>No match yet</strong><span>Add it as a new Single Item without leaving this flow.</span></div> : null}</>}</div>
+          {mode === "meals" && !buildingMeal ? (visibleMealDraft ? <MealEditor meal={visibleMealDraft} onChange={setMealDraft} onLog={() => { onAddMeal(visibleMealDraft); close(); }} buttonLabel={editing ? "Update today’s Meal" : "Log this Meal"} /> : <aside className="quantity-editor quantity-editor-empty dark-card"><span className="eyebrow bright">Meal</span><h3>{search.trim() ? "No Meal selected" : "Choose a Meal"}</h3><p>{search.trim() ? "Try a different Meal name or create a new one." : "Your saved Meals will appear here."}</p></aside>) : <aside className={`quantity-editor dark-card ${detailsOpen ? "details-mode" : ""} ${buildingMeal ? "meal-builder-mode" : ""}`}>
+            {detailsOpen ? <FoodDetailsEditor draft={draft} setDraft={setDraft} draftIsNew={draftIsNew} saveToLibrary={saveToLibrary} setSaveToLibrary={setSaveToLibrary} onCancel={() => { setDetailsOpen(false); setDraftIsNew(false); }} onSave={saveDetails} submitLabel={draftIsNew ? buildingMeal ? "Create & add to Meal" : "Create & log it" : "Save changes"} /> : selected && scaled ? <>
+            <span className="eyebrow bright">Single Item</span><h3>{foodLabel(selected)}</h3><p>Choose weight, volume, or a natural unit. Nutrition stays on the same evidence-backed basis.</p>
             <label className="logging-unit-field"><span>Log by</span><select aria-label={`${selected.name} logging unit`} value={loggingUnit} onChange={(event) => { const unit = event.target.value as NutritionUnit; setLoggingUnit(unit); setQuantity(unit === (selected.basis?.unit ?? selected.unit) ? (selected.basis?.amount ?? selected.amount) : 1); }}>{getLoggingUnits(selected).map((unit) => <option value={unit} key={unit}>{unit === (selected.basis?.unit ?? selected.unit) ? unit : `${unit} · ${getLoggingUnitLabel(selected, unit)}`}</option>)}</select></label>
             <div className="quantity-control"><button onClick={() => setQuantity((value) => Math.max(step, Number((value - step).toFixed(2))))} aria-label={`Decrease ${selected.name} quantity`}>−</button><label><input type="number" min={step} max={maxQuantity} step={step} value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} aria-label={`${selected.name} quantity`} /><span>{loggingUnit}</span></label><button onClick={() => setQuantity((value) => Math.min(maxQuantity, Number((value + step).toFixed(2))))} aria-label={`Increase ${selected.name} quantity`}>＋</button></div>
             <small className={`quantity-basis ${quantityValid ? "" : "error"}`}>{quantityValid ? `You are adding ${quantity} ${loggingUnit}${loggingUnit === basisUnit ? "" : ` = ${requestedBasisAmount} ${basisUnit}`} · nutrition basis ${labelBasis} ${basisUnit}` : `Enter more than 0 and no more than ${maxQuantity} ${loggingUnit}`}</small>
             <div className="live-nutrition"><strong><b>{Math.round(scaled.calories)}</b><small>kcal</small></strong><span><b>{scaled.protein.toFixed(1)}g</b><small>protein</small></span><span><b>{scaled.carbs.toFixed(1)}g</b><small>carbs</small></span><span><b>{scaled.fat.toFixed(1)}g</b><small>fat</small></span><span><b>{scaled.fiber.toFixed(1)}g</b><small>fibre</small></span></div>
             <button className="edit-food-button" onClick={openDetails}>✎ Edit name, serving & nutrition</button>
             {selected.source.url ? <a href={selected.source.url} target="_blank" rel="noreferrer">{selected.source.label} ↗</a> : <span className="personal-source">{selected.source.label}</span>}
-            {combining ? <button className="button outline-light full add-food-button" disabled={!quantityValid} onClick={addCombinationLine}>＋ Add {quantity} {loggingUnit} to combination</button> : <button className="button lime full add-food-button" disabled={!quantityValid} onClick={() => onAdd(scaled)}>{editing ? "Update" : "Add"} {quantity} {loggingUnit} · {Math.round(scaled.calories)} kcal</button>}
-            {combining ? <div className="combination-builder"><div><span className="eyebrow bright">Your combination</span><b>{combinationLines.length} ingredient{combinationLines.length === 1 ? "" : "s"}</b></div><label><span>Name</span><input value={combinationName} onChange={(event) => setCombinationName(event.target.value)} placeholder="e.g. Egg-white omelette" /></label>{combinationLines.length ? <div className="combination-lines">{combinationLines.map((line) => <div key={line.key}><span><b>{line.food.amount} {line.food.unit}</b>{foodLabel(line.food)}</span><small>{Math.round(line.food.calories)} kcal</small><button onClick={() => setCombinationLines((lines) => lines.filter((candidate) => candidate.key !== line.key))} aria-label={`Remove ${line.food.name} from combination`}>×</button></div>)}</div> : <p>Add ingredients one by one. Nothing is logged until you save the combination.</p>}<div className="combination-total"><strong>{Math.round(combinationTotals.calories)} kcal</strong><span>{combinationTotals.protein.toFixed(1)}P · {combinationTotals.carbs.toFixed(1)}C · {combinationTotals.fat.toFixed(1)}F</span></div><button className="button lime full" disabled={combinationLines.length === 0} onClick={saveCombination}>Log & save combination</button></div> : null}
-            </>}
-          </aside> : <aside className="quantity-editor quantity-editor-empty dark-card"><span className="eyebrow bright">Quantity</span><h3>Choose a food</h3><p>The quantity editor will appear when a result is selected.</p></aside>}
+            <button className={`button ${buildingMeal ? "outline-light" : "lime"} full add-food-button`} disabled={!quantityValid} onClick={() => buildingMeal ? addMealLine() : onAdd(scaled)}>{buildingMeal ? `＋ Add ${quantity} ${loggingUnit} to Meal` : `${editing ? "Update" : "Add"} ${quantity} ${loggingUnit} · ${Math.round(scaled.calories)} kcal`}</button>
+            </> : <div className="quantity-editor-empty"><span className="eyebrow bright">Single Item</span><h3>{search.trim() ? "No item selected" : "Choose an item"}</h3><p>Use the add-new action when search has no match.</p></div>}
+            {buildingMeal && !detailsOpen ? <div className="meal-builder"><div><span className="eyebrow bright">Your Meal</span><b>{mealLines.length} item{mealLines.length === 1 ? "" : "s"}</b></div><label><span>Meal name</span><input value={mealName} maxLength={60} onChange={(event) => setMealName(event.target.value)} placeholder="e.g. Usual breakfast" /></label>{mealLines.length ? <div className="meal-builder-lines">{mealLines.map((line) => <div key={line.key}><span><b>{line.food.amount} {line.food.unit}</b>{foodLabel(line.food)}</span><small>{Math.round(line.food.calories)} kcal</small><button onClick={() => setMealLines((lines) => lines.filter((candidate) => candidate.key !== line.key))} aria-label={`Remove ${line.food.name} from Meal`}>×</button></div>)}</div> : <p>Add Single Items one by one. Nothing is logged until you save the Meal.</p>}<div className="meal-total"><strong>{Math.round(mealTotals.calories)} kcal</strong><span>{mealTotals.protein.toFixed(1)}P · {mealTotals.carbs.toFixed(1)}C · {mealTotals.fat.toFixed(1)}F</span></div><button className="button lime full" disabled={mealLines.length === 0 || mealName.trim().length === 0} onClick={saveBuiltMeal}>Save & log Meal</button></div> : null}
+          </aside>}
         </div>
         {editing ? null : <div className="dialog-footer"><button className="button secondary full" onClick={close}>Done</button></div>}
       </section>
@@ -855,6 +922,7 @@ export default function Home() {
   const [planView, setPlanView] = useState<PlanView>("items");
   const [foodDialog, setFoodDialog] = useState(false);
   const [foodDialogSelection, setFoodDialogSelection] = useState<Food | null>(null);
+  const [foodDialogMealSelection, setFoodDialogMealSelection] = useState<UserMeal | null>(null);
   const [editingFoodIndex, setEditingFoodIndex] = useState<number | null>(null);
   const [recipe, setRecipe] = useState<Recipe | null>(null);
   const [toast, setToast] = useState("");
@@ -864,6 +932,13 @@ export default function Home() {
   const [saved, setSaved] = useState<SavedNutritionState>(emptyNutritionState);
   const [saveFailed, setSaveFailed] = useState(false);
   const foodCatalog = mergeFoodCatalog(baseLogFoods, saved.customFoods);
+  const legacyMeals: UserMeal[] = saved.customFoods.filter((food) => food.category === "Meal").map((food) => ({
+    id: `legacy-${food.id}`,
+    name: food.name,
+    createdAt: "2026-08-13",
+    components: [{ ...food, id: `legacy-item-${food.id}`, brand: "Legacy", category: "Product" }],
+  }));
+  const logMeals = [...saved.userMeals, ...legacyMeals, ...builtInUserMeals];
   /** Undoable messages hold much longer: a 2.6s window is too short to click. */
   const notify = (message: string, holdMs = 2600) => {
     if (toastTimer.current !== null) window.clearTimeout(toastTimer.current);
@@ -931,8 +1006,8 @@ export default function Home() {
     .sort((a, b) => b.orderCount - a.orderCount || b.lastOrdered.localeCompare(a.lastOrdered))
     .map((entry) => entry.food);
   const quickFoods = cardIqQuickFoods.length ? cardIqQuickFoods : foodCatalog.filter((food) => food.common);
-  const extras = restoreDayLogs(saved, clock.dayKey, foodCatalog);
-  const logIndices = restoreDayLogIndices(saved, clock.dayKey, foodCatalog);
+  const entries = restoreDayEntries(saved, clock.dayKey, foodCatalog);
+  const extras = entries.map((entry) => entry.food);
   const undoRef = useRef<{ entry: SavedLogEntry; index: number } | null>(null);
   const planned = restorePlanEntries(saved, foodCatalog);
   const totals = sumLoggedNutrition(extras, { calories: 0, protein: 0, carbs: 0, fat: 0 });
@@ -968,26 +1043,45 @@ export default function Home() {
   const addFood = (food: Food) => {
     const isEdit = editingFoodIndex !== null;
     if (wouldDropOldestDay(saved, clock.dayKey)) notify(`Diary is full at ${MAX_STORED_DAYS} days — the oldest day will be removed`);
-    const editLogIndex = isEdit && editingFoodIndex !== null ? logIndices[editingFoodIndex] : undefined;
+    const editLogIndex = isEdit && editingFoodIndex !== null ? entries[editingFoodIndex]?.logIndex : undefined;
     setTodayLogs((logs) => isEdit ? logs.map((entry, index) => index === editLogIndex ? foodToLogEntry(food) : entry) : [...logs, foodToLogEntry(food)]);
     // An edit is finished when it is applied. A new entry is not: a real plate is several
     // foods, so the logger stays open and KP closes it when the meal is fully recorded.
     if (isEdit) {
       setFoodDialog(false);
       setFoodDialogSelection(null);
+      setFoodDialogMealSelection(null);
       setEditingFoodIndex(null);
     }
     notify(`${food.name} ${isEdit ? "updated" : "added"} · ${Math.round(food.calories)} kcal`);
   };
+  const addMeal = (meal: UserMeal) => {
+    const isEdit = editingFoodIndex !== null;
+    if (wouldDropOldestDay(saved, clock.dayKey)) notify(`Diary is full at ${MAX_STORED_DAYS} days — the oldest day will be removed`);
+    const editLogIndex = isEdit && editingFoodIndex !== null ? entries[editingFoodIndex]?.logIndex : undefined;
+    const entry = mealToLogEntry(meal, meal.id.startsWith("builtin-") ? "Reference" : "Personal");
+    setTodayLogs((logs) => isEdit ? logs.map((current, index) => index === editLogIndex ? entry : current) : [...logs, entry]);
+    if (isEdit) {
+      setFoodDialog(false);
+      setFoodDialogSelection(null);
+      setFoodDialogMealSelection(null);
+      setEditingFoodIndex(null);
+    }
+    notify(`${meal.name} ${isEdit ? "updated for today" : "added"} · ${Math.round(userMealTotals(meal).calories)} kcal`);
+  };
+  const saveUserMeal = (meal: UserMeal) => {
+    setSaved((current) => ({ ...current, userMeals: upsertUserMeal(current.userMeals, meal) }));
+    notify(`${meal.name} saved to Meals`);
+  };
   /** Removing a log keeps the entry aside so a misclick is one tap from undone. */
   const deleteLoggedFood = (index: number) => {
-    const removed = extras[index];
+    const removed = entries[index];
     if (!removed) return;
-    const logIndex = logIndices[index];
+    const logIndex = removed.logIndex;
     if (logIndex === undefined) return;
     undoRef.current = { entry: logsForDay(saved, clock.dayKey)[logIndex], index: logIndex };
     setTodayLogs((logs) => logs.filter((_, entryIndex) => entryIndex !== logIndex));
-    notify(`${foodLabel(removed)} removed · tap Undo to put it back`, 10_000);
+    notify(`${removed.meal?.name ?? foodLabel(removed.food)} removed · tap Undo to put it back`, 10_000);
   };
   const undoDelete = () => {
     const pending = undoRef.current;
@@ -1000,8 +1094,9 @@ export default function Home() {
     undoRef.current = null;
     notify("Entry restored");
   };
-  const openFoodLogger = (food: Food | null = null, editIndex: number | null = null) => {
+  const openFoodLogger = (food: Food | null = null, editIndex: number | null = null, meal: UserMeal | null = null) => {
     setFoodDialogSelection(food);
+    setFoodDialogMealSelection(meal);
     setEditingFoodIndex(editIndex);
     setFoodDialog(true);
   };
@@ -1026,7 +1121,7 @@ export default function Home() {
 
   const renderContent = () => {
     if (area === "track") {
-      if (trackView === "today") return <TodayView clock={clock} calories={calories} macros={macros} extras={extras} quickFoods={quickFoods} weights={saved.weights} hasCardIqImport={cardIqImport !== null} targets={targets} targetsAreDefaults={targetsAreDefaults} history={history} onLog={() => openFoodLogger()} onAdd={(food) => openFoodLogger(food)} onEdit={(index) => openFoodLogger(extras[index], index)} onDelete={deleteLoggedFood} onSaveWeight={saveWeight} onOpenMeals={() => { setArea("plan"); setPlanView("meals"); window.scrollTo({ top: 0, behavior: "smooth" }); }} onSaveTargets={saveTargets} />;
+      if (trackView === "today") return <TodayView clock={clock} calories={calories} macros={macros} entries={entries} quickFoods={quickFoods} weights={saved.weights} hasCardIqImport={cardIqImport !== null} targets={targets} targetsAreDefaults={targetsAreDefaults} history={history} onLog={() => openFoodLogger()} onAdd={(food) => openFoodLogger(food)} onEdit={(index) => openFoodLogger(entries[index]?.food ?? null, index, entries[index]?.meal ?? null)} onDelete={deleteLoggedFood} onSaveWeight={saveWeight} onOpenMeals={() => { setArea("plan"); setPlanView("meals"); window.scrollTo({ top: 0, behavior: "smooth" }); }} onSaveTargets={saveTargets} />;
       if (trackView === "history") return <HistoryView history={history} clock={clock} targets={targets} />;
       if (trackView === "trends") return <TrendsView history={history} targets={targets} />;
       return <PurchasesView cardIqImport={cardIqImport} onAdd={(food) => openFoodLogger(food)} />;
@@ -1050,7 +1145,7 @@ export default function Home() {
         {renderContent()}
       </main>
       {area === "track" ? <button className="mobile-log-button" onClick={() => openFoodLogger()}>＋ Log food</button> : null}
-      {foodDialog ? <FoodDialog initialFood={foodDialogSelection} editing={editingFoodIndex !== null} catalog={foodCatalog} onClose={() => { setFoodDialog(false); setFoodDialogSelection(null); setEditingFoodIndex(null); }} onAdd={addFood} onSaveFood={saveCustomFood} /> : null}
+      {foodDialog ? <FoodDialog initialFood={foodDialogSelection} initialMeal={foodDialogMealSelection} editing={editingFoodIndex !== null} catalog={foodCatalog} meals={logMeals} dayKey={clock.dayKey} onClose={() => { setFoodDialog(false); setFoodDialogSelection(null); setFoodDialogMealSelection(null); setEditingFoodIndex(null); }} onAdd={addFood} onAddMeal={addMeal} onSaveFood={saveCustomFood} onSaveMeal={saveUserMeal} /> : null}
       <RecipeDrawer recipe={recipe} onClose={() => setRecipe(null)} onPlan={addMealToPlan} />
       <div className={`toast ${toast ? "visible" : ""}`} role="status" aria-live="polite"><i>✓</i><span>{toast}</span>{toast.includes("tap Undo") ? <button className="toast-undo" onClick={undoDelete}>Undo</button> : null}</div>
     </div>

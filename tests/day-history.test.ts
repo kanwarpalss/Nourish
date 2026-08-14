@@ -13,10 +13,32 @@ import {
 } from "../app/local-nutrition-state";
 import { recentDayKeys, resolveLoggedFood, summariseDay, summariseHistory, summariseTrend } from "../app/day-history";
 import { nutritionItems } from "../app/nutrition-data";
+import { userMealToNutritionItem, type UserMeal } from "../app/logging-session";
 import { scaleNutritionForUnit } from "../app/prototype-logic";
 
 const milk = { foodId: "nandini-goodlife-toned", amount: 200 };
 const egg = { foodId: "whole-egg", amount: 2 };
+
+function storedFood(overrides: Partial<(typeof nutritionItems)[number]> = {}) {
+  return {
+    id: "stored-food",
+    name: "Stored food",
+    brand: "Stored brand",
+    variant: "",
+    amount: 100,
+    unit: "g" as const,
+    calories: 100,
+    protein: 10,
+    carbs: 10,
+    fat: 5,
+    fiber: 2,
+    category: "Product" as const,
+    availability: "Added by you",
+    aliases: [],
+    source: { label: "Added by you", url: "", trust: "Personal" as const },
+    ...overrides,
+  };
+}
 
 test("REGRESSION: a day's diary survives the next Bangalore day", () => {
   // Schema 1 kept one day inline. On rollover the app declined to restore it and then
@@ -255,13 +277,98 @@ test("alternate-unit snapshots preserve the visible amount and exact historical 
   assert.equal(summariseDay(reloaded.days[0]).calories, 300);
 });
 
-test("custom foods require a brand and survive reload without changing their macros", () => {
+test("a grouped Meal survives reload as one row with expandable component snapshots", () => {
+  const component = nutritionItems.find((food) => food.id === "whole-egg");
+  assert.ok(component);
+  const meal: UserMeal = { id: "usermeal-eggs", name: "Egg breakfast", createdAt: "2026-08-14", components: [{ ...component }] };
+  const snapshot = userMealToNutritionItem(meal);
+  const state = withDayLogs(emptyNutritionState(), "2026-08-14", [{ foodId: snapshot.id, amount: 1, snapshot, mealSnapshot: meal }]);
+  const reloaded = parseSavedNutritionState(stringifySavedNutritionState(state));
+  const entry = logsForDay(reloaded, "2026-08-14")[0];
+  assert.equal(entry.snapshot?.name, "Egg breakfast");
+  assert.equal(entry.mealSnapshot?.components.length, 1);
+  assert.equal(summariseDay(reloaded.days[0]).entryCount, 1, "a Meal must count as one diary row, not one row per item");
+});
+
+test("corrupt Meal expansion data is dropped without losing the trustworthy aggregate row", () => {
+  const component = nutritionItems.find((food) => food.id === "whole-egg");
+  assert.ok(component);
+  const meal: UserMeal = { id: "usermeal-eggs", name: "Egg breakfast", createdAt: "2026-08-14", components: [{ ...component }] };
+  const snapshot = { ...userMealToNutritionItem(meal), calories: userMealToNutritionItem(meal).calories + 100 };
+  const raw = JSON.stringify({ schemaVersion: 2, days: [{ dayKey: "2026-08-14", logs: [{ foodId: snapshot.id, amount: 1, snapshot, mealSnapshot: meal }] }], planned: [], targets: null, customFoods: [], userMeals: [], weights: [] });
+  const entry = logsForDay(parseSavedNutritionState(raw), "2026-08-14")[0];
+  assert.equal(entry.snapshot?.calories, snapshot.calories, "the immutable diary total remains authoritative");
+  assert.equal(entry.mealSnapshot, undefined, "the contradictory expansion must not be shown");
+});
+
+test("a Meal expansion must describe the exact one-serving aggregate row", () => {
+  const meal: UserMeal = { id: "usermeal-a", name: "Breakfast", createdAt: "2026-08-14", components: [storedFood()] };
+  const snapshot = userMealToNutritionItem(meal);
+  const contradictions = [
+    { snapshot, amount: 1, mealSnapshot: { ...meal, id: "usermeal-b" } },
+    { snapshot, amount: 1, mealSnapshot: { ...meal, name: "Different meal" } },
+    { snapshot: { ...snapshot, category: "Product" as const }, amount: 1, mealSnapshot: meal },
+    { snapshot, amount: 2, mealSnapshot: meal },
+  ];
+  for (const contradiction of contradictions) {
+    const raw = JSON.stringify({ schemaVersion: 2, days: [{ dayKey: "2026-08-14", logs: [{ foodId: snapshot.id, ...contradiction }] }], planned: [], targets: null, customFoods: [], userMeals: [], weights: [] });
+    const entry = logsForDay(parseSavedNutritionState(raw), "2026-08-14")[0];
+    assert.ok(entry.snapshot, "the aggregate diary row remains usable");
+    assert.equal(entry.mealSnapshot, undefined, "contradictory expansion data must be ignored");
+  }
+});
+
+test("empty Meal expansion data is ignored without dropping the aggregate row", () => {
+  const meal: UserMeal = { id: "usermeal-empty", name: "Empty expansion", createdAt: "2026-08-14", components: [storedFood()] };
+  const snapshot = userMealToNutritionItem(meal);
+  const raw = JSON.stringify({ schemaVersion: 2, days: [{ dayKey: "2026-08-14", logs: [{ foodId: snapshot.id, amount: 1, snapshot, mealSnapshot: { ...meal, components: [] } }] }], planned: [], targets: null, customFoods: [], userMeals: [], weights: [] });
+  const entry = logsForDay(parseSavedNutritionState(raw), "2026-08-14")[0];
+  assert.ok(entry.snapshot);
+  assert.equal(entry.mealSnapshot, undefined);
+});
+
+test("stored foods obey the exact quantity limit for every unit", () => {
+  const impossible = [
+    storedFood({ id: "too-many-grams", unit: "g", amount: 5000.01 }),
+    storedFood({ id: "too-many-ml", unit: "ml", amount: 5000.01 }),
+    storedFood({ id: "too-many-scoops", unit: "scoop", amount: 10.01 }),
+    storedFood({ id: "too-many-packs", unit: "pack", amount: 20.01 }),
+    storedFood({ id: "too-many-pieces", unit: "piece", amount: 50.01 }),
+    storedFood({ id: "too-many-servings", unit: "serving", amount: 20.01 }),
+  ];
+  const state = parseSavedNutritionState(JSON.stringify({ schemaVersion: 2, days: [], planned: [], targets: null, customFoods: impossible, userMeals: [], weights: [] }));
+  assert.deepEqual(state.customFoods, []);
+});
+
+test("saved Meal deduplication happens before the 200-Meal cap", () => {
+  const repeated: UserMeal = { id: "usermeal-a", name: "Repeated", createdAt: "2026-08-14", components: [storedFood()] };
+  const distinct: UserMeal = { id: "usermeal-b", name: "Distinct", createdAt: "2026-08-14", components: [storedFood({ id: "food-b" })] };
+  const raw = JSON.stringify({ schemaVersion: 2, days: [], planned: [], targets: null, customFoods: [], userMeals: [...Array.from({ length: 200 }, () => repeated), distinct], weights: [] });
+  const state = parseSavedNutritionState(raw);
+  assert.deepEqual(state.userMeals.map((meal) => meal.id), ["usermeal-a", "usermeal-b"]);
+});
+
+test("a forged Meal with impossible aggregate nutrition is dropped on reload", () => {
+  const meal: UserMeal = {
+    id: "usermeal-too-large",
+    name: "Too large",
+    createdAt: "2026-08-14",
+    components: Array.from({ length: 40 }, (_, index) => storedFood({ id: `large-${index}`, calories: 2000 })),
+  };
+  const state = parseSavedNutritionState(JSON.stringify({ schemaVersion: 2, days: [], planned: [], targets: null, customFoods: [], userMeals: [meal], weights: [] }));
+  assert.deepEqual(state.userMeals, []);
+});
+
+test("commercial custom foods require a brand and survive reload without changing their macros", () => {
   const valid = { ...nutritionItems[0], id: "my-milk", brand: "My Dairy", name: "Slim Milk", variant: "100 ml", source: { label: "Edited by you", url: "", trust: "Personal" as const } };
   const accepted = parseSavedNutritionState(JSON.stringify({ schemaVersion: 2, days: [], planned: [], targets: null, customFoods: [valid], weights: [] }));
   assert.equal(accepted.customFoods[0].id, "my-milk");
   assert.equal(accepted.customFoods[0].calories, valid.calories);
   const rejected = parseSavedNutritionState(JSON.stringify({ schemaVersion: 2, days: [], planned: [], targets: null, customFoods: [{ ...valid, brand: "" }], weights: [] }));
   assert.deepEqual(rejected.customFoods, []);
+  const orderedFood = { ...valid, id: "subway-paneer", brand: "Subway", name: "Paneer tikka sub", category: "OrderedFood" as const };
+  const orderedAccepted = parseSavedNutritionState(JSON.stringify({ schemaVersion: 2, days: [], planned: [], targets: null, customFoods: [orderedFood], userMeals: [], weights: [] }));
+  assert.equal(orderedAccepted.customFoods[0].category, "OrderedFood");
 });
 
 test("weight logs validate bounds, replace same-day entries, sort, and chart safely", () => {
