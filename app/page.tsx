@@ -770,11 +770,73 @@ function MealsView({ onRecipe, planned, catalog, userMeals, onPlan, onPlanFood, 
   );
 }
 
+/** Nudge a component's amount within its unit's bounds, keeping nutrition in step. */
+function withComponentAmount(items: TrayItem[], key: string, amount: number): TrayItem[] {
+  return items.map((item) => {
+    if (item.key !== key) return item;
+    const step = item.food.unit === "g" || item.food.unit === "ml" ? 5 : item.food.unit === "piece" ? 1 : 0.25;
+    const safe = Math.min(getQuantityLimit(item.food.unit), Math.max(step, Number((Number.isFinite(amount) ? amount : step).toFixed(2))));
+    return { ...item, food: scaleNutritionForUnit(item.food, safe, item.food.unit) };
+  });
+}
+
 /**
- * Builds one of KP's own meals from catalogue products. Saving goes through
- * createUserMeal so the name, component and total bounds are the same ones the
- * logging tray enforces — this screen adds a door, not a second rulebook.
+ * The one meal-building surface. Both callers assemble the same thing — a named
+ * group of Single Items — and differ only in how items arrive and what happens
+ * on save, so those are props rather than a second component:
+ *
+ *   Track's logger  picks the amount first, then adds; saves and logs at once.
+ *   Plan            adds from its own search slot and edits amounts inline;
+ *                   saves for later without touching the diary.
+ *
+ * `children` is the add-an-item slot. Both construct through createUserMeal, so
+ * the name, component-count and total bounds are enforced in exactly one place.
  */
+function MealComposer({ name, onNameChange, items, onItemsChange, editableAmounts = false, tone = "dark", headerLabel = "Your Meal", emptyHint, submitLabel, onSubmit, children }: {
+  name: string;
+  onNameChange: (name: string) => void;
+  items: TrayItem[];
+  onItemsChange: (items: TrayItem[]) => void;
+  editableAmounts?: boolean;
+  tone?: "dark" | "light";
+  headerLabel?: string;
+  emptyHint: string;
+  submitLabel: string;
+  onSubmit: () => void;
+  children?: React.ReactNode;
+}) {
+  const totals = sumNutritionDetails(items.map((item) => item.food));
+  const nameValid = isUserMealNameValid(name);
+  return (
+    <div className={`meal-composer ${tone === "light" ? "on-light" : "on-dark"}`}>
+      <div className="meal-composer-head"><span className={`eyebrow ${tone === "dark" ? "bright" : ""}`}>{headerLabel}</span><b>{items.length} item{items.length === 1 ? "" : "s"}</b></div>
+      <label className="meal-name-field"><span>Meal name</span><input value={name} maxLength={MAX_MEAL_NAME_LENGTH} onChange={(event) => onNameChange(event.target.value)} placeholder="e.g. Usual breakfast" /></label>
+      {children}
+      {items.length === 0 ? <p className="meal-composer-hint">{emptyHint}</p> : (
+        <div className="meal-composer-lines">
+          {items.map((item) => (
+            <div key={item.key}>
+              <span>{editableAmounts ? null : <b>{item.food.amount} {item.food.unit}</b>}{foodLabel(item.food)}</span>
+              {editableAmounts ? (
+                <label>
+                  <input type="number" min="0.01" max={getQuantityLimit(item.food.unit)} step={item.food.unit === "g" || item.food.unit === "ml" ? 5 : item.food.unit === "piece" ? 1 : 0.25} value={item.food.amount} onChange={(event) => onItemsChange(withComponentAmount(items, item.key, Number(event.target.value)))} aria-label={`${item.food.name} amount`} />
+                  <b>{item.food.unit}</b>
+                </label>
+              ) : null}
+              <small>{Math.round(item.food.calories)} kcal</small>
+              <button onClick={() => onItemsChange(items.filter((candidate) => candidate.key !== item.key))} aria-label={`Remove ${item.food.name} from Meal`}>×</button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="meal-total"><strong>{Math.round(totals.calories)} kcal</strong><span>{totals.protein.toFixed(1)}P · {totals.carbs.toFixed(1)}C · {totals.fat.toFixed(1)}F</span></div>
+      {!nameValid && name.trim().length > 0 ? <p className="meal-composer-hint warn">Give the Meal a name of {MAX_MEAL_NAME_LENGTH} characters or fewer.</p> : null}
+      <button className="button lime full" disabled={items.length === 0 || !nameValid} onClick={onSubmit}>{submitLabel}</button>
+    </div>
+  );
+}
+
+/** Plan's door into MealComposer: saves a Meal for later without logging it. */
 function PlanMealBuilder({ initial, catalog, dayKey, onClose, onSave }: {
   initial: UserMeal | null;
   catalog: Food[];
@@ -784,31 +846,14 @@ function PlanMealBuilder({ initial, catalog, dayKey, onClose, onSave }: {
 }) {
   const creating = initial === null;
   const [name, setName] = useState(initial?.name ?? "");
-  const [components, setComponents] = useState<Food[]>(() => (initial ? initial.components.map((food) => ({ ...food })) : []));
+  const [items, setItems] = useState<TrayItem[]>(() => (initial ? initial.components.map((food, index) => ({ key: `saved-${index}-${food.id}`, food: { ...food } })) : []));
   const [search, setSearch] = useState("");
-  const totals = components.reduce((sum, food) => ({
-    calories: sum.calories + food.calories,
-    protein: sum.protein + food.protein,
-    carbs: sum.carbs + food.carbs,
-    fat: sum.fat + food.fat,
-    fiber: sum.fiber + food.fiber,
-  }), { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 });
   const choices = search.trim() ? getShownSingleItems(catalog, "all", search).slice(0, 6) : [];
-  const nameValid = isUserMealNameValid(name);
-  const canSave = nameValid && components.length > 0;
-
-  const setAmount = (index: number, amount: number) => setComponents((current) => current.map((food, foodIndex) => {
-    if (foodIndex !== index) return food;
-    const step = food.unit === "g" || food.unit === "ml" ? 5 : food.unit === "piece" ? 1 : 0.25;
-    const safe = Math.min(getQuantityLimit(food.unit), Math.max(step, Number((Number.isFinite(amount) ? amount : step).toFixed(2))));
-    return scaleNutritionForUnit(food, safe, food.unit);
-  }));
 
   const save = () => {
-    if (!canSave) return;
-    // Reuse the tray's validation rather than hand-rolling a second version.
-    const built = createUserMeal(name, components.map((food, index) => ({ key: `plan-${index}`, food })), `${Date.now()}`, dayKey);
+    const built = createUserMeal(name, items, `${Date.now()}`, dayKey);
     if (!built) return;
+    // Editing keeps the original identity so a meal updates in place.
     onSave(creating || !initial ? built : { ...built, id: initial.id, createdAt: initial.createdAt });
   };
 
@@ -820,36 +865,32 @@ function PlanMealBuilder({ initial, catalog, dayKey, onClose, onSave }: {
           <button className="close-button" onClick={onClose} aria-label="Close meal builder">×</button>
         </header>
         <div className="plan-meal-body">
-          <label className="meal-name-field"><span>Meal name *</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="Poha with peanuts" /></label>
-          <div className="component-search">
-            <span>⌕</span>
-            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search an item to add…" aria-label="Search items to add to this meal" />
-          </div>
-          {choices.length > 0 ? (
-            <div className="component-choices">
-              {choices.map((food) => (
-                <button key={food.id} onClick={() => { setComponents((current) => [...current, { ...food }]); setSearch(""); }}>
-                  <span>{foodLabel(food)}</span><small>{Math.round(food.calories)} kcal / {food.amount} {food.unit}</small><b>＋</b>
-                </button>
-              ))}
+          <MealComposer
+            name={name}
+            onNameChange={setName}
+            items={items}
+            onItemsChange={setItems}
+            editableAmounts
+            tone="light"
+            headerLabel={creating ? "New Meal" : "Editing Meal"}
+            emptyHint="Add the Single Items this Meal is made of. Each keeps its own snapshot, so correcting an item later never rewrites a Meal you already logged."
+            submitLabel={creating ? "Save meal" : "Save changes"}
+            onSubmit={save}
+          >
+            <div className="component-search">
+              <span>⌕</span>
+              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search an item to add…" aria-label="Search items to add to this meal" />
             </div>
-          ) : null}
-          <div className="meal-component-editor">
-            {components.length === 0 ? <p className="editor-hint">Add the items this meal is made of. Each keeps its own snapshot, so correcting an item later never rewrites a meal you already logged.</p> : null}
-            {components.map((food, index) => (
-              <div className="meal-component-row" key={`${food.id}-${index}`}>
-                <span><strong>{foodLabel(food)}</strong><small>{Math.round(food.calories)} kcal</small></span>
-                <label>
-                  <input type="number" min="0.01" max={getQuantityLimit(food.unit)} step={food.unit === "g" || food.unit === "ml" ? 5 : food.unit === "piece" ? 1 : 0.25} value={food.amount} onChange={(event) => setAmount(index, Number(event.target.value))} aria-label={`${food.name} amount`} />
-                  <b>{food.unit}</b>
-                </label>
-                <button onClick={() => setComponents((current) => current.filter((_, componentIndex) => componentIndex !== index))} aria-label={`Remove ${food.name} from this meal`}>×</button>
+            {choices.length > 0 ? (
+              <div className="component-choices">
+                {choices.map((food) => (
+                  <button key={food.id} onClick={() => { setItems((current) => addToTray(current, food, window.crypto.randomUUID())); setSearch(""); }}>
+                    <span>{foodLabel(food)}</span><small>{Math.round(food.calories)} kcal / {food.amount} {food.unit}</small><b>＋</b>
+                  </button>
+                ))}
               </div>
-            ))}
-          </div>
-          <div className="meal-total"><strong>{Math.round(totals.calories)} kcal</strong><span>{totals.protein.toFixed(1)}P · {totals.carbs.toFixed(1)}C · {totals.fat.toFixed(1)}F · {totals.fiber.toFixed(1)} fibre</span></div>
-          {!nameValid && name.length > 0 ? <p className="editor-hint warn">Give the meal a name of {MAX_MEAL_NAME_LENGTH} characters or fewer.</p> : null}
-          <button className="button lime full" disabled={!canSave} onClick={save}>{creating ? "Save meal" : "Save changes"}</button>
+            ) : null}
+          </MealComposer>
         </div>
       </section>
     </div>
@@ -1059,7 +1100,7 @@ function FoodDialog({ initialFood, initialMeal, editing, catalog, meals: mealOpt
             {selected.source.url ? <a href={selected.source.url} target="_blank" rel="noreferrer">{selected.source.label} ↗</a> : <span className="personal-source">{selected.source.label}</span>}
             <button className={`button ${buildingMeal ? "outline-light" : "lime"} full add-food-button`} disabled={!quantityValid} onClick={() => buildingMeal ? addMealLine() : onAdd(scaled)}>{buildingMeal ? `＋ Add ${quantity} ${loggingUnit} to Meal` : `${editing ? "Update" : "Add"} ${quantity} ${loggingUnit} · ${Math.round(scaled.calories)} kcal`}</button>
             </> : <div className="quantity-editor-empty"><span className="eyebrow bright">Single Item</span><h3>{search.trim() ? "No item selected" : "Choose an item"}</h3><p>Use the add-new action when search has no match.</p></div>}
-            {buildingMeal && !detailsOpen ? <div className="meal-builder"><div><span className="eyebrow bright">Your Meal</span><b>{mealLines.length} item{mealLines.length === 1 ? "" : "s"}</b></div><label><span>Meal name</span><input value={mealName} maxLength={60} onChange={(event) => setMealName(event.target.value)} placeholder="e.g. Usual breakfast" /></label>{mealLines.length ? <div className="meal-builder-lines">{mealLines.map((line) => <div key={line.key}><span><b>{line.food.amount} {line.food.unit}</b>{foodLabel(line.food)}</span><small>{Math.round(line.food.calories)} kcal</small><button onClick={() => setMealLines((lines) => lines.filter((candidate) => candidate.key !== line.key))} aria-label={`Remove ${line.food.name} from Meal`}>×</button></div>)}</div> : <p>Add Single Items one by one. Nothing is logged until you save the Meal.</p>}<div className="meal-total"><strong>{Math.round(mealTotals.calories)} kcal</strong><span>{mealTotals.protein.toFixed(1)}P · {mealTotals.carbs.toFixed(1)}C · {mealTotals.fat.toFixed(1)}F</span></div><button className="button lime full" disabled={mealLines.length === 0 || mealName.trim().length === 0} onClick={saveBuiltMeal}>Save & log Meal</button></div> : null}
+            {buildingMeal && !detailsOpen ? <MealComposer name={mealName} onNameChange={setMealName} items={mealLines} onItemsChange={setMealLines} emptyHint="Add Single Items one by one. Nothing is logged until you save the Meal." submitLabel="Save & log Meal" onSubmit={saveBuiltMeal} /> : null}
           </aside>}
         </div>
         {editing ? null : <div className="dialog-footer"><button className="button secondary full" onClick={close}>Done</button></div>}

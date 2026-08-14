@@ -162,7 +162,13 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
   assert.match(page, /function PlanMealBuilder/);
   assert.match(page, /userMeals=\{saved\.userMeals\}/, "Plan · Meals must read the saved meals Track writes");
   assert.match(page, /food\.category === "OrderedFood"/, "a ready-to-eat product must list under Meals as well as Items");
-  assert.match(page, /createUserMeal\(name, components\.map/, "Plan's builder must reuse the tray's meal validation, not re-implement it");
+  // One meal-building component, two callers. A second copy is how the two
+  // drift apart, so the count is asserted rather than left to discipline.
+  assert.equal(page.match(/function MealComposer/g)?.length, 1, "there must be exactly one meal composer");
+  assert.equal(page.match(/<MealComposer/g)?.length, 2, "both the logger and Plan must render the shared composer");
+  assert.doesNotMatch(page, /className="meal-builder"/, "the logger's hand-rolled meal markup must stay deleted");
+  assert.match(page, /createUserMeal\(name, items, /, "Plan must reuse the tray's meal validation, not re-implement it");
+  assert.match(page, /createUserMeal\(mealName, mealLines, /, "and the logger keeps constructing through the same helper");
   assert.match(css, /@media \(max-width: 700px\)/);
   assert.match(css, /prefers-reduced-motion: reduce/);
   assert.match(css, /--lime:\s*#b9ed55/);

@@ -686,17 +686,6 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .conversion-fields label > div, .nutrition-fields label > div { display: grid; grid-template-columns: 1fr auto; align-items: center; }
 .conversion-fields label > div input, .nutrition-fields input { min-width: 0; height: 39px; padding: 0 7px 0 10px; border: 0; outline: 0; background: transparent; font-size: 10px; font-weight: 750; }
 .conversion-fields label > div b, .nutrition-fields b { padding-right: 9px; color: #405047; font-size: 8px; }
-.meal-builder { display: grid; gap: 10px; margin-top: 16px; padding-top: 15px; border-top: 1px solid rgb(255 255 255 / 0.16); }
-.meal-builder > div:first-child, .meal-total { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
-.meal-builder > label { display: grid; gap: 5px; color: #d5ded8; font-size: 8px; font-weight: 750; }
-.meal-builder > label input { height: 39px; padding: 0 10px; border: 0; border-radius: 9px; color: var(--ink); background: white; font-size: 10px; font-weight: 700; }
-.meal-builder > p { margin: 0; color: #aeb9b1; font-size: 9px; line-height: 1.45; }
-.meal-builder-lines { display: grid; gap: 6px; }
-.meal-builder-lines > div { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; padding: 8px; border: 1px solid rgb(255 255 255 / 0.13); border-radius: 9px; }
-.meal-builder-lines span { display: grid; gap: 2px; font-size: 8px; }
-.meal-builder-lines span b { color: var(--lime); font-size: 9px; }
-.meal-builder-lines small { color: #c4cec7; font-size: 8px; }
-.meal-builder-lines button { border: 0; color: white; background: transparent; cursor: pointer; }
 .meal-total { padding: 10px 0; }
 .meal-total strong { color: var(--lime); }
 .meal-total span { color: #c4cec7; font-size: 8px; }
@@ -830,9 +819,56 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 /* Plan-side meal building, and KP's own meals shown beside the researched ones. */
 .plan-meal-dialog { width: min(620px, 100%); }
 .plan-meal-body { overflow-y: auto; display: grid; gap: 13px; padding: 20px 26px 26px; }
+.own-meals { max-width: 1440px; margin: 0 auto 26px; }
+.own-meal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; margin-top: 14px; }
+.own-meal-card { display: grid; gap: 13px; padding: 19px; }
+.own-meal-card h3 { margin: 0; font-size: 17px; letter-spacing: -0.03em; }
+.prepared-note { color: var(--muted); font-size: 9px; font-weight: 700; }
+
+/* One meal-composer, two surfaces. The logger renders it inside a dark aside;
+   Plan renders it on paper. Only colour and the amount column differ. */
+.meal-composer { display: grid; gap: 10px; }
+.meal-composer-head { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+.meal-composer-hint { margin: 0; font-size: 9px; line-height: 1.5; }
+.meal-composer-hint.warn { font-weight: 750; }
 .meal-name-field { display: grid; gap: 5px; }
-.meal-name-field > span { color: var(--muted); font-size: 9px; font-weight: 750; }
-.meal-name-field input { height: 42px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 11px; background: white; font-size: 13px; font-weight: 650; }
+.meal-composer-lines { display: grid; gap: 6px; }
+.meal-composer-lines > div { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; padding: 8px; border-radius: 9px; }
+.meal-composer-lines > div:has(label) { grid-template-columns: minmax(0, 1fr) auto auto auto; }
+.meal-composer-lines span { overflow: hidden; min-width: 0; text-overflow: ellipsis; white-space: nowrap; }
+.meal-composer-lines label { display: grid; grid-template-columns: 1fr auto; align-items: center; border-radius: 8px; background: white; }
+.meal-composer-lines label input { min-width: 0; width: 64px; height: 32px; padding: 0 4px 0 8px; border: 0; outline: 0; color: var(--ink); background: transparent; font-size: 11px; font-weight: 800; }
+.meal-composer-lines label b { padding-right: 7px; color: var(--muted); font-size: 8px; }
+.meal-composer-lines > div > button { border: 0; background: transparent; font-size: 16px; cursor: pointer; }
+.meal-total { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+
+/* Dark: inside the logger's quantity panel. */
+.meal-composer.on-dark { margin-top: 16px; padding-top: 15px; border-top: 1px solid rgb(255 255 255 / 0.16); }
+.meal-composer.on-dark .meal-name-field { color: #d5ded8; font-size: 8px; font-weight: 750; }
+.meal-composer.on-dark .meal-name-field input { height: 39px; padding: 0 10px; border: 0; border-radius: 9px; color: var(--ink); background: white; font-size: 10px; font-weight: 700; }
+.meal-composer.on-dark .meal-composer-hint { color: #aeb9b1; }
+.meal-composer.on-dark .meal-composer-hint.warn { color: #ffb59a; }
+.meal-composer.on-dark .meal-composer-lines > div { border: 1px solid rgb(255 255 255 / 0.13); }
+.meal-composer.on-dark .meal-composer-lines span { font-size: 8px; }
+.meal-composer.on-dark .meal-composer-lines span b { color: var(--lime); font-size: 9px; }
+.meal-composer.on-dark .meal-composer-lines small { color: #c4cec7; font-size: 8px; }
+.meal-composer.on-dark .meal-composer-lines > div > button { color: white; }
+.meal-composer.on-dark .meal-total { padding: 10px 0; }
+.meal-composer.on-dark .meal-total strong { color: var(--lime); }
+.meal-composer.on-dark .meal-total span { color: #c4cec7; font-size: 8px; }
+
+/* Light: Plan's dialog. */
+.meal-composer.on-light .meal-name-field > span { color: var(--muted); font-size: 9px; font-weight: 750; }
+.meal-composer.on-light .meal-name-field input { height: 42px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 11px; background: white; font-size: 13px; font-weight: 650; }
+.meal-composer.on-light .meal-composer-hint { color: var(--muted); font-size: 10px; }
+.meal-composer.on-light .meal-composer-hint.warn { color: #8c3f22; }
+.meal-composer.on-light .meal-composer-lines > div { border: 1px solid var(--line); background: white; font-size: 11px; font-weight: 650; }
+.meal-composer.on-light .meal-composer-lines small { color: var(--muted); font-size: 9px; }
+.meal-composer.on-light .meal-composer-lines label { border: 1px solid var(--line-strong); }
+.meal-composer.on-light .meal-composer-lines > div > button { color: var(--muted); }
+.meal-composer.on-light .meal-total { padding: 12px 14px; border-radius: 12px; background: #e7ecdf; }
+.meal-composer.on-light .meal-total strong { font-size: 19px; }
+.meal-composer.on-light .meal-total span { color: var(--muted); font-size: 10px; }
 .plan-meal-body .component-search { display: flex; gap: 9px; align-items: center; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 12px; background: white; }
 .plan-meal-body .component-search span { color: var(--muted); }
 .plan-meal-body .component-search input { width: 100%; height: 42px; border: 0; outline: 0; background: transparent; font-size: 12px; font-weight: 650; }
@@ -842,22 +878,3 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .plan-meal-body .component-choices span { font-size: 11px; font-weight: 700; }
 .plan-meal-body .component-choices small { color: var(--muted); font-size: 9px; }
 .plan-meal-body .component-choices b { color: var(--forest); }
-.plan-meal-body .meal-component-editor { display: grid; gap: 6px; }
-.plan-meal-body .meal-component-row { display: grid; grid-template-columns: 1fr auto auto; gap: 9px; align-items: center; padding: 9px 10px; border: 1px solid var(--line); border-radius: 11px; background: white; }
-.plan-meal-body .meal-component-row span { display: grid; gap: 2px; min-width: 0; }
-.plan-meal-body .meal-component-row strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.plan-meal-body .meal-component-row small { color: var(--muted); font-size: 9px; }
-.plan-meal-body .meal-component-row label { display: flex; gap: 4px; align-items: center; }
-.plan-meal-body .meal-component-row input { width: 72px; height: 32px; padding: 0 7px; border: 1px solid var(--line-strong); border-radius: 8px; font-size: 11px; font-weight: 700; }
-.plan-meal-body .meal-component-row b { color: var(--muted); font-size: 9px; }
-.plan-meal-body .meal-component-row > button { width: 28px; height: 28px; border: 0; border-radius: 8px; color: var(--muted); background: #eceee7; cursor: pointer; }
-.plan-meal-body .meal-total { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; padding: 12px 14px; border-radius: 12px; background: #e7ecdf; }
-.plan-meal-body .meal-total strong { font-size: 19px; }
-.plan-meal-body .meal-total span { color: var(--muted); font-size: 10px; }
-.editor-hint { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
-.editor-hint.warn { color: #8c3f22; font-weight: 700; }
-.own-meals { max-width: 1440px; margin: 0 auto 26px; }
-.own-meal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; margin-top: 14px; }
-.own-meal-card { display: grid; gap: 13px; padding: 19px; }
-.own-meal-card h3 { margin: 0; font-size: 17px; letter-spacing: -0.03em; }
-.prepared-note { color: var(--muted); font-size: 9px; font-weight: 700; }
