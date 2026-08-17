@@ -588,8 +588,14 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 
 @media (max-width: 700px) {
   .workspace { padding: 24px 15px 90px; }
-  .mobile-topbar { grid-template-columns: 1fr auto; }
-  .mobile-topbar > .kp-avatar { display: none; }
+  .mobile-topbar { grid-template-columns: 1fr auto auto; gap: 12px; }
+  /* The avatar was decoration, so narrow screens dropped it. It is now the way
+     into settings — backup and restore live there — so the functional button
+     stays while a purely decorative one would still be hidden. */
+  .mobile-topbar > .kp-avatar:not(.mobile-settings) { display: none; }
+  /* 44px is the smallest reliable tap target; the visual circle stays 34px. */
+  .mobile-topbar > .mobile-settings { width: 44px; height: 44px; background: transparent; }
+  .mobile-topbar > .mobile-settings > span { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 50%; background: var(--cream); }
   .page-heading { display: grid; gap: 18px; margin-bottom: 24px; }
   .page-heading h1 { font-size: 36px; }
   .page-heading p { font-size: 13px; }
@@ -878,3 +884,21 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .plan-meal-body .component-choices span { font-size: 11px; font-weight: 700; }
 .plan-meal-body .component-choices small { color: var(--muted); font-size: 9px; }
 .plan-meal-body .component-choices b { color: var(--forest); }
+
+/* Settings — where the data lives, and how to get it out. */
+.settings-dialog { width: min(560px, 100%); }
+.settings-body { overflow-y: auto; display: grid; gap: 18px; padding: 20px 26px 26px; }
+.settings-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(88px, 1fr)); gap: 8px; }
+.settings-stats > div { display: grid; gap: 2px; padding: 12px 10px; border: 1px solid var(--line); border-radius: 13px; background: rgb(255 255 255 / 0.6); text-align: center; }
+.settings-stats strong { font-size: 21px; letter-spacing: -0.04em; }
+.settings-stats span { color: var(--muted); font-size: 9px; font-weight: 700; }
+.settings-block { display: grid; gap: 8px; justify-items: start; }
+.settings-block h3 { margin: 0; font-size: 15px; letter-spacing: -0.03em; }
+.settings-block p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.settings-truth { padding: 14px 16px; border: 1px solid #e3c27b; border-radius: 14px; background: #f7e8b6; }
+.settings-truth h3 { color: #704520; }
+.settings-truth p { color: #704520; }
+.settings-error { color: #8c3f22; font-size: 11px; font-weight: 700; }
+/* On mobile the sidebar is hidden, so the header avatar is the way into settings.
+   Without this, backup and restore were unreachable on a phone. */
+.mobile-settings { border: 0; cursor: pointer; font: inherit; }

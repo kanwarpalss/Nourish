@@ -58,7 +58,7 @@ test("prototype test detects a missing critical product area", () => {
 });
 
 test("keeps the prototype complete, responsive, and free of starter residue", async () => {
-  const [page, css, layout, packageJson, spec, nutrition, sources] = await Promise.all([
+  const [page, css, layout, packageJson, spec, nutrition, sources, state] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
@@ -66,6 +66,7 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
     readFile(new URL("../SPEC.md", import.meta.url), "utf8"),
     readFile(new URL("../app/nutrition-data.ts", import.meta.url), "utf8"),
     readFile(new URL("../data/NUTRITION_SOURCES.md", import.meta.url), "utf8"),
+    readFile(new URL("../app/local-nutrition-state.ts", import.meta.url), "utf8"),
   ]);
 
   for (const label of ["Items", "Meals", "Today", "History", "Trends", "Purchases"]) {
@@ -115,7 +116,24 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
   assert.match(page, /Show trend chart/);
   assert.match(page, /upsertWeightEntry/);
   assert.match(page, /if \(!storageLoaded\) return/);
-  assert.match(page, /LEGACY_NUTRITION_STORAGE_KEYS/);
+  // Reading older storage keys still has to happen on load; it moved out of the
+  // component into readStoredNutritionRaw, which also falls back to the backup.
+  assert.match(page, /readStoredNutritionRaw\(window\.localStorage\)/, "load must go through the backup-aware reader");
+  assert.match(page, /writeStoredNutritionState\(window\.localStorage, saved\)/, "saves must snapshot a backup first");
+  assert.match(state, /LEGACY_NUTRITION_STORAGE_KEYS/, "older keys must still be read somewhere");
+  assert.match(state, /NUTRITION_BACKUP_STORAGE_KEY/);
+  // Forward compatibility: an older build must not delete fields a newer one wrote.
+  assert.match(state, /carried/, "unknown stored fields must be carried through");
+  assert.doesNotMatch(page, /localStorage\.setItem\(LOCAL_NUTRITION_STORAGE_KEY/, "no direct write may bypass the backup");
+  // The dead settings control is now a real panel, and it tells the truth about scope.
+  assert.match(page, /function SettingsPanel/);
+  assert.match(page, /onClick=\{\(\) => setSettingsOpen\(true\)\}/, "the settings button must actually open something");
+  assert.match(page, /Download backup/);
+  assert.match(page, /do not sync/, "settings must state that other browsers or ports are separate diaries");
+  // The sidebar is hidden on mobile, so settings needs its own header entry or
+  // backup and restore are unreachable on a phone.
+  assert.match(page, /mobile-settings/, "settings must be reachable without the desktop sidebar");
+  assert.match(css, /\.mobile-topbar > \.mobile-settings \{[^}]*44px/, "the mobile settings control needs a 44px tap target");
   assert.match(page, /30 min or less/);
   assert.doesNotMatch(page, /Number\.parseInt\(recipe\.time/);
   assert.match(page, /needs nutrition review/);

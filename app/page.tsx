@@ -5,7 +5,7 @@ import { isCardIqFoodImport, refineCardIqImport, type CardIqFoodImport } from ".
 import { FoodIcon, foodIconKey } from "./food-icon";
 import { addToTray, cloneUserMeal, createCustomFood, createUserMeal, forkFoodForEdit, getSingleItemKind, isOwnedFood, isUserMealNameValid, MAX_MEAL_NAME_LENGTH, mergeFoodCatalog, singleItemKindLabel, upsertUserMeal, userMealToNutritionItem, userMealTotals, type SingleItemKind, type TrayItem, type UserMeal } from "./logging-session";
 import { defaultCompositeItems, findComponentFood } from "./composite-foods";
-import { emptyNutritionState, getWeightTrendPoints, isSafeImageUrl, LEGACY_NUTRITION_STORAGE_KEYS, LOCAL_NUTRITION_STORAGE_KEY, logsForDay, MAX_STORED_DAYS, parseSavedNutritionState, stringifySavedNutritionState, upsertWeightEntry, withDayLogs, wouldDropOldestDay, type SavedLogEntry, type SavedNutritionState, type WeightEntry } from "./local-nutrition-state";
+import { emptyNutritionState, exportNutritionState, getWeightTrendPoints, isSafeImageUrl, logsForDay, MAX_STORED_DAYS, parseExportedNutritionState, parseSavedNutritionState, readStoredNutritionRaw, upsertWeightEntry, withDayLogs, wouldDropOldestDay, writeStoredNutritionState, type SavedLogEntry, type SavedNutritionState, type WeightEntry } from "./local-nutrition-state";
 import { DEFAULT_TARGETS, loggableMeals, recentDayKeys, resolveLoggedFood, summariseHistory, summariseTrend, type DaySummary } from "./day-history";
 import { estimateSatiety, getBangaloreClock, getBasisAmountForLogging, getEnergyRunway, getLoggingUnitLabel, getLoggingUnits, getQuantityLimit, hasNutritionTarget, isQuantityValid, matchesNutritionTarget, matchesRecipe, satietyLabel, scaleNutrition, scaleNutritionForUnit, sumLoggedNutrition, sumNutritionDetails, type DashboardClock, type NutritionTarget } from "./prototype-logic";
 import { meals, nutritionItems, SOURCE_LINKS, type Meal, type NutritionItem, type NutritionUnit } from "./nutrition-data";
@@ -1128,6 +1128,93 @@ function RecipeDrawer({ recipe, onClose, onPlan }: { recipe: Recipe | null; onCl
   );
 }
 
+/**
+ * Where KP's data lives and how to get it out.
+ *
+ * The diary is browser storage, which is scoped to the exact origin — so
+ * http://localhost:4317 and any other port are separate diaries that never
+ * merge, and clearing browser data ends both. Until the Mac Mini store lands,
+ * an export file is the only thing that survives any of that, so this panel
+ * says so plainly rather than implying the data is safe by default.
+ */
+function SettingsPanel({ state, dayKey, onClose, onImport }: {
+  state: SavedNutritionState;
+  dayKey: string;
+  onClose: () => void;
+  onImport: (restored: SavedNutritionState, filename: string) => void;
+}) {
+  const [error, setError] = useState("");
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const days = state.days.length;
+  const entries = state.days.reduce((sum, day) => sum + day.logs.length, 0);
+
+  const download = () => {
+    const blob = new Blob([exportNutritionState(state, new Date().toISOString())], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `nourish-backup-${dayKey}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const chooseFile = async (file: File | null) => {
+    setError("");
+    if (!file) return;
+    const restored = parseExportedNutritionState(await file.text());
+    if (!restored) {
+      setError("That file is not a Nourish backup, or holds nothing to restore. Your current diary is untouched.");
+      return;
+    }
+    onImport(restored, file.name);
+  };
+
+  return (
+    <div className="dialog-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}>
+      <section className="food-dialog settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+        <header>
+          <div><span className="eyebrow">Nourish</span><h2 id="settings-title">Your data</h2></div>
+          <button className="close-button" onClick={onClose} aria-label="Close settings">×</button>
+        </header>
+        <div className="settings-body">
+          <div className="settings-stats">
+            <div><strong>{days}</strong><span>{days === 1 ? "day" : "days"} of diary</span></div>
+            <div><strong>{entries}</strong><span>logged {entries === 1 ? "entry" : "entries"}</span></div>
+            <div><strong>{state.customFoods.length}</strong><span>your foods</span></div>
+            <div><strong>{state.userMeals.length}</strong><span>your meals</span></div>
+            <div><strong>{state.weights.length}</strong><span>weigh-ins</span></div>
+          </div>
+
+          <section className="settings-block">
+            <h3>Back up</h3>
+            <p>Downloads everything above as one file — diary, your foods, your meals, weigh-ins and targets. Keep it somewhere outside this browser.</p>
+            <button className="button primary" onClick={download}>Download backup</button>
+          </section>
+
+          <section className="settings-block">
+            <h3>Restore</h3>
+            <p>Loads a backup file. It <strong>merges</strong> into what is here — days, foods, meals and weigh-ins are combined, and nothing currently logged is deleted.</p>
+            <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={(event) => { void chooseFile(event.target.files?.[0] ?? null); event.target.value = ""; }} />
+            <button className="button secondary" onClick={() => fileRef.current?.click()}>Choose a backup file…</button>
+            {error ? <p className="settings-error" role="alert">{error}</p> : null}
+          </section>
+
+          <section className="settings-block settings-truth">
+            <h3>Where this is stored</h3>
+            <p>
+              In this browser only, under this exact address. A different browser, a different
+              Mac, or a different port is a different diary — they do not sync. Clearing browser
+              data removes it. A downloaded backup is the only copy that survives any of that.
+            </p>
+          </section>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export default function Home() {
   const [clock, setClock] = useState(() => getBangaloreClock(new Date()));
   const [area, setArea] = useState<Area>("track");
@@ -1138,6 +1225,7 @@ export default function Home() {
   const [foodDialogMealSelection, setFoodDialogMealSelection] = useState<UserMeal | null>(null);
   const [editingFoodIndex, setEditingFoodIndex] = useState<number | null>(null);
   const [recipe, setRecipe] = useState<Recipe | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   /** Non-null while Plan’s food editor is open; `initial` null means creating. */
   const [planFoodEditor, setPlanFoodEditor] = useState<{ initial: Food | null } | null>(null);
   /** Non-null while Plan’s meal builder is open; `initial` null means creating. */
@@ -1167,9 +1255,9 @@ export default function Home() {
   };
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      const raw = window.localStorage.getItem(LOCAL_NUTRITION_STORAGE_KEY)
-        ?? LEGACY_NUTRITION_STORAGE_KEYS.map((key) => window.localStorage.getItem(key)).find((value) => value !== null)
-        ?? null;
+      // Newest schema first, then older keys, then the backup — so a corrupted live
+      // key recovers instead of presenting an empty diary as if nothing was logged.
+      const raw = readStoredNutritionRaw(window.localStorage);
       const restored = parseSavedNutritionState(raw);
       setSaved(restored);
       setStorageLoaded(true);
@@ -1186,7 +1274,9 @@ export default function Home() {
     // storage. Only today's slice is ever rewritten, so earlier days survive midnight.
     if (!storageLoaded) return;
     try {
-      window.localStorage.setItem(LOCAL_NUTRITION_STORAGE_KEY, stringifySavedNutritionState(saved));
+      // Keeps the previous payload as a backup before overwriting, so one bad
+      // write cannot be the end of the diary.
+      writeStoredNutritionState(window.localStorage, saved);
     } catch {
       // A persistent banner, not a toast that disappears: if the diary has stopped being
       // written, KP must keep seeing that until it is fixed. Deferred so the effect body
@@ -1270,6 +1360,37 @@ export default function Home() {
     saveCustomFood(food);
     setPlanFoodEditor(null);
   };
+  /**
+   * Merge a backup into the live diary. Deliberately additive: for anything that
+   * collides, what is already here wins, and nothing currently logged is removed.
+   * Restoring a stale file should never be able to undo today's work — the worst
+   * it can do is add days KP no longer has.
+   */
+  const importBackup = (restored: SavedNutritionState, filename: string) => {
+    setSaved((current) => {
+      const dayByKey = new Map(restored.days.map((day) => [day.dayKey, day]));
+      for (const day of current.days) dayByKey.set(day.dayKey, day);
+      const foodById = new Map(restored.customFoods.map((food) => [food.id, food]));
+      for (const food of current.customFoods) foodById.set(food.id, food);
+      const mealById = new Map(restored.userMeals.map((meal) => [meal.id, meal]));
+      for (const meal of current.userMeals) mealById.set(meal.id, meal);
+      const weightByDate = new Map(restored.weights.map((entry) => [entry.date, entry]));
+      for (const entry of current.weights) weightByDate.set(entry.date, entry);
+      return {
+        ...current,
+        days: [...dayByKey.values()].sort((left, right) => right.dayKey.localeCompare(left.dayKey)).slice(0, MAX_STORED_DAYS),
+        customFoods: [...foodById.values()],
+        userMeals: [...mealById.values()],
+        weights: [...weightByDate.values()].sort((left, right) => left.date.localeCompare(right.date)),
+        targets: current.targets ?? restored.targets,
+        carried: { ...(restored.carried ?? {}), ...(current.carried ?? {}) },
+      };
+    });
+    setSettingsOpen(false);
+    const added = restored.days.length;
+    notify(`Restored from ${filename} · ${added} ${added === 1 ? "day" : "days"} merged in, nothing removed`, 8000);
+  };
+
   const saveWeight = (entry: WeightEntry) => {
     setSaved((current) => ({ ...current, weights: upsertWeightEntry(current.weights, entry) }));
     notify(`Weight saved · ${entry.kg.toFixed(1)} kg`);
@@ -1373,9 +1494,9 @@ export default function Home() {
         <div className="brand"><span>N</span><div><strong>Nourish</strong><small>Personal nutrition</small></div></div>
         <div className="area-switch" aria-label="Main sections"><button className={area === "plan" ? "active" : ""} onClick={() => switchArea("plan")}><span>PLAN</span><small>Decide what to eat</small></button><button className={area === "track" ? "active" : ""} onClick={() => switchArea("track")}><span>TRACK</span><small>See how you’re doing</small></button></div>
         <nav className="side-nav" aria-label={`${area} navigation`}>{nav.map((item) => <button key={item.id} className={activeView === item.id ? "active" : ""} onClick={() => switchView(item.id)}><i>{item.icon}</i><span>{item.label}</span></button>)}</nav>
-        <div className="sidebar-footer"><span className="kp-avatar">KP</span><div><strong>Kanwar</strong><small>{targetsAreDefaults ? "Set your targets" : `${targets.calories.toLocaleString("en-IN")} kcal target`}</small></div><button aria-label="Open settings">•••</button></div>
+        <div className="sidebar-footer"><span className="kp-avatar">KP</span><div><strong>Kanwar</strong><small>{targetsAreDefaults ? "Set your targets" : `${targets.calories.toLocaleString("en-IN")} kcal target`}</small></div><button aria-label="Open settings" onClick={() => setSettingsOpen(true)}>•••</button></div>
       </aside>
-      <div className="mobile-topbar"><div className="brand"><span>N</span><strong>Nourish</strong></div><div className="mobile-area"><button className={area === "plan" ? "active" : ""} onClick={() => switchArea("plan")}>Plan</button><button className={area === "track" ? "active" : ""} onClick={() => switchArea("track")}>Track</button></div><span className="kp-avatar">KP</span></div>
+      <div className="mobile-topbar"><div className="brand"><span>N</span><strong>Nourish</strong></div><div className="mobile-area"><button className={area === "plan" ? "active" : ""} onClick={() => switchArea("plan")}>Plan</button><button className={area === "track" ? "active" : ""} onClick={() => switchArea("track")}>Track</button></div><button className="kp-avatar mobile-settings" aria-label="Open settings" onClick={() => setSettingsOpen(true)}><span>KP</span></button></div>
       <div className="mobile-subnav">{nav.map((item) => <button key={item.id} className={activeView === item.id ? "active" : ""} onClick={() => switchView(item.id)}>{item.label}</button>)}</div>
       <main className="workspace">
         {saveFailed ? <div className="save-warning" role="alert"><strong>Nourish cannot save to this browser.</strong><span>Anything you log now will be lost when you close the tab. This usually means private browsing or a full storage quota.</span></div> : null}
@@ -1384,6 +1505,7 @@ export default function Home() {
       {area === "track" ? <button className="mobile-log-button" onClick={() => openFoodLogger()}>＋ Log food</button> : null}
       {foodDialog ? <FoodDialog initialFood={foodDialogSelection} initialMeal={foodDialogMealSelection} editing={editingFoodIndex !== null} catalog={foodCatalog} meals={logMeals} dayKey={clock.dayKey} onClose={() => { setFoodDialog(false); setFoodDialogSelection(null); setFoodDialogMealSelection(null); setEditingFoodIndex(null); }} onAdd={addFood} onAddMeal={addMeal} onSaveFood={saveCustomFood} onSaveMeal={saveUserMeal} /> : null}
       <RecipeDrawer recipe={recipe} onClose={() => setRecipe(null)} onPlan={addMealToPlan} />
+      {settingsOpen ? <SettingsPanel state={saved} dayKey={clock.dayKey} onClose={() => setSettingsOpen(false)} onImport={importBackup} /> : null}
       {planFoodEditor ? <PlanFoodEditor initial={planFoodEditor.initial} onClose={() => setPlanFoodEditor(null)} onSave={savePlanFood} /> : null}
       {planMealBuilder ? <PlanMealBuilder initial={planMealBuilder.initial} catalog={foodCatalog} dayKey={clock.dayKey} onClose={() => setPlanMealBuilder(null)} onSave={(meal) => { saveUserMeal(meal); setPlanMealBuilder(null); }} /> : null}
       <div className={`toast ${toast ? "visible" : ""}`} role="status" aria-live="polite"><i>✓</i><span>{toast}</span>{toast.includes("tap Undo") ? <button className="toast-undo" onClick={undoDelete}>Undo</button> : null}</div>

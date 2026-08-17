@@ -4,6 +4,19 @@ import { isQuantityValid } from "./prototype-logic";
 
 export const LOCAL_NUTRITION_STORAGE_KEY = "nourish.nutrition.v3";
 export const LEGACY_NUTRITION_STORAGE_KEYS = ["nourish.nutrition.v2", "nourish.nutrition.v1"] as const;
+/**
+ * The previous good payload, kept so one bad write cannot be the end of the diary.
+ * Read only when the live key is missing or unparseable.
+ */
+export const NUTRITION_BACKUP_STORAGE_KEY = "nourish.nutrition.backup";
+
+/**
+ * Every top-level field this build understands. Anything else found in storage is
+ * carried through untouched (see `carried`), because a build that drops fields it
+ * does not recognise destroys data written by a newer one — which is exactly how
+ * "my entries vanished after an update" happens.
+ */
+export const KNOWN_STATE_KEYS = ["schemaVersion", "days", "planned", "targets", "customFoods", "userMeals", "weights"] as const;
 
 /**
  * How many days of diary are kept. Thirteen months so a full year of trends always has a
@@ -81,6 +94,12 @@ export type PersistedNutritionState = {
   /** Groups you saved from a logging tray, each keeping its own component snapshots. */
   userMeals: UserMeal[];
   weights: WeightEntry[];
+  /**
+   * Fields found in storage that this build does not know about, preserved
+   * verbatim and written back, so an older build cannot silently delete data a
+   * newer one wrote. This is what stops "my entries vanished after an update".
+   */
+  carried?: Record<string, unknown>;
 };
 
 export type SavedNutritionState = PersistedNutritionState & {
@@ -330,6 +349,13 @@ export function parseSavedNutritionState(raw: string | null): SavedNutritionStat
     const parsed: unknown = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return emptyNutritionState();
     const value = parsed as { schemaVersion?: unknown; days?: unknown; dayKey?: unknown; logs?: unknown; planned?: unknown; targets?: unknown; customFoods?: unknown; userMeals?: unknown; weights?: unknown };
+    // Anything this build does not recognise rides along untouched. `dayKey` and
+    // `logs` are schema-1 fields consumed by the migration below, and `rejected`
+    // describes a load, so none of those are carried.
+    const consumed = new Set([...KNOWN_STATE_KEYS, "dayKey", "logs", "rejected", "carried"] as string[]);
+    const carriedEntries = Object.entries(value as Record<string, unknown>).filter(([key]) => !consumed.has(key));
+    const carried = carriedEntries.length > 0 ? Object.fromEntries(carriedEntries) : undefined;
+
     const planned = Array.isArray(value.planned) ? value.planned.flatMap(parsePlanEntry) : [];
     const targets = parseTargets(value.targets);
     const parsedCustomFoods = Array.isArray(value.customFoods) ? value.customFoods.flatMap((food) => {
@@ -370,6 +396,7 @@ export function parseSavedNutritionState(raw: string | null): SavedNutritionStat
         customFoods,
         userMeals,
         weights,
+        ...(carried ? { carried } : {}),
         rejected: droppedSoFar + countDropped(value.logs, logs.length),
       };
     }
@@ -394,6 +421,7 @@ export function parseSavedNutritionState(raw: string | null): SavedNutritionStat
       customFoods,
       userMeals,
       weights,
+      ...(carried ? { carried } : {}),
       rejected: droppedSoFar + countDropped(value.days, days.length) + Math.max(0, storedLogs - keptLogs),
     };
   } catch {
@@ -403,8 +431,10 @@ export function parseSavedNutritionState(raw: string | null): SavedNutritionStat
 
 export function stringifySavedNutritionState(state: PersistedNutritionState) {
   // `rejected` describes a load, not the diary, so the write type excludes it.
-  const { schemaVersion, days, planned, targets, customFoods, userMeals, weights } = state;
-  return JSON.stringify({ schemaVersion, days, planned, targets, customFoods, userMeals, weights });
+  const { schemaVersion, days, planned, targets, customFoods, userMeals, weights, carried } = state;
+  // Unknown fields go down first so this build's own keys always win, but nothing
+  // a newer build wrote is dropped on the way through.
+  return JSON.stringify({ ...(carried ?? {}), schemaVersion, days, planned, targets, customFoods, userMeals, weights });
 }
 
 export function logsForDay(state: SavedNutritionState, dayKey: string): SavedLogEntry[] {
@@ -424,4 +454,92 @@ export function withDayLogs(state: SavedNutritionState, dayKey: string, logs: Sa
 /** True when saving would push the oldest day out of storage, so the caller can say so. */
 export function wouldDropOldestDay(state: SavedNutritionState, dayKey: string) {
   return state.days.length >= MAX_STORED_DAYS && !state.days.some((day) => day.dayKey === dayKey);
+}
+
+/** The narrow slice of localStorage these helpers need, so they stay testable. */
+export type StorageLike = {
+  getItem: (key: string) => string | null;
+  setItem: (key: string, value: string) => void;
+  removeItem?: (key: string) => void;
+};
+
+/**
+ * Read the diary, newest schema first, then older keys, then the backup.
+ *
+ * The backup is consulted only when nothing else yields usable JSON — a live key
+ * that parses is always preferred, even if the backup is newer, because the live
+ * key is what the app has been writing to.
+ */
+export function readStoredNutritionRaw(storage: StorageLike): string | null {
+  const candidates = [LOCAL_NUTRITION_STORAGE_KEY, ...LEGACY_NUTRITION_STORAGE_KEYS, NUTRITION_BACKUP_STORAGE_KEY];
+  let firstPresent: string | null = null;
+  for (const key of candidates) {
+    let raw: string | null = null;
+    try {
+      raw = storage.getItem(key);
+    } catch {
+      continue;
+    }
+    if (!raw) continue;
+    if (firstPresent === null) firstPresent = raw;
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") return raw;
+    } catch {
+      // Unparseable: keep looking, so a corrupted live key falls back to the backup
+      // instead of presenting an empty diary as if nothing had ever been logged.
+    }
+  }
+  return firstPresent;
+}
+
+/**
+ * Write the diary, then mirror it to the backup key.
+ *
+ * The mirror happens AFTER the live write succeeds, so the backup holds the last
+ * known-good copy of everything. An earlier version kept the *previous* payload
+ * instead, which sounds equivalent and is not: recovering from it silently lost
+ * the most recent change. Driving a real corruption in the browser showed a
+ * restored diary with zero entries, because the pre-write snapshot predated the
+ * only thing that had been logged.
+ *
+ * The live write is allowed to throw — a save that fails must reach KP, because a
+ * diary that has silently stopped recording is the worst outcome here. The mirror
+ * never throws: failing to duplicate is not a reason to fail the real save.
+ */
+export function writeStoredNutritionState(storage: StorageLike, state: PersistedNutritionState): void {
+  const next = stringifySavedNutritionState(state);
+  storage.setItem(LOCAL_NUTRITION_STORAGE_KEY, next);
+  try {
+    storage.setItem(NUTRITION_BACKUP_STORAGE_KEY, next);
+  } catch {
+    // Out of quota for the duplicate. The real diary is already written, which is
+    // what matters; the next successful save re-establishes the mirror.
+  }
+}
+
+/** A portable snapshot KP can keep outside the browser. */
+export function exportNutritionState(state: PersistedNutritionState, exportedAt: string) {
+  return `${JSON.stringify({ app: "nourish", kind: "nourish-backup", version: 1, exportedAt, state: JSON.parse(stringifySavedNutritionState(state)) }, null, 2)}\n`;
+}
+
+/**
+ * Read a file KP exported earlier. Returns null rather than throwing, because the
+ * caller has to tell him it was not a Nourish backup instead of half-importing it.
+ */
+export function parseExportedNutritionState(raw: string): SavedNutritionState | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+  const envelope = parsed as { kind?: unknown; state?: unknown };
+  // Accept either the wrapped export or a bare state object, so a hand-copied
+  // localStorage value is still importable.
+  const candidate = envelope.kind === "nourish-backup" && envelope.state && typeof envelope.state === "object" ? envelope.state : parsed;
+  const restored = parseSavedNutritionState(JSON.stringify(candidate));
+  const hasContent = restored.days.length > 0 || restored.customFoods.length > 0 || restored.userMeals.length > 0 || restored.weights.length > 0 || restored.targets !== null;
+  return hasContent ? restored : null;
 }
