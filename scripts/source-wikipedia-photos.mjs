@@ -13,12 +13,15 @@
  * page, must carry a lead image, and the title Wikipedia finally resolved to
  * (after redirects) must still share a word with what we asked for. Anything
  * that fails is reported and left without a photo — a food with a drawn icon is
- * fine, a food with the wrong photo is not.
+ * fine, a food with the wrong photo is not. The JSON remains a candidate list:
+ * visually check subject and raw/cooked form before applying it.
  *
  * Only URLs are stored. Images are hot-linked, never copied into this repo.
  */
 
 import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const API = "https://en.wikipedia.org/w/api.php";
 const UA = "Nourish-personal-app/1.0 (local build script)";
@@ -34,61 +37,49 @@ export const articles = {
   cauliflower: "Cauliflower", tomato: "Tomato", onion: "Onion", carrot: "Carrot",
   broccoli: "Broccoli", pumpkin: "Pumpkin", cucumber: "Cucumber", potato: "Potato",
   beetroot: "Beetroot", lettuce: "Lettuce", spinach: "Spinach",
-  capsicum: "Bell pepper", brinjal: "Eggplant", "bottle-gourd": "Calabash",
-  "green-beans": "Green bean", "green-peas-cooked": "Pea",
+  brinjal: "Eggplant", "bottle-gourd": "Calabash", "green-beans": "Green bean",
 
   // Fruit
   banana: "Banana", mango: "Mango", strawberries: "Strawberry", pomegranate: "Pomegranate",
   avocado: "Avocado", guava: "Guava", lemon: "Lemon",
 
-  // Protein
-  "chicken-breast": "Chicken as food", "chicken-curry-cut-raw": "Chicken as food",
-  "whole-egg": "Egg as food", "egg-whites": "Egg white", tofu: "Tofu",
+  // Protein. Only visually unambiguous forms belong here; raw/cooked cuts do not.
+  "egg-whites": "Egg white", tofu: "Tofu",
 
-  // Dairy
-  "milk-toned": "Milk", "milk-double-toned": "Milk", "milk-skimmed": "Milk",
-  "milk-full-cream": "Milk", "milk-cow-whole": "Milk",
+  // Dairy. Category-grade milks intentionally use one neutral milk image elsewhere.
   "curd-dahi": "Curd", "paneer-whole-milk": "Paneer",
-  "greek-yogurt-nonfat": "Strained yogurt",
-  "cheese-processed": "Processed cheese", "cheese-slice": "Processed cheese",
-  "dairy-cream": "Cream",
 
   // Grains and flours
-  oats: "Oat", "brown-rice": "Brown rice", "rice-white-cooked": "White rice",
+  oats: "Oat",
   "atta-whole-wheat": "Atta flour", "poha-dry": "Flattened rice",
   "vermicelli-dry": "Vermicelli", "bread-whole-wheat": "Whole wheat bread",
   "bread-white": "White bread", "rice-flour": "Rice flour", "corn-starch": "Corn starch",
-  "quinoa-cooked": "Quinoa", "pav-bread": "Pav (bread)", "rusk-toast": "Rusk",
+  "pav-bread": "Pav (bread)", "rusk-toast": "Rusk",
 
   // Pulses
-  "rajma-cooked": "Kidney bean", "moong-dal-dry": "Mung bean", "moong-dal-cooked": "Mung bean",
-  "toor-dal-cooked": "Pigeon pea", "chana-dal-cooked": "Chana dal", besan: "Gram flour",
-  "chickpeas-cooked": "Chickpea", "chickpeas-dry": "Chickpea", "kala-chana-dry": "Chickpea",
-  "sprouts-moong": "Sprouting",
+  besan: "Gram flour", "chickpeas-dry": "Chickpea",
 
   // Nuts, seeds, fats
   almonds: "Almond", "peanuts-raw": "Peanut", "peanut-butter": "Peanut butter",
-  chia: "Chia seed", flax: "Flax", makhana: "Euryale ferox", oil: "Cooking oil",
-  "sweet-potato": "Sweet potato",
+  chia: "Chia seed",
 
   // Aromatics and spices
-  ginger: "Ginger", "coriander-leaves": "Coriander", "coriander-powder": "Coriander",
+  ginger: "Ginger", "coriander-leaves": "Coriander",
   "mint-leaves": "Mentha", lemongrass: "Cymbopogon", "cumin-seed": "Cumin",
-  "chilli-powder": "Chili powder", "tamarind-pulp": "Tamarind",
+  "chilli-powder": "Chili powder",
 
   // Sweeteners, drinks, misc
   "sugar-white": "White sugar", cocoa: "Cocoa solids", "tea-brewed": "Tea",
-  "coconut-water": "Coconut water", "monk-fruit-sweetener": "Siraitia grosvenorii",
+  "coconut-water": "Coconut water",
   murukku: "Murukku", "chana-jor-namkeen": "Chana jor garam",
-
-  // Branded products that have their own article, so the lead image is the pack
-  "cola-classic": "Coca-Cola", "cola-zero-sugar": "Diet Coke",
-  "coca-cola-original": "Coca-Cola", "coca-cola-zero": "Coca-Cola Zero Sugar",
-  "coca-cola-zero-250": "Coca-Cola Zero Sugar", "diet-coke": "Diet Coke",
-  "maggi-masala-noodles": "Maggi", "parle-g": "Parle-G",
-  "lays-potato-chips": "Lay's", "cadbury-dairy-milk": "Dairy Milk",
-  "kurkure-masala-munch": "Kurkure", "tang-orange-drink-mix": "Tang (drink mix)",
 };
+
+/** A resumed map may be old; stale branded or retired ids must not ride through. */
+export function filterExistingPhotoMap(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const allowed = new Set(Object.keys(articles));
+  return Object.fromEntries(Object.entries(value).filter(([id, url]) => allowed.has(id) && typeof url === "string" && /^https:\/\//.test(url)));
+}
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -152,31 +143,36 @@ async function leadImage(title) {
   return { url: cleanUrl(thumb), resolvedTitle: page.title };
 }
 
-const existingPath = process.argv[2];
-const existing = existingPath && existsSync(existingPath) ? JSON.parse(readFileSync(existingPath, "utf8")) : {};
-if (Object.keys(existing).length) console.error(`resuming with ${Object.keys(existing).length} already resolved`);
+async function main() {
+  const existingPath = process.argv[2];
+  const existing = filterExistingPhotoMap(existingPath && existsSync(existingPath) ? JSON.parse(readFileSync(existingPath, "utf8")) : {});
+  if (Object.keys(existing).length) console.error(`resuming with ${Object.keys(existing).length} already resolved`);
 
-const results = { ...existing };
-const failures = [];
-for (const [id, title] of Object.entries(articles)) {
-  if (results[id]) continue;
-  try {
-    const outcome = await leadImage(title);
-    if (outcome.error) {
-      failures.push(`${id} (${title}): ${outcome.error}`);
-      console.error(`SKIP  ${id.padEnd(28)} ${title} — ${outcome.error}`);
-    } else {
-      results[id] = outcome.url;
-      const file = decodeURIComponent(outcome.url.split("/").pop() ?? "");
-      console.error(`ok    ${id.padEnd(28)} ${outcome.resolvedTitle.padEnd(24)} ${file.slice(0, 60)}`);
+  const results = { ...existing };
+  const failures = [];
+  for (const [id, title] of Object.entries(articles)) {
+    if (results[id]) continue;
+    try {
+      const outcome = await leadImage(title);
+      if (outcome.error) {
+        failures.push(`${id} (${title}): ${outcome.error}`);
+        console.error(`SKIP  ${id.padEnd(28)} ${title} — ${outcome.error}`);
+      } else {
+        results[id] = outcome.url;
+        const file = decodeURIComponent(outcome.url.split("/").pop() ?? "");
+        console.error(`ok    ${id.padEnd(28)} ${outcome.resolvedTitle.padEnd(24)} ${file.slice(0, 60)}`);
+      }
+    } catch (error) {
+      failures.push(`${id}: ${error.message}`);
+      console.error(`FAIL  ${id} — ${error.message}`);
     }
-  } catch (error) {
-    failures.push(`${id}: ${error.message}`);
-    console.error(`FAIL  ${id} — ${error.message}`);
+    await sleep(700);
   }
-  await sleep(700);
+
+  console.error(`\nresolved ${Object.keys(results).length}/${Object.keys(articles).length}`);
+  if (failures.length) console.error(`left without a photo:\n  ${failures.join("\n  ")}`);
+  console.log(JSON.stringify(results, null, 2));
 }
 
-console.error(`\nresolved ${Object.keys(results).length}/${Object.keys(articles).length}`);
-if (failures.length) console.error(`left without a photo:\n  ${failures.join("\n  ")}`);
-console.log(JSON.stringify(results, null, 2));
+const invokedPath = process.argv[1] ? resolve(process.argv[1]) : "";
+if (invokedPath === fileURLToPath(import.meta.url)) await main();

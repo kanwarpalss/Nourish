@@ -1,183 +1,93 @@
-# Nutrition seed-data evidence
+# Nutrition and image evidence
 
-> **Scope:** This is a researched seed catalogue for the local design prototype, prepared on 2026-08-08. It is not yet the cardIQ order import and it does not replace the label on the exact pack KP receives.
+> **Scope:** Nourish is a personal reference catalogue, not a medical device. An exact product record means the brand, product, flavour/form, and pack variant were identified. If any of those are uncertain, the cardIQ purchase remains unlinked.
 
 ## Source hierarchy
 
-1. **Exact product:** the manufacturer’s current nutrition panel.
-2. **Indian raw ingredient:** ICMR–National Institute of Nutrition, *Indian Food Composition Tables 2017*.
-3. **Missing/supplementary raw ingredient:** USDA FoodData Central Foundation or SR Legacy data.
-4. **Retailer or label mirror:** allowed only as a visibly weaker provisional match; the exact pack must be rechecked before production promotion.
+1. **Official label** — the manufacturer’s current panel for the exact variant.
+2. **Label mirror** — a barcode-backed label photo or exact retailer panel; useful, but weaker than the pack in hand.
+3. **Reference** — IFCT/USDA composition for an explicitly named raw/cooked food or category. Never auto-attached to a branded purchase.
+4. **Estimated / Personal** — KP’s correction or a transparent calculated assembly.
 
-## Primary references
+Primary references:
 
-- [ICMR–NIN Indian Food Composition Tables 2017](https://www.nin.res.in/ebooks/IFCT2017_16122024.pdf)
-- [ICMR–NIN Dietary Guidelines for Indians 2024](https://www.nin.res.in/dietaryguidelines/index.html)
+- [ICMR–National Institute of Nutrition Indian Food Composition Tables 2017](https://www.nin.res.in/ebooks/IFCT2017_16122024.pdf)
 - [USDA FoodData Central](https://fdc.nal.usda.gov/)
-- [FSSAI nutrition-labelling guidance](https://www.fssai.gov.in/upload/uploadfiles/files/Guidelines_Nutrition_Labelling_16_08_2018.pdf)
-- [Amul High Protein Paneer official panel](https://old.amul.com/products/amul-HP-tin-paneer-info.php)
-- [Amul High Protein Buttermilk official panel](https://old.amul.com/products/amul-highprotein-buttermilk-info.php)
-- [MuscleBlaze Biozyme official panel](https://biozyme.muscleblaze.com/what-is-biozyme-whey.php)
-- [KMF/Nandini GoodLife product family](https://www.nandinigoodlife.in/)
+- [FSSAI dairy standards](https://fssai.gov.in/upload/uploadfiles/files/Chapter%202_1%20%28Dairy%20products%20and%20analogues%29.pdf)
+- [Open Food Facts](https://world.openfoodfacts.org/) for barcode-backed label mirrors
 
-## Provisional label mirrors
+FSSAI’s toned/full-cream/double-toned definitions establish fat and solids-not-fat grades; they do **not** establish one universal calorie, protein, or carbohydrate panel for every brand. Those catalogue entries are therefore category references, say that the pack may differ, and are never exact purchase matches.
 
-- [Nandini GoodLife toned milk retailer label](https://www.bigbasket.com/pd/100285703/nandini-goodlife-toned-milk-1-l-carton/)
-- [Epigamia Natural Greek Yogurt label mirror](https://www.eatthismuch.com/calories/greek-yogurt-natural-1806163)
+## Exact purchase-title coverage
 
-These two entries are intentionally marked **Label mirror** in the interface. During the cardIQ phase, the barcode/pack variant and its photographed label must agree before they are treated as exact products.
+The local cardIQ snapshot contains 193 food rows. Eighteen complete retailer titles currently auto-link; 175 remain disabled in [UNMATCHED_CARDIQ_FOODS.md](./UNMATCHED_CARDIQ_FOODS.md).
 
-## Panels transcribed from published sources
+Five links were added in the 2026-08-21 audit only after the complete title and pack variant matched:
 
-Some branded products KP buys repeatedly have no pack to hand, so their panels were found online on 2026-08-10. These are **Label mirror**, never Official label: a published panel is not the pack in KP's hand, however good the source.
-
-Sources are ranked. An [Open Food Facts](https://world.openfoodfacts.org/) entry carries a barcode *and* a photograph of the actual label, which is the strongest of these. A manufacturer's own product page is next. Nutrition aggregators are weakest, because they are user-contributed and demonstrably disagree with each other.
-
-| Product | Basis | Source strength |
+| Purchase | Exact catalogue record | Nutrition evidence |
 |---|---|---|
-| Milky Mist Greek Yogurt, plain | 77 kcal / 100 g | Open Food Facts, barcode 8904083302292, label photo |
-| The Health Factory Zero Maida Protein Bread | 242 kcal / 100 g | Open Food Facts, barcode 8908009059246, label photo |
-| Epigamia Turbo 25 g protein milkshake | 141 kcal / 250 ml | Published panel |
-| Cosmix No-Nonsense Plant Protein | 145 kcal / 38 g scoop | Published panel, unflavoured variant |
-| So Good oat beverage, unsweetened | 59 kcal / 100 ml | Published panel, unsweetened variant only |
-| Zero-sugar cola | 0 kcal / 100 ml | Coca-Cola India product page |
-| Coca-Cola classic (full sugar) | 44 kcal / 100 ml | Coca-Cola India product page — manufacturer's own, so Official label |
-| Parle-G glucose biscuits | 454 kcal / 100 g | Published panel |
-| MAGGI 2-Minute masala noodles | 443 kcal / 100 g | Published panel |
-| Milky Mist Skyr | 100 kcal / 100 g | Published panel |
-| Cadbury Dairy Milk | 531 kcal / 100 g | Open Food Facts |
-| Lay's India's Magic Masala | 555 kcal / 100 g | Published panel |
-| Slurrp Farm multigrain cookies | 492 kcal / 100 g | Published panel, banana oat variant |
+| Sid’s Farm High Protein Milk, 250 ml | Fat-free, lactose-free 250 ml can | [Sid’s Farm official page](https://sidsfarm.com/products/high-protein-milk) |
+| Weikfield Custard Powder, Vanilla, 100 g | Vanilla 100 g dry powder | Manufacturer identity plus published dry-panel mirror |
+| The Health Factory Zero Maida Protein Bread, 250 g | 250 g loaf | Manufacturer identity plus barcode-backed panel |
+| So Good Oat Beverage Unsweetened, 200 ml | Unsweetened Creamy 200 ml carton | Exact retailer panel mirror |
+| Milky Mist Greek Yogurt, 100 g | Natural 100 g cup | Open Food Facts barcode 8904083302292 |
 
-### The acceptance rule
+Near-misses remain unmatched: missing pack size, a different flavour, a multipack mismatch, 700 g versus 100 g yogurt, Barista versus Unsweetened oat drink, or a product-family name without its exact variant.
 
-Every transcribed value was cross-checked against its own macros before being entered: protein × 4 + available carbohydrate × 4 + fat × 9 + fibre × 2 must agree with the stated energy. A manufacturer's panel is their own arithmetic, so it should agree with itself closely; anything beyond about 6% was treated as unreliable and rejected.
+## Corrected high-risk records
 
-This rule is now enforced by the test suite rather than left to judgement. Packaged entries (Official label, Label mirror) must agree within 10%; raw reference foods get 25%, because composition tables use food-specific Atwater factors and a 2 kcal difference on a cucumber is a large percentage. Unsweetened cocoa is explicitly exempt — USDA applies food-specific factors that are materially lower than the general ones, so the general calculation overstates it by design.
+- **24 Mantra Organic Kabuli Chana** is a **908 g / 2 lb pouch**, as printed on the barcode-backed pack image—not 500 g. Its pack conversion is 908 g.
+- **Bambino Long Cut Vermicelli** is the Plain 450 g dry pack. The official panel declares calories, protein, carbohydrate, and fat but does not declare fibre. Nourish stores a numeric zero only as the arithmetic subtotal and visibly says **fibre not declared** in item, logging, day, and trend views.
+- **Amul High Protein Paneer** is the current 400 g tin, not the older 200 g pouch.
+- **Coca-Cola records** are separate exact SKUs: Original 750 ml, Zero Sugar 750 ml, Zero Sugar 8 × 250 ml, and Diet Coke 300 ml. A generic “any-brand zero cola” record is not allowed.
 
-### Rejected, and why
+The following ambiguous or duplicate records were removed rather than guessed:
 
-- **Yogabar 26 g protein shake** — the published figures state 210 kcal against macros computing to 238.5, a 13.6% disagreement. One of the two numbers is wrong and there is no way to tell which.
-- **So Good Barista Edition** — the figure found (112 kcal/100 ml) has no fat value and is roughly double every comparable oat beverage; the results also mixed the Indian product with Sanitarium's Australian one of the same brand name. Only the unsweetened variant was accepted.
-- **Slurrp Farm cookies** — no nutrition panel found in any source.
-- **Sid's Farm High Protein Milk** — protein and energy are published but carbohydrate is not. The carb figure could be back-solved from the other two, but that is circular: the derived value would then "agree" with the energy by construction and the cross-check would prove nothing.
-- **Kurkure** — a corn puff, not a potato crisp; it must not borrow the Lay's panel.
-- **Cadbury Nutties** — chocolate-coated peanuts, not a solid bar.
-- **NOICE Jeera Coriander Kulcha** — a bread named after its flavouring. An early version of the spice rule matched it to cumin at 375 kcal/100 g, which is why spice matches now require the spice form ("jeera powder", "jeera whole") rather than the bare word.
-- **Whole chillies with stem** — fresh and dried chillies differ several-fold; only an explicit "chilli powder" resolves.
+- generic any-brand zero cola and duplicate classic cola;
+- duplicate Kinley Strong Soda;
+- the weaker Epigamia Turbo entry that conflicted with the exact Cookies & Cream 250 ml record;
+- a monk-fruit entry that collapsed different Sweetmate/Zeeero formulations into one product.
 
-Generic reference values were used, and labelled Reference rather than Label mirror, for rusk, murukku, coconut water, and the aromatics and spices (lemon, lemongrass, ginger, coriander leaf and powder, mint, cumin, chilli powder, tamarind, sugar, rice flour, corn starch, kala chana, tea). These are composition-table figures for the food in general, not a specific brand's pack.
+## Arithmetic acceptance rule
 
-### Third research pass (2026-08-10)
+Every packaged panel is checked against its own macros:
 
-Twelve more panels found and cross-checked, taking coverage of KP's imported purchase history to 163 of 194 food items (163/194 = 84% of items; 88% of purchase events, since these skew toward things he buys more than once).
+protein × 4 + digestible carbohydrate × 4 + fat × 9 + fibre × 2
 
-| Product | Basis | Source strength |
-|---|---|---|
-| Sid's Farm High Protein Milk | 63.2 kcal / 100 ml | Published panel, 250 ml pack |
-| ACT II Sour Cream & Cheese popcorn | 496 kcal / 100 g | Published panel |
-| Cadbury Nutties | 511 kcal / 100 g | Open Food Facts, barcode 7622202031618 |
-| Weikfield Custard Powder (dry) | 342 kcal / 100 g | Published panel |
-| Kurkure Masala Munch | 555 kcal / 100 g | Published panel |
-| Kinley Strong Soda Original | 0 kcal / 100 ml | Published panel, this exact variant |
-| Get-A-Way Chocolate Brownie Fudge ice cream | 182 kcal / 100 g | Published panel |
-| The Health Factory Zero Maida Pizza Base | 239.7 kcal / 100 g | Published panel |
-| Tang orange drink mix (dry powder) | 380 kcal / 100 g | Published panel |
-| Monk fruit sweetener (Sweetmate, Zeeero) | 0 kcal / 100 g | Manufacturer zero-calorie claim, both brands |
-| Pav / soft bread roll | 288 kcal / 100 g | Published panel — **Britannia's pack, not SMOOR's**; marked Reference, not Label mirror |
-| Chana jor namkeen | 517 kcal / 100 g | Published panel — **Haldiram's pack, not Bhujialalji's**; marked Reference, not Label mirror |
+Packaged entries must be within 10% of declared energy. Reference foods get a wider 25% tolerance because composition tables may use food-specific Atwater factors. A candidate is rejected if its energy exceeds roughly 900 kcal/100 g or if protein + carbohydrate + fat exceeds 100 g/100 g.
 
-The last two are a different kind of entry from everything above: a real published panel, but for a different manufacturer's pack than the one KP actually bought. They are deliberately tagged **Reference**, not Label mirror — the same tier already used for murukku and rusk-toast — because "Label mirror" is reserved for a panel that is genuinely close to being the product's own label. A generic pav or a generic chana jor snack is close enough across brands to be useful; it is not the same claim as "this is Britannia's/Haldiram's own number for KP's SMOOR/Bhujialalji pack."
+This gate is executable in tests/prototype-logic.test.ts and tests/open-food-facts.test.ts; it is not reviewer memory.
 
-### Rejected in this pass, and why
+## Product panels that remain reference-only
 
-- **So Good Barista and Caramel variants** — re-searched directly against Open Food Facts by product name; confirmed no Indian "So Good" entry exists there at all. Every result for "So Good oat" is Sanitarium's Australian/NZ product line, a different manufacturer despite the shared brand name. Only the unsweetened variant (already entered) has a verified Indian-market panel.
-- **Yogabar Cold Coffee protein shake** — two more figures found (207 kcal and 220 kcal per 250 ml) neither with a complete macro breakdown to cross-check, on top of the double-chocolate figure already rejected for 13.6% self-inconsistency. Three different numbers for the same product line with no way to verify any of them.
-- **Right Shift Roasted Navrattan Mix** — its own retailer pages (BigBasket, Blinkit) block automated fetches; no complete panel found elsewhere.
-- **HERSHEY'S Chocolate Syrup** — sources disagreed by 16% (237 kcal vs 276 kcal per 100g) with no way to tell which is current.
-- **Veeba Salsa Dip, Tata Sampann Chhole Masala, Theobroma cheese crackers, DRIX Better Cola, RAW POP sodas, NOICE kulcha/nachos/batter/kombucha, Eat Better Co laddoo, Supply6 electrolyte mix, Baker's Dozen breadsticks/garlic bread, Aptamil infant formula** — no reliable brand-specific panel found. Generic garlic-breadstick estimates ranged 150–500 kcal/100g depending on brand, too wide to use as a stand-in.
+Parle-G, MAGGI Masala, Milky Mist Skyr, Cadbury Dairy Milk, Lay’s Magic Masala, Slurrp Farm Banana Oat, ACT II Sour Cream & Cheese, Kurkure Masala Munch, Get-A-Way Chocolate Brownie Fudge, Health Factory Pizza Base, Tang Orange, generic pav, and chana jor have useful researched records but the local purchase title did not prove the exact pack. They stay searchable for a deliberate manual choice and are not cardIQ quick-add matches.
 
-Anything not listed here stays **needs label** with quick-add disabled. A missing number is recoverable; a wrong one silently corrupts every total it touches.
+Cosmix Classic Unflavoured is explicitly different from KP’s Indonesian Cacao purchase. The purchased flavour remains unresolved.
 
-### Branded cereals and pulses (2026-08-14)
+## Image policy
 
-Poha, vermicelli and chana were previously only in the catalogue as generic
-reference grains, but they are bought by brand and every such pack carries a
-printed panel. Three brands entered, plus one ready-to-eat pouch.
+An icon is safer than the wrong photo.
 
-| Product | Basis | Source strength |
-|---|---|---|
-| Fortune Poha, thick | 361.3 kcal / 100 g dry | Open Food Facts, barcode 8906008812817, label photo |
-| Bambino Long Cut Vermicelli | 347 kcal / 100 g dry | Manufacturer's own product page — Official label |
-| 24 Mantra Organic Kabuli Chana | 342.9 kcal / 100 g dry | Open Food Facts, barcode 8904083512219, label photo |
-| MTR Instant Poha | 149 kcal / 60 g pouch | Open Food Facts, barcode 8901042967325, label photo |
+- Exact commercial photos must match brand + product + flavour/form + pack size and are checked visually before entry.
+- Generic photos must match the catalogue’s raw/cooked/dry form.
+- Local files under public/food-images/ are allowed only for a visually confirmed exact pack.
+- Remote image URLs fall back to a drawn category icon if they break.
+- Existing photos are preserved by default; replacement requires the explicit --replace-existing flag.
 
-Two deliberate choices:
+The former free-text Commons search and automatic retailer scraper are retired because a plausible search result cannot prove the exact food or pack. scripts/source-wikipedia-photos.mjs now contains only a small generic allow-list and emits candidates that still require visual review. Branded and state-sensitive foods are excluded.
 
-- **Photos are committed to `public/food-images/`, not hot-linked.** At roughly
-  8–10 KB each a thumbnail costs almost nothing in Git, and it cannot break when
-  a retailer reorganises its CDN. The 61 hot-linked photos already in the
-  catalogue are a standing risk worth migrating the same way.
-- **Bambino's pack declares no dietary fibre**, so the entry claims none rather
-  than borrowing a plausible figure from another semolina product. Its source
-  label says so where KP can see it.
+The audit found and removed real cross-object corruptions including cucumber shown as tomato, fried egg shown as cooking oil, Skippy peanut butter shown as almonds, paneer shown as tofu, brown rice shown as Greek yogurt, eggplant shown as lettuce, murukku shown as coconut water, and tamarind shown as rice flour. The photo applier now edits the exact TypeScript object through the compiler AST, rejects duplicate IDs and malformed URLs, writes atomically, and has failure-injection tests.
 
-Everything is **dry weight**. Cooked poha, chana and vermicelli roughly triple,
-so a serving conversion is attached where a natural portion exists rather than
-leaving KP to convert in his head.
-
-#### Rejected in this pass, and why
-
-- **Tata Sampann Unpolished Toor Dal** — the found panel (364 kcal against 18.2 g
-  protein, 64.3 g carbohydrate, 1.3 g fat, 11.6 g fibre) computes to 318.5 kcal
-  under the general Atwater calculation, a 12.5% disagreement. That clears the
-  loose bound for a raw reference food but fails the packaged bound, which is the
-  tier a brand's own pack arrives in — the same reasoning that rejected the
-  Yogabar shake. The dal is a real product KP buys and it does have a panel;
-  this particular transcription is simply not trustworthy enough to enter, and
-  it should be re-sourced from the pack in hand.
-- **Open Food Facts' Tata Sampann poha listing** — declares 722 kcal and 162.8 g
-  of carbohydrate per 100 g. Self-consistent under 4/4/9, so the energy
-  cross-check accepts it, but 100 g of food cannot contain 162.8 g of anything;
-  the values describe a 200 g serving. `scripts/audit-open-food-facts.ts` now
-  rejects any candidate whose macros outweigh their own basis, which is the check
-  that catches this class.
+Current catalogue coverage is 54 visually accepted photos across 123 foods. The remaining 69 use the truthful icon fallback until an exact image can be checked; coverage is not increased by guessing.
 
 ## Recipe method
 
-The meals in `app/nutrition-data.ts` are original recipe assemblies, not nutrition copied from recipe websites. Each ingredient has a structured food ID and specified edible weight. The app recalculates every displayed meal total from those records whenever it starts. Cooking oil is counted explicitly, and an alternative ingredient is not silently treated as nutritionally identical.
+Meals in app/nutrition-data.ts are original weighed-ingredient assemblies. Displayed totals are recalculated from structured ingredient IDs and weights; oil is explicit. Filter labels are transparent product rules:
 
-The prototype’s filters are transparent product rules, not regulatory label claims:
-
-| Filter | Prototype rule |
+| Filter | Rule per displayed serving |
 |---|---:|
-| High protein | At least 25 g protein per displayed serving |
-| Low fat | At most 10 g fat per displayed serving |
-| High fibre | At least 8 g fibre per displayed serving |
+| High protein | At least 25 g protein |
+| Low fat | At most 10 g fat |
+| High fibre | At least 8 g declared/calculated fibre |
 
-Before persistent logging, these structured calculations will gain recipe version IDs so a later ingredient or label change never rewrites an older food log.
-
-
-## Dependency security note (2026-08-10)
-
-`npm audit` reported 16 high-severity advisories going into this session; 14 are fixed by
-upgrading next, react, react-dom, react-server-dom-webpack, vite, @cloudflare/vite-plugin,
-wrangler and eslint-config-next to their latest compatible non-major releases, plus a scoped
-`overrides` entry pinning the `esbuild` dependency inside `@esbuild-kit/core-utils` (used only
-by drizzle-kit's dev CLI) to a patched 0.25.x release without touching drizzle-kit itself.
-
-Two remain, both traced to `image-size`@2.0.2:
-- `image-size` itself (DoS via malicious ICNS/JXL/HEIF parsing)
-- `vinext`, which depends on it
-
-There is no patched `image-size` release — 2.0.2 is the latest published version and is still
-inside the vulnerable range. Every vinext release checked, including its newest 1.0.0-beta.5
-prerelease, pins `image-size` at the exact same vulnerable version. `npm audit fix --force`
-offers to "fix" this by downgrading vinext to 0.0.45 — five patch versions back — but that
-version simply predates the `@vercel/og` feature that pulls in `image-size`; it is a downgrade
-that drops functionality, not a security fix, and was rejected on that basis.
-
-The vulnerable code path is `@vercel/og` Open Graph image generation. Confirmed by
-`grep -rn "vercel/og\|ImageResponse\|next/og\|opengraph-image" app/` that Nourish's own code
-never calls it, so the vulnerable parser is never reached by anything this app actually does.
-Revisit this line when image-size ships a patch.
+Historical logs store immutable food/meal snapshots, so later catalogue edits do not rewrite what KP previously logged.

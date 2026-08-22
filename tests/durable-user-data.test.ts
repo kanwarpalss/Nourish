@@ -2,9 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   LOCAL_NUTRITION_STORAGE_KEY,
+  MAX_CUSTOM_FOODS,
+  MAX_STORED_DAYS,
+  MAX_WEIGHT_ENTRIES,
   NUTRITION_BACKUP_STORAGE_KEY,
   emptyNutritionState,
   exportNutritionState,
+  mergeNutritionBackup,
   parseExportedNutritionState,
   parseSavedNutritionState,
   readStoredNutritionRaw,
@@ -14,6 +18,7 @@ import {
   type StorageLike,
 } from "../app/local-nutrition-state";
 import { nutritionItems } from "../app/nutrition-data";
+import { MAX_USER_MEALS, type UserMeal } from "../app/logging-session";
 
 function memoryStorage(seed: Record<string, string> = {}) {
   const map = new Map(Object.entries(seed));
@@ -132,4 +137,81 @@ test("an export round-trips, and a wrong file is refused rather than half-import
   for (const junk of ['{"kind":"something-else","state":{}}', "not json at all", "[]", "null", '{"app":"nourish"}', JSON.stringify({ kind: "nourish-backup", state: {} })]) {
     assert.equal(parseExportedNutritionState(junk), null, `must refuse: ${junk.slice(0, 40)}`);
   }
+});
+
+test("backup merge keeps every current record and reports only genuine additions", () => {
+  const currentFood = { ...aFood, name: "Current food" };
+  const backupFood = { ...aFood, name: "Stale backup food" };
+  const currentMeal: UserMeal = { id: "meal-one", name: "Current meal", createdAt: "2026-08-14", components: [currentFood] };
+  const backupMeal: UserMeal = { ...currentMeal, name: "Stale backup meal" };
+  const current = stateWith({
+    days: [aDay],
+    customFoods: [currentFood],
+    userMeals: [currentMeal],
+    weights: [{ date: "2026-08-14", kg: 72 }],
+    targets: { calories: 2100, protein: 140, carbs: 220, fat: 70 },
+    carried: { currentOnly: true, collision: "current" },
+  }) as ReturnType<typeof emptyNutritionState>;
+  const restored = stateWith({
+    days: [{ ...aDay, logs: [{ ...aDay.logs[0], amount: 999 }] }, { dayKey: "2026-08-13", logs: aDay.logs }],
+    customFoods: [backupFood, { ...aFood, id: "custom-from-backup" }],
+    userMeals: [backupMeal, { ...backupMeal, id: "meal-from-backup" }],
+    weights: [{ date: "2026-08-14", kg: 99 }, { date: "2026-08-13", kg: 71.5 }],
+    targets: { calories: 9999, protein: 1, carbs: 1, fat: 1 },
+    carried: { backupOnly: true, collision: "backup" },
+  }) as ReturnType<typeof emptyNutritionState>;
+
+  const merged = mergeNutritionBackup(current, restored);
+  assert.deepEqual(merged.added, { days: 1, customFoods: 1, userMeals: 1, weights: 1, targets: 0 });
+  assert.deepEqual(merged.collisions, { days: 1, customFoods: 1, userMeals: 1, weights: 1, targets: 1 });
+  assert.deepEqual(merged.skippedAtCapacity, { days: 0, customFoods: 0, userMeals: 0, weights: 0, targets: 0 });
+  assert.deepEqual(merged.state.days.find((day) => day.dayKey === aDay.dayKey), aDay, "current day wins a date collision");
+  assert.equal(merged.state.customFoods.find((food) => food.id === aFood.id)?.name, "Current food");
+  assert.equal(merged.state.userMeals.find((meal) => meal.id === currentMeal.id)?.name, "Current meal");
+  assert.equal(merged.state.weights.find((entry) => entry.date === "2026-08-14")?.kg, 72);
+  assert.deepEqual(merged.state.targets, current.targets);
+  assert.deepEqual(merged.state.carried, { backupOnly: true, currentOnly: true, collision: "current" });
+});
+
+test("a full live store refuses backup overflow instead of evicting current data", () => {
+  const days = Array.from({ length: MAX_STORED_DAYS }, (_, index) => ({
+    dayKey: new Date(Date.UTC(2025, 0, 1) + index * 86400000).toISOString().slice(0, 10),
+    logs: aDay.logs,
+  })).sort((left, right) => right.dayKey.localeCompare(left.dayKey));
+  const customFoods = Array.from({ length: MAX_CUSTOM_FOODS }, (_, index) => ({ ...aFood, id: `current-food-${index}` }));
+  const userMeals = Array.from({ length: MAX_USER_MEALS }, (_, index): UserMeal => ({ id: `current-meal-${index}`, name: `Meal ${index}`, createdAt: "2026-08-14", components: [aFood] }));
+  const weights = Array.from({ length: MAX_WEIGHT_ENTRIES }, (_, index) => ({ date: new Date(Date.UTC(2010, 0, 1) + index * 86400000).toISOString().slice(0, 10), kg: 72 }));
+  const current = stateWith({ days, customFoods, userMeals, weights }) as ReturnType<typeof emptyNutritionState>;
+  const restored = stateWith({
+    days: [{ dayKey: "2099-01-01", logs: aDay.logs }],
+    customFoods: [{ ...aFood, id: "backup-food" }],
+    userMeals: [{ id: "backup-meal", name: "Backup", createdAt: "2026-08-14", components: [aFood] }],
+    weights: [{ date: "2009-12-31", kg: 70 }],
+  }) as ReturnType<typeof emptyNutritionState>;
+
+  const merged = mergeNutritionBackup(current, restored);
+  assert.deepEqual(merged.added, { days: 0, customFoods: 0, userMeals: 0, weights: 0, targets: 0 });
+  assert.deepEqual(merged.skippedAtCapacity, { days: 1, customFoods: 1, userMeals: 1, weights: 1, targets: 0 });
+  assert.deepEqual(merged.state.days, current.days);
+  assert.deepEqual(merged.state.customFoods, current.customFoods);
+  assert.deepEqual(merged.state.userMeals, current.userMeals);
+  assert.deepEqual(merged.state.weights, current.weights);
+  const reloaded = parseSavedNutritionState(stringifySavedNutritionState(merged.state));
+  assert.equal(reloaded.days.length, MAX_STORED_DAYS, "round-trip must retain all current days");
+  assert.equal(reloaded.customFoods.length, MAX_CUSTOM_FOODS, "round-trip must retain all current foods");
+  assert.equal(reloaded.userMeals.length, MAX_USER_MEALS, "round-trip must retain all current meals");
+  assert.equal(reloaded.weights.length, MAX_WEIGHT_ENTRIES, "round-trip must retain all current weights");
+});
+
+test("backup parsing rejects impossible and future diary dates", () => {
+  const raw = stringifySavedNutritionState(stateWith({
+    days: [
+      { dayKey: "2026-99-99", logs: aDay.logs },
+      { dayKey: "2999-01-01", logs: aDay.logs },
+      aDay,
+    ],
+  }));
+  const restored = parseSavedNutritionState(raw);
+  assert.deepEqual(restored.days, [aDay]);
+  assert.ok(restored.rejected >= 2, "discarded diary days must be reported, not disappear silently");
 });

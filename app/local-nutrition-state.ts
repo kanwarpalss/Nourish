@@ -24,6 +24,8 @@ export const KNOWN_STATE_KEYS = ["schemaVersion", "days", "planned", "targets", 
  * inside the browser's storage budget.
  */
 export const MAX_STORED_DAYS = 400;
+export const MAX_CUSTOM_FOODS = 500;
+export const MAX_WEIGHT_ENTRIES = 5000;
 
 /**
  * A hand-typed replacement for a log entry's name and macros. KP must always be able to
@@ -324,8 +326,9 @@ function parseTargets(value: unknown): SavedTargets | null {
 /** Newest first, one entry per day, capped. Empty days are dropped so they cannot masquerade as fasted days. */
 function normaliseDays(days: SavedDay[]): SavedDay[] {
   const byKey = new Map<string, SavedDay>();
+  const today = currentBangaloreDayKey();
   for (const day of days) {
-    if (!DAY_KEY_PATTERN.test(day.dayKey) || day.logs.length === 0) continue;
+    if (!isDateKey(day.dayKey) || day.dayKey > today || day.logs.length === 0) continue;
     const existing = byKey.get(day.dayKey);
     // A duplicated key keeps the richer record rather than whichever happened to be last.
     if (!existing || day.logs.length > existing.logs.length) byKey.set(day.dayKey, day);
@@ -355,13 +358,14 @@ export function parseSavedNutritionState(raw: string | null): SavedNutritionStat
     const consumed = new Set([...KNOWN_STATE_KEYS, "dayKey", "logs", "rejected", "carried"] as string[]);
     const carriedEntries = Object.entries(value as Record<string, unknown>).filter(([key]) => !consumed.has(key));
     const carried = carriedEntries.length > 0 ? Object.fromEntries(carriedEntries) : undefined;
+    const today = currentBangaloreDayKey();
 
     const planned = Array.isArray(value.planned) ? value.planned.flatMap(parsePlanEntry) : [];
     const targets = parseTargets(value.targets);
     const parsedCustomFoods = Array.isArray(value.customFoods) ? value.customFoods.flatMap((food) => {
       const parsedFood = parseFood(food);
       return parsedFood ? [parsedFood] : [];
-    }).slice(0, 500) : [];
+    }).slice(0, MAX_CUSTOM_FOODS) : [];
     const customFoods = [...new Map(parsedCustomFoods.map((food) => [food.id, food])).values()];
     const parsedUserMeals = Array.isArray(value.userMeals) ? value.userMeals.slice(0, 5000).flatMap((meal) => {
       const parsedMeal = parseUserMeal(meal);
@@ -372,8 +376,8 @@ export function parseSavedNutritionState(raw: string | null): SavedNutritionStat
     if (Array.isArray(value.weights)) for (const entry of value.weights) {
       if (!entry || typeof entry !== "object") continue;
       const candidate = entry as { date?: unknown; kg?: unknown };
-      if (!isDateKey(candidate.date) || candidate.date > currentBangaloreDayKey() || !isWeightValueValid(candidate.kg as number)) continue;
-      if (weightByDate.size >= 5000 && !weightByDate.has(candidate.date)) continue;
+      if (!isDateKey(candidate.date) || candidate.date > today || !isWeightValueValid(candidate.kg as number)) continue;
+      if (weightByDate.size >= MAX_WEIGHT_ENTRIES && !weightByDate.has(candidate.date)) continue;
       weightByDate.set(candidate.date, { date: candidate.date, kg: Math.round((candidate.kg as number) * 10) / 10 });
     }
     const weights = [...weightByDate.values()].sort((left, right) => left.date.localeCompare(right.date));
@@ -386,7 +390,7 @@ export function parseSavedNutritionState(raw: string | null): SavedNutritionStat
 
     // Schema 1 held one day inline. Migrate it rather than discarding the diary.
     if (value.schemaVersion !== 2) {
-      const dayKey = typeof value.dayKey === "string" && DAY_KEY_PATTERN.test(value.dayKey) ? value.dayKey : null;
+      const dayKey = isDateKey(value.dayKey) && value.dayKey <= today ? value.dayKey : null;
       const logs = Array.isArray(value.logs) ? value.logs.flatMap(parseLogEntry) : [];
       return {
         schemaVersion: 2,
@@ -405,7 +409,7 @@ export function parseSavedNutritionState(raw: string | null): SavedNutritionStat
       ? value.days.flatMap((entry): SavedDay[] => {
         if (!entry || typeof entry !== "object") return [];
         const candidate = entry as { dayKey?: unknown; logs?: unknown };
-        if (typeof candidate.dayKey !== "string" || !DAY_KEY_PATTERN.test(candidate.dayKey)) return [];
+        if (!isDateKey(candidate.dayKey) || candidate.dayKey > today) return [];
         return [{ dayKey: candidate.dayKey, logs: Array.isArray(candidate.logs) ? candidate.logs.flatMap(parseLogEntry) : [] }];
       })
       : [];
@@ -446,7 +450,7 @@ export function logsForDay(state: SavedNutritionState, dayKey: string): SavedLog
  * removes that day, so a day KP clears does not linger as a zero-calorie record.
  */
 export function withDayLogs(state: SavedNutritionState, dayKey: string, logs: SavedLogEntry[]): SavedNutritionState {
-  if (!DAY_KEY_PATTERN.test(dayKey)) return state;
+  if (!isDateKey(dayKey) || dayKey > currentBangaloreDayKey()) return state;
   const others = state.days.filter((day) => day.dayKey !== dayKey);
   return { ...state, days: normaliseDays(logs.length > 0 ? [{ dayKey, logs }, ...others] : others) };
 }
@@ -454,6 +458,49 @@ export function withDayLogs(state: SavedNutritionState, dayKey: string, logs: Sa
 /** True when saving would push the oldest day out of storage, so the caller can say so. */
 export function wouldDropOldestDay(state: SavedNutritionState, dayKey: string) {
   return state.days.length >= MAX_STORED_DAYS && !state.days.some((day) => day.dayKey === dayKey);
+}
+
+type BackupMergeCounts = {
+  days: number;
+  customFoods: number;
+  userMeals: number;
+  weights: number;
+  targets: number;
+};
+
+function mergeCollection<T>(current: T[], restored: T[], key: (item: T) => string, limit: number) {
+  const occupied = new Set(current.map(key));
+  const room = Math.max(0, limit - current.length);
+  const available = restored.filter((item) => !occupied.has(key(item)));
+  const additions = available.slice(0, room);
+  return { additions, collisions: restored.length - available.length, skippedAtCapacity: available.length - additions.length };
+}
+
+/**
+ * Add non-conflicting backup records without ever evicting live browser data.
+ * Current records win every collision. At a storage cap, the backup simply has
+ * no room; exceeding a cap here would only make the next reload discard data.
+ */
+export function mergeNutritionBackup(current: SavedNutritionState, restored: SavedNutritionState): { state: SavedNutritionState; added: BackupMergeCounts; collisions: BackupMergeCounts; skippedAtCapacity: BackupMergeCounts } {
+  const days = mergeCollection(current.days, restored.days, (day) => day.dayKey, MAX_STORED_DAYS);
+  const customFoods = mergeCollection(current.customFoods, restored.customFoods, (food) => food.id, MAX_CUSTOM_FOODS);
+  const userMeals = mergeCollection(current.userMeals, restored.userMeals, (meal) => meal.id, MAX_USER_MEALS);
+  const weights = mergeCollection(current.weights, restored.weights, (entry) => entry.date, MAX_WEIGHT_ENTRIES);
+  const targets = current.targets === null && restored.targets !== null ? 1 : 0;
+  return {
+    state: {
+      ...current,
+      days: [...current.days, ...days.additions].sort((left, right) => right.dayKey.localeCompare(left.dayKey)),
+      customFoods: [...current.customFoods, ...customFoods.additions],
+      userMeals: [...current.userMeals, ...userMeals.additions],
+      weights: [...current.weights, ...weights.additions].sort((left, right) => left.date.localeCompare(right.date)),
+      targets: current.targets ?? restored.targets,
+      carried: { ...(restored.carried ?? {}), ...(current.carried ?? {}) },
+    },
+    added: { days: days.additions.length, customFoods: customFoods.additions.length, userMeals: userMeals.additions.length, weights: weights.additions.length, targets },
+    collisions: { days: days.collisions, customFoods: customFoods.collisions, userMeals: userMeals.collisions, weights: weights.collisions, targets: current.targets !== null && restored.targets !== null ? 1 : 0 },
+    skippedAtCapacity: { days: days.skippedAtCapacity, customFoods: customFoods.skippedAtCapacity, userMeals: userMeals.skippedAtCapacity, weights: weights.skippedAtCapacity, targets: 0 },
+  };
 }
 
 /** The narrow slice of localStorage these helpers need, so they stay testable. */

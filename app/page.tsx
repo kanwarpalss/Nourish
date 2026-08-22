@@ -5,7 +5,7 @@ import { isCardIqFoodImport, refineCardIqImport, type CardIqFoodImport } from ".
 import { FoodIcon, foodIconKey } from "./food-icon";
 import { addToTray, cloneUserMeal, createCustomFood, createUserMeal, forkFoodForEdit, getSingleItemKind, isOwnedFood, isUserMealNameValid, MAX_MEAL_NAME_LENGTH, mergeFoodCatalog, singleItemKindLabel, upsertUserMeal, userMealToNutritionItem, userMealTotals, type SingleItemKind, type TrayItem, type UserMeal } from "./logging-session";
 import { defaultCompositeItems, findComponentFood } from "./composite-foods";
-import { emptyNutritionState, exportNutritionState, getWeightTrendPoints, isSafeImageUrl, logsForDay, MAX_STORED_DAYS, parseExportedNutritionState, parseSavedNutritionState, readStoredNutritionRaw, upsertWeightEntry, withDayLogs, wouldDropOldestDay, writeStoredNutritionState, type SavedLogEntry, type SavedNutritionState, type WeightEntry } from "./local-nutrition-state";
+import { emptyNutritionState, exportNutritionState, getWeightTrendPoints, isSafeImageUrl, logsForDay, MAX_STORED_DAYS, mergeNutritionBackup, parseExportedNutritionState, parseSavedNutritionState, readStoredNutritionRaw, upsertWeightEntry, withDayLogs, wouldDropOldestDay, writeStoredNutritionState, type SavedLogEntry, type SavedNutritionState, type WeightEntry } from "./local-nutrition-state";
 import { DEFAULT_TARGETS, loggableMeals, recentDayKeys, resolveLoggedFood, summariseHistory, summariseTrend, type DaySummary } from "./day-history";
 import { estimateSatiety, getBangaloreClock, getBasisAmountForLogging, getEnergyRunway, getLoggingUnitLabel, getLoggingUnits, getQuantityLimit, hasNutritionTarget, isQuantityValid, matchesNutritionTarget, matchesRecipe, satietyLabel, scaleNutrition, scaleNutritionForUnit, sumLoggedNutrition, sumNutritionDetails, type DashboardClock, type NutritionTarget } from "./prototype-logic";
 import { meals, nutritionItems, SOURCE_LINKS, type Meal, type NutritionItem, type NutritionUnit } from "./nutrition-data";
@@ -16,7 +16,11 @@ type TrackView = "today" | "history" | "trends" | "purchases";
 type MacroKey = "protein" | "carbs" | "fat";
 type Food = NutritionItem;
 type Recipe = Meal;
-type PlannedEntry = Pick<Meal, "id" | "name" | "calories" | "protein" | "carbs" | "fat" | "fiber"> & { serving: string; kind: "food" | "meal" };
+type PlannedEntry = Pick<Meal, "id" | "name" | "calories" | "protein" | "carbs" | "fat" | "fiber"> & { serving: string; kind: "food" | "meal"; fiberDeclared?: boolean };
+
+function freshUnique() {
+  return globalThis.crypto.randomUUID().slice(0, 12);
+}
 
 const trackNav: Array<{ id: TrackView; label: string; icon: string }> = [
   { id: "today", label: "Today", icon: "●" },
@@ -39,6 +43,10 @@ const baseLogFoods = [...compositeItems, ...foods, ...loggableMeals];
 
 function foodLabel(food: Pick<Food, "brand" | "name" | "variant">) {
   return [food.brand.trim() === "Generic" ? "" : food.brand, food.name, food.variant].map((part) => part.trim()).filter(Boolean).join(" · ");
+}
+
+function fiberLabel(food: Pick<Food, "fiber" | "fiberDeclared">, digits = 1) {
+  return food.fiberDeclared === false ? "not declared" : `${food.fiber.toFixed(digits)} g`;
 }
 
 function foodAtBasis(food: Food): Food {
@@ -108,7 +116,7 @@ const builtInUserMeals: UserMeal[] = [
 ].filter((meal) => meal.components.length > 0);
 
 function planEntryFromFood(food: Food): PlannedEntry {
-  return { id: food.id, kind: "food", name: foodLabel(food), serving: `${food.amount} ${food.unit}`, calories: food.calories, protein: food.protein, carbs: food.carbs, fat: food.fat, fiber: food.fiber };
+  return { id: food.id, kind: "food", name: foodLabel(food), serving: `${food.amount} ${food.unit}`, calories: food.calories, protein: food.protein, carbs: food.carbs, fat: food.fat, fiber: food.fiber, fiberDeclared: food.fiberDeclared };
 }
 
 function planEntryFromMeal(meal: Recipe): PlannedEntry {
@@ -262,7 +270,7 @@ function DiaryEntryRow({ entry, index, onEdit, onDelete }: { entry: LoggedDispla
       <div className="meal-meta">
         <span className="logged-volume">Logged today · {meal ? "1 meal" : `${food.amount} ${food.unit}${food.amount === 1 ? "" : food.unit === "piece" || food.unit === "serving" || food.unit === "scoop" || food.unit === "pack" ? "s" : ""}`}</span>
         <strong>{meal ? meal.name : foodLabel(food)}</strong>
-        <small>{food.protein.toFixed(1)}P · {food.carbs.toFixed(1)}C · {food.fat.toFixed(1)}F · {food.fiber.toFixed(1)} fibre</small>
+        <small>{food.protein.toFixed(1)}P · {food.carbs.toFixed(1)}C · {food.fat.toFixed(1)}F · fibre {fiberLabel(food)}</small>
         {meal ? <button className="meal-expand-button" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}>{expanded ? "Hide items" : `Show ${meal.components.length} item${meal.components.length === 1 ? "" : "s"}`}</button> : null}
         {expanded && meal ? <div className="logged-meal-components">{meal.components.map((component, componentIndex) => <div key={`${component.id}-${componentIndex}`}><span><b>{component.amount} {component.unit}</b>{foodLabel(component)}</span><strong>{Math.round(component.calories)} kcal</strong></div>)}</div> : null}
       </div>
@@ -448,7 +456,7 @@ function HistoryView({ history, clock, targets }: { history: DaySummary[]; clock
                 <div><span>Protein</span><strong>{selected.protein.toFixed(1)} g</strong></div>
                 <div><span>Carbs</span><strong>{selected.carbs.toFixed(1)} g</strong></div>
                 <div><span>Fat</span><strong>{selected.fat.toFixed(1)} g</strong></div>
-                <div><span>Fibre</span><strong>{selected.fiber.toFixed(1)} g</strong></div>
+                <div><span>Fibre</span><strong>{selected.fiberUnknownEntries > 0 ? `${selected.fiber.toFixed(1)} g known` : `${selected.fiber.toFixed(1)} g`}</strong>{selected.fiberUnknownEntries > 0 ? <small>{selected.fiberUnknownEntries} item{selected.fiberUnknownEntries === 1 ? "" : "s"} not declared</small> : null}</div>
               </div>
               <span className="sample-note">Against your {targets.calories.toLocaleString("en-IN")} kcal target: {selected.calories > targets.calories ? `${Math.round(selected.calories - targets.calories).toLocaleString("en-IN")} kcal over` : `${Math.round(targets.calories - selected.calories).toLocaleString("en-IN")} kcal under`}.</span>
             </>
@@ -498,7 +506,7 @@ function TrendsView({ history, targets }: { history: DaySummary[]; targets: type
           <section className="trend-insight dark-card">
             <span className="eyebrow bright">Average macros per logged day</span>
             <h2>{Math.round(window.average.protein)} g protein</h2>
-            <p>{Math.round(window.average.carbs)} g carbs · {Math.round(window.average.fat)} g fat · {Math.round(window.average.fiber)} g fibre, averaged across {window.loggedDays} {window.loggedDays === 1 ? "day" : "days"}.</p>
+            <p>{Math.round(window.average.carbs)} g carbs · {Math.round(window.average.fat)} g fat · {Math.round(window.average.fiber)} g known fibre, averaged across {window.loggedDays} {window.loggedDays === 1 ? "day" : "days"}{window.fiberUnknownDays > 0 ? `; ${window.fiberUnknownDays} ${window.fiberUnknownDays === 1 ? "day includes" : "days include"} food whose fibre was not declared` : ""}.</p>
             <div className="insight-number"><strong>{window.average.protein >= targets.protein ? "On target" : `${Math.round(targets.protein - window.average.protein)} g short`}</strong><span>against your {targets.protein} g protein target.</span></div>
           </section>
           <section className="surface-card macro-average">
@@ -565,9 +573,10 @@ function PurchasesView({ onAdd, cardIqImport }: { onAdd: (food: Food) => void; c
 
 function PlanSummary({ entries, onRemove }: { entries: PlannedEntry[]; onRemove: (index: number) => void }) {
   const totals = entries.reduce((sum, entry) => ({ calories: sum.calories + entry.calories, protein: sum.protein + entry.protein, carbs: sum.carbs + entry.carbs, fat: sum.fat + entry.fat, fiber: sum.fiber + entry.fiber }), { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 });
+  const hasUndeclaredFiber = entries.some((entry) => entry.fiberDeclared === false);
   return (
     <section className="plan-summary dark-card">
-      <div><span className="eyebrow bright">Today’s draft</span><h2>{entries.length ? `${Math.round(totals.calories).toLocaleString("en-IN")} kcal planned` : "Build from items or meals"}</h2><p>{entries.length ? `${totals.protein.toFixed(1)}P · ${totals.carbs.toFixed(1)}C · ${totals.fat.toFixed(1)}F · ${totals.fiber.toFixed(1)}g fibre` : "Anything you add from either Plan section lands in one shared draft."}</p></div>
+      <div><span className="eyebrow bright">Today’s draft</span><h2>{entries.length ? `${Math.round(totals.calories).toLocaleString("en-IN")} kcal planned` : "Build from items or meals"}</h2><p>{entries.length ? `${totals.protein.toFixed(1)}P · ${totals.carbs.toFixed(1)}C · ${totals.fat.toFixed(1)}F · ${totals.fiber.toFixed(1)}g ${hasUndeclaredFiber ? "known " : ""}fibre${hasUndeclaredFiber ? " + undeclared" : ""}` : "Anything you add from either Plan section lands in one shared draft."}</p></div>
       <div className="plan-summary-items">{entries.length ? entries.map((entry, index) => <span key={`${entry.id}-${index}`}><b>{entry.name}</b><small>{entry.serving}</small><button onClick={() => onRemove(index)} aria-label={`Remove ${entry.name} from plan`}>×</button></span>) : <span className="plan-empty-pill">Your selections will appear here</span>}</div>
     </section>
   );
@@ -597,7 +606,7 @@ function PlanFoodEditor({ initial, onClose, onSave }: { initial: Food | null; on
   const creating = initial === null;
   // Editing a researched food forks a personal copy rather than rewriting the
   // catalogue entry, which is what forkFoodForEdit already guarantees for Track.
-  const [draft, setDraft] = useState<Food>(() => (initial ? forkFoodForEdit(initial, `${Date.now()}`) : blankFood()));
+  const [draft, setDraft] = useState<Food>(() => (initial ? forkFoodForEdit(initial, freshUnique()) : blankFood()));
   return (
     <div className="dialog-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}>
       <section className="food-dialog plan-food-dialog" role="dialog" aria-modal="true" aria-labelledby="plan-food-editor-title">
@@ -653,7 +662,7 @@ function ItemsView({ planned, catalog, onPlan, onRemove, onCreate, onEdit }: {
       <div className="item-catalogue-grid">{shown.map((food) => <article className="item-card surface-card" key={food.id}>
         <div className="item-card-head"><span className={`trust-mark ${food.source.trust === "Label mirror" ? "review" : ""}`}>{food.source.trust}</span>{isOwnedFood(food) ? <span className="owned-tag">Yours</span> : null}{food.category === "OrderedFood" ? <span className="owned-tag ready">Ready meal</span> : null}<small>{food.availability}</small></div>
         <div><span className="item-brand">{food.brand ?? food.category}</span><h2>{food.name}</h2><p>Per {food.amount} {food.unit}</p></div>
-        <div className="item-nutrition"><strong>{Math.round(food.calories)}<small> kcal</small></strong><span>{food.protein}g <small>protein</small></span><span>{food.carbs}g <small>carbs</small></span><span>{food.fat}g <small>fat</small></span><span>{food.fiber}g <small>fibre</small></span></div>
+        <div className="item-nutrition"><strong>{Math.round(food.calories)}<small> kcal</small></strong><span>{food.protein}g <small>protein</small></span><span>{food.carbs}g <small>carbs</small></span><span>{food.fat}g <small>fat</small></span><span>{food.fiberDeclared === false ? "—" : `${food.fiber}g`} <small>{food.fiberDeclared === false ? "fibre not declared" : "fibre"}</small></span></div>
         <div className="fullness-line" title="Estimated from protein, fibre and energy density"><i className="fullness-track"><span style={{ width: `${estimateSatiety(food)}%` }} /></i><small>{satietyLabel(estimateSatiety(food))} · est. {estimateSatiety(food)}/100</small></div>
         <div className="item-card-actions">{food.source.url ? <a href={food.source.url} target="_blank" rel="noreferrer">Source ↗</a> : <span className="personal-source">{food.source.label}</span>}<button className="text-button" onClick={() => onEdit(food)}>Edit</button><button className="button primary" onClick={() => onPlan(food)}>＋ Plan this</button></div>
       </article>)}</div>
@@ -851,7 +860,7 @@ function PlanMealBuilder({ initial, catalog, dayKey, onClose, onSave }: {
   const choices = search.trim() ? getShownSingleItems(catalog, "all", search).slice(0, 6) : [];
 
   const save = () => {
-    const built = createUserMeal(name, items, `${Date.now()}`, dayKey);
+    const built = createUserMeal(name, items, freshUnique(), dayKey);
     if (!built) return;
     // Editing keeps the original identity so a meal updates in place.
     onSave(creating || !initial ? built : { ...built, id: initial.id, createdAt: initial.createdAt });
@@ -1009,7 +1018,7 @@ function FoodDialog({ initialFood, initialMeal, editing, catalog, meals: mealOpt
     setDraft(foodAtBasis(selected));
     setDetailsOpen(true);
   };
-  const nextUnique = () => window.crypto.randomUUID().slice(0, 8);
+  const nextUnique = freshUnique;
   const startCreate = () => {
     const next = blankFood(search.trim());
     next.category = itemKind === "all" ? "Product" : itemCategoryForKind(itemKind);
@@ -1095,7 +1104,7 @@ function FoodDialog({ initialFood, initialMeal, editing, catalog, meals: mealOpt
             <label className="logging-unit-field"><span>Log by</span><select aria-label={`${selected.name} logging unit`} value={loggingUnit} onChange={(event) => { const unit = event.target.value as NutritionUnit; setLoggingUnit(unit); setQuantity(unit === (selected.basis?.unit ?? selected.unit) ? (selected.basis?.amount ?? selected.amount) : 1); }}>{getLoggingUnits(selected).map((unit) => <option value={unit} key={unit}>{unit === (selected.basis?.unit ?? selected.unit) ? unit : `${unit} · ${getLoggingUnitLabel(selected, unit)}`}</option>)}</select></label>
             <div className="quantity-control"><button onClick={() => setQuantity((value) => Math.max(step, Number((value - step).toFixed(2))))} aria-label={`Decrease ${selected.name} quantity`}>−</button><label><input type="number" min={step} max={maxQuantity} step={step} value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} aria-label={`${selected.name} quantity`} /><span>{loggingUnit}</span></label><button onClick={() => setQuantity((value) => Math.min(maxQuantity, Number((value + step).toFixed(2))))} aria-label={`Increase ${selected.name} quantity`}>＋</button></div>
             <small className={`quantity-basis ${quantityValid ? "" : "error"}`}>{quantityValid ? `You are adding ${quantity} ${loggingUnit}${loggingUnit === basisUnit ? "" : ` = ${requestedBasisAmount} ${basisUnit}`} · nutrition basis ${labelBasis} ${basisUnit}` : `Enter more than 0 and no more than ${maxQuantity} ${loggingUnit}`}</small>
-            <div className="live-nutrition"><strong><b>{Math.round(scaled.calories)}</b><small>kcal</small></strong><span><b>{scaled.protein.toFixed(1)}g</b><small>protein</small></span><span><b>{scaled.carbs.toFixed(1)}g</b><small>carbs</small></span><span><b>{scaled.fat.toFixed(1)}g</b><small>fat</small></span><span><b>{scaled.fiber.toFixed(1)}g</b><small>fibre</small></span></div>
+            <div className="live-nutrition"><strong><b>{Math.round(scaled.calories)}</b><small>kcal</small></strong><span><b>{scaled.protein.toFixed(1)}g</b><small>protein</small></span><span><b>{scaled.carbs.toFixed(1)}g</b><small>carbs</small></span><span><b>{scaled.fat.toFixed(1)}g</b><small>fat</small></span><span><b>{scaled.fiberDeclared === false ? "—" : `${scaled.fiber.toFixed(1)}g`}</b><small>{scaled.fiberDeclared === false ? "fibre not declared" : "fibre"}</small></span></div>
             <button className="edit-food-button" onClick={openDetails}>✎ Edit name, serving & nutrition</button>
             {selected.source.url ? <a href={selected.source.url} target="_blank" rel="noreferrer">{selected.source.label} ↗</a> : <span className="personal-source">{selected.source.label}</span>}
             <button className={`button ${buildingMeal ? "outline-light" : "lime"} full add-food-button`} disabled={!quantityValid} onClick={() => buildingMeal ? addMealLine() : onAdd(scaled)}>{buildingMeal ? `＋ Add ${quantity} ${loggingUnit} to Meal` : `${editing ? "Update" : "Add"} ${quantity} ${loggingUnit} · ${Math.round(scaled.calories)} kcal`}</button>
@@ -1274,8 +1283,8 @@ export default function Home() {
     // storage. Only today's slice is ever rewritten, so earlier days survive midnight.
     if (!storageLoaded) return;
     try {
-      // Keeps the previous payload as a backup before overwriting, so one bad
-      // write cannot be the end of the diary.
+      // Mirror the newest successful payload, so even the first real log has a
+      // recoverable copy if the live key is later corrupted.
       writeStoredNutritionState(window.localStorage, saved);
     } catch {
       // A persistent banner, not a toast that disappears: if the diary has stopped being
@@ -1352,7 +1361,7 @@ export default function Home() {
    * logging shows up in Plan.
    */
   const savePlanFood = (draft: Food, isNew: boolean) => {
-    const food = isNew ? createCustomFood({ ...draft, category: draft.category, imageUrl: draft.imageUrl }, `${Date.now()}`) : draft;
+    const food = isNew ? createCustomFood({ ...draft, category: draft.category, imageUrl: draft.imageUrl }, freshUnique()) : draft;
     if (!food) {
       notify("That item needs a name, a serving size, and non-negative macros");
       return;
@@ -1367,28 +1376,13 @@ export default function Home() {
    * it can do is add days KP no longer has.
    */
   const importBackup = (restored: SavedNutritionState, filename: string) => {
-    setSaved((current) => {
-      const dayByKey = new Map(restored.days.map((day) => [day.dayKey, day]));
-      for (const day of current.days) dayByKey.set(day.dayKey, day);
-      const foodById = new Map(restored.customFoods.map((food) => [food.id, food]));
-      for (const food of current.customFoods) foodById.set(food.id, food);
-      const mealById = new Map(restored.userMeals.map((meal) => [meal.id, meal]));
-      for (const meal of current.userMeals) mealById.set(meal.id, meal);
-      const weightByDate = new Map(restored.weights.map((entry) => [entry.date, entry]));
-      for (const entry of current.weights) weightByDate.set(entry.date, entry);
-      return {
-        ...current,
-        days: [...dayByKey.values()].sort((left, right) => right.dayKey.localeCompare(left.dayKey)).slice(0, MAX_STORED_DAYS),
-        customFoods: [...foodById.values()],
-        userMeals: [...mealById.values()],
-        weights: [...weightByDate.values()].sort((left, right) => left.date.localeCompare(right.date)),
-        targets: current.targets ?? restored.targets,
-        carried: { ...(restored.carried ?? {}), ...(current.carried ?? {}) },
-      };
-    });
+    const merged = mergeNutritionBackup(saved, restored);
+    setSaved(merged.state);
     setSettingsOpen(false);
-    const added = restored.days.length;
-    notify(`Restored from ${filename} · ${added} ${added === 1 ? "day" : "days"} merged in, nothing removed`, 8000);
+    const added = Object.values(merged.added).reduce((sum, count) => sum + count, 0);
+    const conflicts = Object.values(merged.collisions).reduce((sum, count) => sum + count, 0);
+    const skipped = Object.values(merged.skippedAtCapacity).reduce((sum, count) => sum + count, 0);
+    notify(`Restored from ${filename} · ${added} new ${added === 1 ? "record" : "records"} added${conflicts ? ` · ${conflicts} ${conflicts === 1 ? "conflict kept" : "conflicts kept"} current` : ""}${skipped ? ` · ${skipped} ${skipped === 1 ? "record did" : "records did"} not fit` : ""}`, 8000);
   };
 
   const saveWeight = (entry: WeightEntry) => {

@@ -25,6 +25,32 @@ export type CardIqFoodImport = {
   items: CardIqFoodItem[];
 };
 
+/**
+ * Retailer-title matches are intentionally exact after punctuation and spacing
+ * normalization. Product families, flavours and nearby pack sizes must remain
+ * unmatched until their own panel has been checked.
+ */
+export const exactCardIqMatches: ReadonlyArray<readonly [string, string]> = [
+  ["amul-lactose-free", "amul lactose free milk 250ml"],
+  ["coca-cola-original", "coca cola 750ml"],
+  ["nandini-paneer", "nandini paneer 200g pack"],
+  ["coca-cola-zero", "coca cola zerotm sugar no calories soft drink pet bottle 750ml"],
+  ["coca-cola-zero-250", "coke zero zero cola sugar no calories soft drink pet bottle 250ml pack of 8"],
+  ["amul-processed-cheese-block", "amul cheese block 200g"],
+  ["raw-pressery-coconut-water", "raw pressery coconut water 200ml"],
+  ["yogabar-protein-shake-cold-coffee", "yogabar protein shake with 26g protein no added sugar pack of 1 250ml cold coffe"],
+  ["epigamia-turbo-cookies-cream", "epigamia turbo 25g protein milkshake cookies cream 250ml"],
+  ["akshayakalpa-amrutha-a2", "akshayakalpa organic amrutha a2 farm fresh organic cow milk 500ml"],
+  ["nandini-goodlife-toned", "nandini good life toned milk 1l liquid"],
+  ["kinley-soda", "kinley strong soda original 750ml"],
+  ["diet-coke", "coca cola diet soft drink 300ml cola"],
+  ["sids-farm-high-protein-milk", "sid s farm high protein milk no added whey made from tested milk no antibiotics no hormones no preservatives 250ml"],
+  ["weikfield-custard-powder", "weikfield custard powder 100g pack vanilla flavor 2 minute preparation makes smooth creamy custard contains quality ingredients best for fruit salads puddings"],
+  ["health-factory-protein-bread", "the health factory zero maida protein bread 250g clean label not brown"],
+  ["so-good-oat-unsweetened", "so good plant based oat beverage unsweetened 200ml lactose free no added sugar no preservatives zero cholesterol dairy free source of calcium vitamins"],
+  ["milkymist-greek-yogurt", "milky mist greek yogurt 7g protein 100 natural low fat probiotic rich creamy delicious 100g"],
+];
+
 const nonFoodTerms = [
   "diaper", "shampoo", "detergent", "toilet paper", "tissue", "garbage bag", "gift card", "fastag", "mobile bill",
   "book", "towel", "hanger", "glass", "pitcher", "spray", "handwash", "cleaning", "kitchen cloth", "mosquito",
@@ -73,23 +99,7 @@ export function isFoodLike(name: string, store: CardIqFoodItem["store"]) {
 export function matchCardIqFood(name: string): Pick<CardIqFoodItem, "matchedFoodId" | "matchKind"> {
   const value = normalized(name);
   const compactUnits = value.replace(/(\d+)\s+(g|ml|l)\b/g, "$1$2");
-  const exactMatches: Array<[string, string]> = [
-    ["amul-lactose-free", "amul lactose free milk 250ml"],
-    ["coca-cola-original", "coca cola 750ml"],
-    ["nandini-paneer", "nandini paneer 200g pack"],
-    ["coca-cola-zero", "coca cola zerotm sugar no calories soft drink pet bottle 750ml"],
-    ["coca-cola-zero-250", "coke zero zero cola sugar no calories soft drink pet bottle 250ml pack of 8"],
-    ["amul-processed-cheese-block", "amul cheese block 200g"],
-    ["raw-pressery-coconut-water", "raw pressery coconut water 200ml"],
-    ["yogabar-protein-shake-cold-coffee", "yogabar protein shake with 26g protein no added sugar pack of 1 250ml cold coffe"],
-    ["epigamia-turbo-cookies-cream", "epigamia turbo 25g protein milkshake cookies cream 250ml"],
-    ["akshayakalpa-amrutha-a2", "akshayakalpa organic amrutha a2 farm fresh organic cow milk 500ml"],
-    ["nandini-goodlife-toned", "nandini good life toned milk 1l liquid"],
-    ["kinley-soda", "kinley strong soda original 750ml"],
-    ["diet-coke", "coca cola diet soft drink 300ml cola"],
-  ];
-
-  const exactMatch = exactMatches.find(([, retailerTitle]) => compactUnits === retailerTitle);
+  const exactMatch = exactCardIqMatches.find(([, retailerTitle]) => compactUnits === retailerTitle);
   if (exactMatch) return { matchedFoodId: exactMatch[0], matchKind: "Exact product" };
   return {};
 }

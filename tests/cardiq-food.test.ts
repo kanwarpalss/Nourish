@@ -61,6 +61,28 @@ test("only exact researched products receive packaged-food macros", () => {
   assert.deepEqual(matchCardIqFood("Amul Cheese Block 200g"), matchCardIqFood("Amul Cheese Block 200 g"));
 });
 
+test("newly researched purchase titles match only their complete name and variant", () => {
+  const exact: Array<[string, string]> = [
+    ["Sid's Farm High Protein Milk - No added Whey. Made from Tested Milk (No Antibiotics No Hormones No Preservatives),250 ml", "sids-farm-high-protein-milk"],
+    ["Weikfield Custard Powder 100g Pack Vanilla Flavor 2 Minute Preparation Makes Smooth Creamy Custard Contains Quality Ingredients Best for Fruit Salads Puddings", "weikfield-custard-powder"],
+    ["The Health Factory Zero Maida Protein Bread 250g Clean Label Not Brown", "health-factory-protein-bread"],
+    ["So Good Plant Based Oat Beverage Unsweetened 200ml Lactose Free No Added Sugar No Preservatives Zero Cholesterol Dairy Free Source of Calcium Vitamins", "so-good-oat-unsweetened"],
+    ["Milky Mist Greek Yogurt 7 g Protein 100% Natural Low Fat Probiotic Rich Creamy Delicious 100g", "milkymist-greek-yogurt"],
+  ];
+  for (const [title, matchedFoodId] of exact) {
+    assert.deepEqual(matchCardIqFood(title), { matchedFoodId, matchKind: "Exact product" }, title);
+  }
+
+  for (const nearMiss of [
+    "Sid's Farm High Protein Milk",
+    "Sid's Farm High Protein Milk 1L",
+    "Weikfield Custard Powder Strawberry 100g",
+    "The Health Factory Zero Maida Protein Bread 350g Clean Label Not Brown",
+    "So Good Plant Based Oat Beverage Barista 200ml",
+    "Milky Mist Greek Yogurt 700g",
+  ]) assert.deepEqual(matchCardIqFood(nearMiss), {}, nearMiss);
+});
+
 test("collision words cannot override the exact variant or raw-food form", () => {
   assert.deepEqual(matchCardIqFood("Coca-Cola 750ml Zero Sugar Soft Drink"), {});
   assert.deepEqual(matchCardIqFood("Coca-Cola 750ml Diet Soft Drink"), {}, "the researched Diet Coke entry is specifically 300 ml");

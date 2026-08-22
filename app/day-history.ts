@@ -91,6 +91,8 @@ export type DaySummary = DayTotals & {
   entryCount: number;
   /** Entries whose food is no longer in the catalogue, so the totals are known to be short. */
   unresolvedCount: number;
+  /** Logged foods whose exact panel omitted fibre; `fiber` is only the known subtotal. */
+  fiberUnknownEntries: number;
 };
 
 const emptyTotals = (): DayTotals => ({ calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 });
@@ -99,6 +101,7 @@ const round = (value: number) => Math.round(value * 100) / 100;
 export function summariseDay(day: SavedDay, catalogue: NutritionItem[] = [...nutritionItems, ...loggableMeals]): DaySummary {
   let entryCount = 0;
   let unresolvedCount = 0;
+  let fiberUnknownEntries = 0;
   const totals = day.logs.reduce((sum, entry) => {
     const food = resolveLoggedFood(entry, catalogue);
     if (!food) {
@@ -106,6 +109,7 @@ export function summariseDay(day: SavedDay, catalogue: NutritionItem[] = [...nut
       return sum;
     }
     entryCount += 1;
+    if (food.fiberDeclared === false) fiberUnknownEntries += 1;
     return {
       calories: sum.calories + food.calories,
       protein: sum.protein + food.protein,
@@ -123,6 +127,7 @@ export function summariseDay(day: SavedDay, catalogue: NutritionItem[] = [...nut
     fiber: round(totals.fiber),
     entryCount,
     unresolvedCount,
+    fiberUnknownEntries,
   };
 }
 
@@ -140,6 +145,8 @@ export type TrendWindow = {
   average: DayTotals | null;
   /** Logged days landing within tolerance of the calorie target, or null without a target. */
   daysOnTarget: number | null;
+  /** Logged days containing at least one food whose panel omitted fibre. */
+  fiberUnknownDays: number;
 };
 
 /**
@@ -151,7 +158,7 @@ export type TrendWindow = {
  */
 export function summariseTrend(summaries: DaySummary[], windowDays: number, targetCalories: number | null, tolerance = 0.08): TrendWindow {
   const logged = summaries.slice(0, windowDays).filter((day) => day.entryCount > 0);
-  if (logged.length === 0) return { loggedDays: 0, windowDays, average: null, daysOnTarget: null };
+  if (logged.length === 0) return { loggedDays: 0, windowDays, average: null, daysOnTarget: null, fiberUnknownDays: 0 };
   const sum = logged.reduce((acc, day) => ({
     calories: acc.calories + day.calories,
     protein: acc.protein + day.protein,
@@ -169,7 +176,7 @@ export function summariseTrend(summaries: DaySummary[], windowDays: number, targ
   const daysOnTarget = targetCalories && targetCalories > 0
     ? logged.filter((day) => Math.abs(day.calories - targetCalories) <= targetCalories * tolerance).length
     : null;
-  return { loggedDays: logged.length, windowDays, average, daysOnTarget };
+  return { loggedDays: logged.length, windowDays, average, daysOnTarget, fiberUnknownDays: logged.filter((day) => day.fiberUnknownEntries > 0).length };
 }
 
 /** The last `count` Bangalore day keys ending at `endDayKey`, oldest first. */

@@ -47,6 +47,23 @@ Local-only, single user, no cloud backend.
     only its ingredient name. Variant may be blank. Commercial products must never be
     collapsed into a generic/category match merely because they share an ingredient.
 
+12. **A save must never drop a field this build does not recognise.** `stringifySavedNutritionState`
+    re-emits unknown top-level keys from `carried`; this build's own keys win a collision.
+    Removing that makes an older build delete a newer build's data — the literal
+    "my entries vanished after an update" failure (fixed 2026-08-15, covered by
+    `tests/durable-user-data.test.ts`).
+13. **Every write goes through `writeStoredNutritionState`; every read through
+    `readStoredNutritionRaw`.** No direct `localStorage.setItem(LOCAL_NUTRITION_STORAGE_KEY, …)`.
+    The backup mirror is written *after* the live key so it holds the last known-**good**
+    copy — a pre-write snapshot loses the most recent change, which a real corruption test
+    proved by restoring a diary with zero entries. A failed mirror must never fail the real
+    save; a failed live write must still throw, because a diary that has silently stopped
+    recording is the worst outcome.
+14. **Restore merges, never replaces.** On any collision the data already present wins and
+    nothing logged is removed, so importing a stale backup can never undo today's work.
+15. **Any control the desktop sidebar hosts must also be reachable on mobile**, which hides
+    that sidebar. Backup/restore shipped unreachable on a phone once; tap targets are 44px.
+
 ## Critical files (read before modifying)
 
 | File | Why |

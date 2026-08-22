@@ -9,14 +9,14 @@ The prototype has two top-level areas:
 
 ## Current scope
 
-- 38 researched products and ingredients with serving bases and evidence links.
+- 123 researched products and ingredients with serving bases, exact variants where known, and evidence links.
 - 10 original, weighed-ingredient meals with high-protein, low-fat, high-fibre, dietary, and time filters.
 - Quantity-aware logging and post-log editing for grams, millilitres, scoops, packs, and servings.
 - One shared Plan draft accepting either individual items or complete meals.
 - Responsive desktop/mobile interface.
-- Food logs and Plan selections survive refresh in this browser on the Mac Mini. They remain local to this browser profile; clearing browser data will clear them.
-- A read-only local cardIQ food snapshot: actual purchases appear in Purchases, while only matched foods become one-tap shortcuts.
-- No Nourish database or Mac Mini service yet; browser-local storage is the first durable layer, with a backed-up local database planned next.
+- Food logs and Plan selections survive refresh in this browser. A mirrored browser backup plus manual JSON export/import protect against one corrupt storage key, but a different browser, Mac, or port is still a separate diary.
+- A read-only local cardIQ food snapshot: 18 exact complete retailer titles become one-tap shortcuts; 175 unresolved rows stay visible and disabled rather than borrowing similar nutrition.
+- A supervised Mac Mini service and release-snapshot/health workflow exist. A shared local database and automated off-browser backup remain the next durability phase.
 
 See [SPEC.md](./SPEC.md) for the complete roadmap and [data/NUTRITION_SOURCES.md](./data/NUTRITION_SOURCES.md) for the nutrition evidence hierarchy.
 
@@ -56,4 +56,4 @@ npm test
 npm run lint
 ```
 
-`npm test` builds the app, checks the rendered product shell, exercises quantity scaling and boundary cases, and audits the seed catalogue’s filter rules and evidence fields.
+`npm test` builds the app and runs 115 checks covering the rendered product shell, honest health checks, quantity scaling, catalogue identity/evidence, exact purchase matching, image corruption boundaries, multi-day durability, backup restore limits, and failure injection.

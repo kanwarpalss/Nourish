@@ -111,6 +111,16 @@ test("a day's totals are the sum of what was actually logged", () => {
   assert.equal(summary.calories, Math.round((milkFood.calories * 2 + eggFood.calories * 2) * 100) / 100);
   assert.equal(summary.entryCount, 2);
   assert.equal(summary.unresolvedCount, 0);
+  assert.equal(summary.fiberUnknownEntries, 0);
+});
+
+test("an undeclared fibre panel stays unknown in day and trend summaries", () => {
+  const day = summariseDay({ dayKey: "2026-08-10", logs: [{ foodId: "bambino-vermicelli", amount: 100 }] });
+  assert.equal(day.fiber, 0, "the known subtotal remains numeric for arithmetic");
+  assert.equal(day.fiberUnknownEntries, 1, "zero must not be presented as a declared fibre value");
+  const trend = summariseTrend([day], 7, 2000);
+  assert.equal(trend.fiberUnknownDays, 1);
+  assert.equal(trend.average?.fiber, 0);
 });
 
 test("an entry naming a food that no longer exists is counted as unresolved, not as zero", () => {

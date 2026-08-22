@@ -319,14 +319,14 @@ test("an unverified product variant does not borrow a verified one's numbers", (
   // differ and must stay without macros rather than inherit it.
   assert.ok(ids.includes("so-good-oat-unsweetened"));
   assert.equal(nutritionItems.some((food) => food.id.includes("barista")), false);
-  // Zero-sugar cola exists; full-sugar cola does not, so it cannot be matched to 0 kcal.
-  const cola = nutritionItems.find((food) => food.id === "cola-zero-sugar");
+  // The exact 750 ml zero-sugar SKU exists and must not be generalized to another cola.
+  const cola = nutritionItems.find((food) => food.id === "coca-cola-zero");
   assert.ok(cola && cola.calories === 0);
 });
 
 test("every transcribed panel is marked as a mirror, never as an official label", () => {
   // A panel found online is not the pack in KP's hand, however good the source.
-  for (const id of ["milkymist-greek-yogurt", "health-factory-protein-bread", "epigamia-turbo-shake", "cosmix-plant-protein", "so-good-oat-unsweetened"]) {
+  for (const id of ["milkymist-greek-yogurt", "health-factory-protein-bread", "cosmix-plant-protein", "so-good-oat-unsweetened"]) {
     const food = nutritionItems.find((item) => item.id === id);
     assert.ok(food, id);
     assert.equal(food.source.trust, "Label mirror", `${id} must not claim to be an official label`);
