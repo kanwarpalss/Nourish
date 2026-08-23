@@ -58,7 +58,7 @@ test("prototype test detects a missing critical product area", () => {
 });
 
 test("keeps the prototype complete, responsive, and free of starter residue", async () => {
-  const [page, css, layout, packageJson, spec, nutrition, sources, state] = await Promise.all([
+  const [page, css, layout, packageJson, spec, nutrition, sources, state, sync] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
@@ -67,6 +67,7 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
     readFile(new URL("../app/nutrition-data.ts", import.meta.url), "utf8"),
     readFile(new URL("../data/NUTRITION_SOURCES.md", import.meta.url), "utf8"),
     readFile(new URL("../app/local-nutrition-state.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/diary-sync.ts", import.meta.url), "utf8"),
   ]);
 
   for (const label of ["Items", "Meals", "Today", "History", "Trends", "Purchases"]) {
@@ -97,9 +98,29 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
   // A logged entry can be removed, reversibly, and against the stored entry
   // rather than the display row.
   assert.match(page, /onDelete=\{deleteLoggedFood\}/);
-  assert.match(page, /const logIndex = removed\.logIndex/);
+  assert.match(page, /deleteLoggedEntry\(clock\.dayKey, removed\.logIndex/, "removing must address the stored entry, not the display row");
   assert.match(page, /index === editLogIndex/, "editing must address the stored entry too");
   assert.match(page, /toast-undo/);
+
+  // Anything KP creates, he can delete. Undo is the safety net rather than a
+  // confirmation modal on every tap — a modal per delete makes tidying up a chore.
+  assert.match(page, /deleteRecord\("customFood", food\.id/, "a food you created must be deletable");
+  assert.match(page, /deleteRecord\("userMeal", meal\.id/, "a saved meal must be deletable");
+  assert.match(page, /deleteRecord\("weight", date/, "a weigh-in must be deletable");
+  assert.match(page, /deleteRecord\("day", dayKey/, "a whole past day must be deletable");
+  assert.match(page, /onDeleteEntry=\{deleteLoggedEntry\}/, "past days must be correctable entry by entry, not only wholesale");
+  assert.match(page, /restoreRecord\(current, pending\.record\)/, "every small delete must be undoable");
+  // A deletion has to be remembered, or restoring any older backup silently undoes it.
+  assert.match(state, /skippedAsDeleted/, "restore must report what it held back as deleted");
+  assert.match(state, /isRemoved\(current\.removed, "userMeal", id\)/, "restore must consult the deletion record");
+  assert.match(page, /stays deleted rather than reappearing/, "settings must say that deletions survive a restore");
+  // The one genuinely destructive control asks KP to type, rather than relying on
+  // an Undo toast he may not reach in time.
+  assert.match(page, /Type <b>DELETE<\/b> to confirm/);
+  assert.match(page, /confirmText\.trim\(\) !== "DELETE"/);
+  assert.match(page, /clearAllUserData\(current\)/);
+  // Deleting happens on the phone as much as the desktop, so every new control needs a tap target.
+  assert.match(css, /\.weight-entry-list button,\s*\.history-entry-list button,\s*\.history-delete-confirm button,\s*\.danger-confirm button \{\s*min-height: 44px;\s*min-width: 44px;/, "the new delete controls need 44px tap targets on a phone");
 
   // Photos with a drawn fallback, never a bare letter.
   assert.match(page, /<FoodThumb food=\{food\} \/>/);
@@ -115,11 +136,32 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
   assert.match(css, /\.food-dialog \{ overflow-y: auto; overscroll-behavior: contain;/);
   assert.match(page, /Show trend chart/);
   assert.match(page, /upsertWeightEntry/);
-  assert.match(page, /if \(!storageLoaded\) return/);
+  assert.match(page, /if \(!storageLoaded \|\| loadedProfile !== profileId\) return/, "nothing may be written back before that profile's diary has finished loading");
   // Reading older storage keys still has to happen on load; it moved out of the
   // component into readStoredNutritionRaw, which also falls back to the backup.
-  assert.match(page, /readStoredNutritionRaw\(window\.localStorage\)/, "load must go through the backup-aware reader");
-  assert.match(page, /writeStoredNutritionState\(window\.localStorage, saved\)/, "saves must snapshot a backup first");
+  assert.match(page, /readStoredNutritionRaw\(window\.localStorage, storageKeys\)/, "load must go through the backup-aware reader, for the profile in view");
+  assert.match(page, /writeStoredNutritionState\(window\.localStorage, saved, storageKeys\)/, "saves must snapshot a backup first, into that profile's own keys");
+
+  // The diary now also lives in SQLite on the Mac Mini, with the browser copy as
+  // the working copy. Nothing here may claim a server copy exists unless one does.
+  assert.match(page, /describeSyncStatus\(syncStatus, activeProfile\?\.name\)/, "the screen must state where the diary actually is");
+  assert.match(sync, /Saved in this browser only — the Mac Mini is not reachable/, "an unreachable server must be said plainly, not hidden");
+  assert.match(sync, /if \(response\.status === 409\)/, "a save that lost a race must merge and retry, never overwrite");
+  assert.match(sync, /mergeSyncedStates\(state, parseSavedNutritionState/, "the server's copy is parsed like any other stored bytes before being trusted");
+  assert.match(page, /lastPushedRef\.current === saved/, "an unchanged diary must not be re-sent forever");
+  assert.match(state, /export function mergeSyncedStates/);
+  assert.match(state, /export function withLogIds/, "entries need stable ids or a two-device merge drops one");
+  // Two people, two diaries. A shared total would be worse than no sync at all.
+  assert.match(page, /nutritionStorageKeys\(profileId\)/);
+  assert.match(state, /profileId === FIRST_PROFILE_ID/, "the first profile must keep the original keys so the existing diary carries over untouched");
+  // Switching person changes the storage keys and the sync target immediately, but
+  // `saved` still holds the previous diary until its own load finishes. Every read,
+  // write and sync must therefore wait for the load of THAT profile. Without this
+  // guard, switching to a second person wrote the first person's whole diary into
+  // the second person's row, on the device and on the Mac Mini — observed, not theorised.
+  assert.equal((page.match(/loadedProfile !== profileId/g) ?? []).length, 3,
+    "the localStorage write, the pull and the push must each refuse to run mid-switch");
+  assert.match(page, /setLoadedProfile\(profileId\)/, "and the guard must be released only once that profile's diary is actually loaded");
   assert.match(state, /LEGACY_NUTRITION_STORAGE_KEYS/, "older keys must still be read somewhere");
   assert.match(state, /NUTRITION_BACKUP_STORAGE_KEY/);
   // Forward compatibility: an older build must not delete fields a newer one wrote.

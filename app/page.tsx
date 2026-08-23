@@ -5,7 +5,8 @@ import { isCardIqFoodImport, refineCardIqImport, type CardIqFoodImport } from ".
 import { FoodIcon, foodIconKey } from "./food-icon";
 import { addToTray, cloneUserMeal, createCustomFood, createUserMeal, forkFoodForEdit, getSingleItemKind, isOwnedFood, isUserMealNameValid, MAX_MEAL_NAME_LENGTH, mergeFoodCatalog, singleItemKindLabel, upsertUserMeal, userMealToNutritionItem, userMealTotals, type SingleItemKind, type TrayItem, type UserMeal } from "./logging-session";
 import { defaultCompositeItems, findComponentFood } from "./composite-foods";
-import { emptyNutritionState, exportNutritionState, getWeightTrendPoints, isSafeImageUrl, logsForDay, MAX_STORED_DAYS, mergeNutritionBackup, parseExportedNutritionState, parseSavedNutritionState, readStoredNutritionRaw, upsertWeightEntry, withDayLogs, wouldDropOldestDay, writeStoredNutritionState, type SavedLogEntry, type SavedNutritionState, type WeightEntry } from "./local-nutrition-state";
+import { createProfile, deleteProfile as deleteRemoteProfile, describeSyncStatus, fetchProfiles, pullDiary, pushDiary, renameProfile, DEFAULT_PROFILE_ID, type DiaryProfile, type SyncStatus } from "./diary-sync";
+import { clearAllUserData, emptyNutritionState, exportNutritionState, nutritionStorageKeys, withLogIds, getWeightTrendPoints, isSafeImageUrl, logsForDay, MAX_STORED_DAYS, mergeNutritionBackup, parseExportedNutritionState, parseSavedNutritionState, readStoredNutritionRaw, removeRecord, restoreRecord, upsertWeightEntry, withDayLogs, wouldDropOldestDay, writeStoredNutritionState, type RemovableKind, type RemovedRecord, type SavedLogEntry, type SavedNutritionState, type WeightEntry } from "./local-nutrition-state";
 import { DEFAULT_TARGETS, loggableMeals, recentDayKeys, resolveLoggedFood, summariseHistory, summariseTrend, type DaySummary } from "./day-history";
 import { estimateSatiety, getBangaloreClock, getBasisAmountForLogging, getEnergyRunway, getLoggingUnitLabel, getLoggingUnits, getQuantityLimit, hasNutritionTarget, isQuantityValid, matchesNutritionTarget, matchesRecipe, satietyLabel, scaleNutrition, scaleNutritionForUnit, sumLoggedNutrition, sumNutritionDetails, type DashboardClock, type NutritionTarget } from "./prototype-logic";
 import { meals, nutritionItems, SOURCE_LINKS, type Meal, type NutritionItem, type NutritionUnit } from "./nutrition-data";
@@ -17,6 +18,15 @@ type MacroKey = "protein" | "carbs" | "fat";
 type Food = NutritionItem;
 type Recipe = Meal;
 type PlannedEntry = Pick<Meal, "id" | "name" | "calories" | "protein" | "carbs" | "fat" | "fiber"> & { serving: string; kind: "food" | "meal"; fiberDeclared?: boolean };
+
+/** Which person's diary this device had open. Not the diary itself — just the pointer. */
+const PROFILE_STORAGE_KEY = "nourish.profile";
+
+/** A person's name becomes a short, url-safe id. Non-Latin names still get a usable one. */
+function toProfileId(name: string) {
+  const slug = name.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24);
+  return slug ? `${slug}-${Math.random().toString(36).slice(2, 6)}` : `person-${Math.random().toString(36).slice(2, 8)}`;
+}
 
 function freshUnique() {
   return globalThis.crypto.randomUUID().slice(0, 12);
@@ -235,7 +245,7 @@ function TargetEditor({ targets, isDefault, onSave, onCancel }: { targets: typeo
   );
 }
 
-function WeightCard({ dayKey, entries, onSave }: { dayKey: string; entries: WeightEntry[]; onSave: (entry: WeightEntry) => void }) {
+function WeightCard({ dayKey, entries, onSave, onDelete }: { dayKey: string; entries: WeightEntry[]; onSave: (entry: WeightEntry) => void; onDelete: (date: string) => void }) {
   const [showForm, setShowForm] = useState(false);
   const [showTrend, setShowTrend] = useState(false);
   const [date, setDate] = useState(dayKey);
@@ -256,7 +266,10 @@ function WeightCard({ dayKey, entries, onSave }: { dayKey: string; entries: Weig
         <button className="button primary" disabled={!valid}>Save</button>
       </form> : null}
       {entries.length ? <button className="weight-trend-toggle" onClick={() => setShowTrend((value) => !value)} aria-expanded={showTrend}>{showTrend ? "Hide trend" : "Show trend chart"} <span>{showTrend ? "↑" : "↗"}</span></button> : null}
-      {showTrend ? <div className="weight-chart-wrap"><svg className="weight-chart" viewBox="-8 -8 316 108" role="img" aria-label={`Weight trend across ${entries.length} entries`} preserveAspectRatio="none"><polyline points={points.map((point) => `${point.x},${point.y}`).join(" ")} />{points.map((point) => <circle key={point.date} cx={point.x} cy={point.y} r="4" />)}</svg><div><span>{entries[0].date}</span><strong>{entries.length} {entries.length === 1 ? "entry" : "entries"}</strong><span>{latest?.date}</span></div></div> : null}
+      {showTrend ? <div className="weight-chart-wrap"><svg className="weight-chart" viewBox="-8 -8 316 108" role="img" aria-label={`Weight trend across ${entries.length} entries`} preserveAspectRatio="none"><polyline points={points.map((point) => `${point.x},${point.y}`).join(" ")} />{points.map((point) => <circle key={point.date} cx={point.x} cy={point.y} r="4" />)}</svg><div><span>{entries[0].date}</span><strong>{entries.length} {entries.length === 1 ? "entry" : "entries"}</strong><span>{latest?.date}</span></div>
+        {/* Every weigh-in is listed, because a typo you cannot delete bends the whole trend line. */}
+        <ul className="weight-entry-list">{[...entries].reverse().map((entry) => <li key={entry.date}><span>{entry.date}</span><strong>{entry.kg.toFixed(1)} kg</strong><button onClick={() => onDelete(entry.date)} aria-label={`Delete the ${entry.kg.toFixed(1)} kg weigh-in from ${entry.date}`}>×</button></li>)}</ul>
+      </div> : null}
     </section>
   );
 }
@@ -279,7 +292,7 @@ function DiaryEntryRow({ entry, index, onEdit, onDelete }: { entry: LoggedDispla
   );
 }
 
-function TodayView({ clock, calories, macros, entries, quickFoods, weights, hasCardIqImport, targets, targetsAreDefaults, history, onLog, onAdd, onEdit, onDelete, onSaveWeight, onOpenMeals, onSaveTargets }: {
+function TodayView({ clock, calories, macros, entries, quickFoods, weights, hasCardIqImport, targets, targetsAreDefaults, history, onLog, onAdd, onEdit, onDelete, onSaveWeight, onDeleteWeight, onOpenMeals, onSaveTargets }: {
   clock: DashboardClock;
   calories: number;
   macros: Record<MacroKey, number>;
@@ -295,6 +308,7 @@ function TodayView({ clock, calories, macros, entries, quickFoods, weights, hasC
   onEdit: (index: number) => void;
   onDelete: (index: number) => void;
   onSaveWeight: (entry: WeightEntry) => void;
+  onDeleteWeight: (date: string) => void;
   onOpenMeals: () => void;
   onSaveTargets: (next: typeof DEFAULT_TARGETS) => void;
 }) {
@@ -363,7 +377,7 @@ function TodayView({ clock, calories, macros, entries, quickFoods, weights, hasC
         </section>
 
         <aside className="today-rail">
-          <WeightCard dayKey={clock.dayKey} entries={weights} onSave={onSaveWeight} />
+          <WeightCard dayKey={clock.dayKey} entries={weights} onSave={onSaveWeight} onDelete={onDeleteWeight} />
           <section className="quick-card surface-card">
             <div className="section-title-row"><div><span className="eyebrow">{hasCardIqImport ? "From cardIQ" : "One tap"}</span><h2>Quick add</h2></div><button className="text-button" onClick={onLog}>See all</button></div>
             <div className="quick-grid">
@@ -401,8 +415,16 @@ function TodayView({ clock, calories, macros, entries, quickFoods, weights, hasC
   );
 }
 
-function HistoryView({ history, clock, targets }: { history: DaySummary[]; clock: DashboardClock; targets: typeof DEFAULT_TARGETS }) {
+function HistoryView({ history, clock, targets, entriesFor, onDeleteEntry, onDeleteDay }: {
+  history: DaySummary[];
+  clock: DashboardClock;
+  targets: typeof DEFAULT_TARGETS;
+  entriesFor: (dayKey: string) => LoggedDisplayEntry[];
+  onDeleteEntry: (dayKey: string, logIndex: number, label: string) => void;
+  onDeleteDay: (dayKey: string) => void;
+}) {
   const [selectedKey, setSelectedKey] = useState<string | null>(history[0]?.dayKey ?? null);
+  const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
   const monthPrefix = clock.dayKey.slice(0, 7);
   const [year, month] = monthPrefix.split("-").map(Number);
   const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
@@ -411,7 +433,9 @@ function HistoryView({ history, clock, targets }: { history: DaySummary[]; clock
     const dayKey = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
     return { day: index + 1, dayKey, summary: history.find((entry) => entry.dayKey === dayKey) ?? null, isFuture: dayKey > clock.dayKey };
   });
-  const selected = selectedKey ? history.find((day) => day.dayKey === selectedKey) ?? null : null;
+  // Falling back to the newest day matters once days can be deleted: the panel would
+  // otherwise go blank and stay blank the moment KP removes whichever day he was reading.
+  const selected = history.find((day) => day.dayKey === selectedKey) ?? history[0] ?? null;
   const monthLabel = new Date(`${monthPrefix}-01T00:00:00Z`).toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
 
   if (history.length === 0) {
@@ -459,6 +483,24 @@ function HistoryView({ history, clock, targets }: { history: DaySummary[]; clock
                 <div><span>Fibre</span><strong>{selected.fiberUnknownEntries > 0 ? `${selected.fiber.toFixed(1)} g known` : `${selected.fiber.toFixed(1)} g`}</strong>{selected.fiberUnknownEntries > 0 ? <small>{selected.fiberUnknownEntries} item{selected.fiberUnknownEntries === 1 ? "" : "s"} not declared</small> : null}</div>
               </div>
               <span className="sample-note">Against your {targets.calories.toLocaleString("en-IN")} kcal target: {selected.calories > targets.calories ? `${Math.round(selected.calories - targets.calories).toLocaleString("en-IN")} kcal over` : `${Math.round(targets.calories - selected.calories).toLocaleString("en-IN")} kcal under`}.</span>
+              {/* A past day was read-only until now, so one mistyped entry stayed wrong for ever. */}
+              <ul className="history-entry-list">
+                {entriesFor(selected.dayKey).map((entry) => (
+                  <li key={`${entry.logIndex}-${entry.food.id}`}>
+                    <span>{entry.meal?.name ?? foodLabel(entry.food)}</span>
+                    <strong>{Math.round(entry.food.calories)} kcal</strong>
+                    <button onClick={() => entry.logIndex !== undefined && onDeleteEntry(selected.dayKey, entry.logIndex, entry.meal?.name ?? foodLabel(entry.food))} aria-label={`Remove ${entry.meal?.name ?? foodLabel(entry.food)} from ${selected.dayKey}`}>×</button>
+                  </li>
+                ))}
+              </ul>
+              {confirmingDelete === selected.dayKey ? (
+                <div className="history-delete-confirm" role="group" aria-label={`Confirm deleting ${selected.dayKey}`}>
+                  <span>Delete this whole day? {selected.entryCount} {selected.entryCount === 1 ? "entry goes" : "entries go"} with it.</span>
+                  <div><button className="button danger" onClick={() => { onDeleteDay(selected.dayKey); setConfirmingDelete(null); }}>Delete the day</button><button className="text-button bright" onClick={() => setConfirmingDelete(null)}>Cancel</button></div>
+                </div>
+              ) : (
+                <button className="text-button bright danger" onClick={() => setConfirmingDelete(selected.dayKey)}>Delete this whole day</button>
+              )}
             </>
           ) : (
             <>
@@ -631,13 +673,14 @@ function PlanFoodEditor({ initial, onClose, onSave }: { initial: Food | null; on
   );
 }
 
-function ItemsView({ planned, catalog, onPlan, onRemove, onCreate, onEdit }: {
+function ItemsView({ planned, catalog, onPlan, onRemove, onCreate, onEdit, onDelete }: {
   planned: PlannedEntry[];
   catalog: Food[];
   onPlan: (food: Food) => void;
   onRemove: (index: number) => void;
   onCreate: () => void;
   onEdit: (food: Food) => void;
+  onDelete: (food: Food) => void;
 }) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("All");
@@ -664,7 +707,7 @@ function ItemsView({ planned, catalog, onPlan, onRemove, onCreate, onEdit }: {
         <div><span className="item-brand">{food.brand ?? food.category}</span><h2>{food.name}</h2><p>Per {food.amount} {food.unit}</p></div>
         <div className="item-nutrition"><strong>{Math.round(food.calories)}<small> kcal</small></strong><span>{food.protein}g <small>protein</small></span><span>{food.carbs}g <small>carbs</small></span><span>{food.fat}g <small>fat</small></span><span>{food.fiberDeclared === false ? "—" : `${food.fiber}g`} <small>{food.fiberDeclared === false ? "fibre not declared" : "fibre"}</small></span></div>
         <div className="fullness-line" title="Estimated from protein, fibre and energy density"><i className="fullness-track"><span style={{ width: `${estimateSatiety(food)}%` }} /></i><small>{satietyLabel(estimateSatiety(food))} · est. {estimateSatiety(food)}/100</small></div>
-        <div className="item-card-actions">{food.source.url ? <a href={food.source.url} target="_blank" rel="noreferrer">Source ↗</a> : <span className="personal-source">{food.source.label}</span>}<button className="text-button" onClick={() => onEdit(food)}>Edit</button><button className="button primary" onClick={() => onPlan(food)}>＋ Plan this</button></div>
+        <div className="item-card-actions">{food.source.url ? <a href={food.source.url} target="_blank" rel="noreferrer">Source ↗</a> : <span className="personal-source">{food.source.label}</span>}<button className="text-button" onClick={() => onEdit(food)}>Edit</button>{isOwnedFood(food) ? <button className="text-button danger" onClick={() => onDelete(food)} aria-label={`Delete ${foodLabel(food)}`}>Delete</button> : null}<button className="button primary" onClick={() => onPlan(food)}>＋ Plan this</button></div>
       </article>)}</div>
       {shown.length === 0 ? <div className="empty-state"><strong>No item matches yet.</strong><span>Try a broader name, or add the exact thing in your kitchen.</span><div className="empty-actions"><button className="button secondary" onClick={() => { setSearch(""); setFilter("All"); }}>Clear search</button><button className="button primary" onClick={onCreate}>＋ New item</button></div></div> : null}
       <div className="research-footnote"><span>Research base</span><a href={SOURCE_LINKS.ifct} target="_blank" rel="noreferrer">ICMR–NIN IFCT</a><a href={SOURCE_LINKS.usda} target="_blank" rel="noreferrer">USDA FoodData Central</a><a href={SOURCE_LINKS.fssai} target="_blank" rel="noreferrer">FSSAI labelling</a></div>
@@ -704,7 +747,7 @@ function TargetFilters({ target, onChange, onClear }: { target: Record<"maxCalor
   );
 }
 
-function MealsView({ onRecipe, planned, catalog, userMeals, onPlan, onPlanFood, onRemove, onCreateMeal, onEditMeal }: {
+function MealsView({ onRecipe, planned, catalog, userMeals, onPlan, onPlanFood, onRemove, onCreateMeal, onEditMeal, onDeleteMeal }: {
   onRecipe: (recipe: Recipe) => void;
   planned: PlannedEntry[];
   catalog: Food[];
@@ -714,6 +757,7 @@ function MealsView({ onRecipe, planned, catalog, userMeals, onPlan, onPlanFood, 
   onRemove: (index: number) => void;
   onCreateMeal: () => void;
   onEditMeal: (meal: UserMeal) => void;
+  onDeleteMeal: (meal: UserMeal) => void;
 }) {
   const [filter, setFilter] = useState("All");
   const [search, setSearch] = useState("");
@@ -758,7 +802,7 @@ function MealsView({ onRecipe, planned, catalog, userMeals, onPlan, onPlanFood, 
                 <div className="item-card-head"><span className="owned-tag">Yours</span><small>{meal.components.length} item{meal.components.length === 1 ? "" : "s"}</small></div>
                 <h3>{meal.name}</h3>
                 <div className="item-nutrition"><strong>{Math.round(food.calories)}<small> kcal</small></strong><span>{food.protein.toFixed(1)}g <small>protein</small></span><span>{food.carbs.toFixed(1)}g <small>carbs</small></span><span>{food.fat.toFixed(1)}g <small>fat</small></span></div>
-                <div className="item-card-actions"><button className="text-button" onClick={() => onEditMeal(meal)}>Edit</button><button className="button primary" onClick={() => onPlanFood(food)}>＋ Plan this</button></div>
+                <div className="item-card-actions"><button className="text-button" onClick={() => onEditMeal(meal)}>Edit</button><button className="text-button danger" onClick={() => onDeleteMeal(meal)} aria-label={`Delete the meal ${meal.name}`}>Delete</button><button className="button primary" onClick={() => onPlanFood(food)}>＋ Plan this</button></div>
               </article>
             ))}
             {preparedMeals.map((food) => (
@@ -1146,13 +1190,26 @@ function RecipeDrawer({ recipe, onClose, onPlan }: { recipe: Recipe | null; onCl
  * an export file is the only thing that survives any of that, so this panel
  * says so plainly rather than implying the data is safe by default.
  */
-function SettingsPanel({ state, dayKey, onClose, onImport }: {
+function SettingsPanel({ state, dayKey, onClose, onImport, onClearAll, profiles, profileId, activeProfile, syncStatus, onSwitchProfile, onAddProfile, onRenameProfile, onRemoveProfile }: {
   state: SavedNutritionState;
   dayKey: string;
+  profiles: DiaryProfile[] | null;
+  profileId: string;
+  activeProfile: DiaryProfile | null;
+  syncStatus: SyncStatus;
+  onSwitchProfile: (id: string) => void;
+  onAddProfile: (name: string) => Promise<void>;
+  onRenameProfile: (id: string, name: string) => Promise<void>;
+  onRemoveProfile: (id: string) => Promise<void>;
   onClose: () => void;
   onImport: (restored: SavedNutritionState, filename: string) => void;
+  onClearAll: () => void;
 }) {
   const [error, setError] = useState("");
+  const [confirmText, setConfirmText] = useState("");
+  const [clearing, setClearing] = useState(false);
+  const [newPerson, setNewPerson] = useState("");
+  const [confirmingPerson, setConfirmingPerson] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const days = state.days.length;
   const entries = state.days.reduce((sum, day) => sum + day.logs.length, 0);
@@ -1188,6 +1245,38 @@ function SettingsPanel({ state, dayKey, onClose, onImport }: {
           <button className="close-button" onClick={onClose} aria-label="Close settings">×</button>
         </header>
         <div className="settings-body">
+          <section className={`settings-block sync-block ${syncStatus === "synced" ? "good" : syncStatus === "failed" ? "bad" : ""}`}>
+            <h3>Where this diary is saved</h3>
+            <p className="sync-line"><b>{describeSyncStatus(syncStatus, activeProfile?.name)}</b></p>
+            {syncStatus === "local-only" ? <p>Everything still works. Entries stay on this device and go up automatically the next time the Mac Mini answers.</p> : null}
+          </section>
+
+          {profiles ? (
+            <section className="settings-block people-block">
+              <h3>Who this is for</h3>
+              <p>Each person has a completely separate diary, targets and weigh-ins. Nothing is shared between them.</p>
+              <div className="people-list">
+                {profiles.map((profile) => (
+                  <div className={`person-row ${profile.id === profileId ? "active" : ""}`} key={profile.id}>
+                    <button className="person-pick" onClick={() => onSwitchProfile(profile.id)} aria-pressed={profile.id === profileId}>
+                      <span>{profile.name}</span>{profile.id === profileId ? <i>Showing now</i> : <i>Switch to this diary</i>}
+                    </button>
+                    <button className="text-button" onClick={() => { const next = window.prompt("New name", profile.name); if (next?.trim()) void onRenameProfile(profile.id, next.trim()); }}>Rename</button>
+                    {profiles.length > 1 ? (
+                      confirmingPerson === profile.id
+                        ? <span className="person-confirm"><button className="button danger" onClick={() => { void onRemoveProfile(profile.id); setConfirmingPerson(null); }}>Delete everything of theirs</button><button className="text-button" onClick={() => setConfirmingPerson(null)}>Cancel</button></span>
+                        : <button className="text-button danger" onClick={() => setConfirmingPerson(profile.id)}>Delete</button>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+              <form className="add-person" onSubmit={(event) => { event.preventDefault(); if (newPerson.trim()) { void onAddProfile(newPerson.trim()); setNewPerson(""); } }}>
+                <input value={newPerson} onChange={(event) => setNewPerson(event.target.value)} placeholder="Add someone (their name)" aria-label="Name of the person to add" maxLength={40} />
+                <button className="button secondary" disabled={!newPerson.trim()}>Add</button>
+              </form>
+            </section>
+          ) : null}
+
           <div className="settings-stats">
             <div><strong>{days}</strong><span>{days === 1 ? "day" : "days"} of diary</span></div>
             <div><strong>{entries}</strong><span>logged {entries === 1 ? "entry" : "entries"}</span></div>
@@ -1204,10 +1293,28 @@ function SettingsPanel({ state, dayKey, onClose, onImport }: {
 
           <section className="settings-block">
             <h3>Restore</h3>
-            <p>Loads a backup file. It <strong>merges</strong> into what is here — days, foods, meals and weigh-ins are combined, and nothing currently logged is deleted.</p>
+            <p>Loads a backup file. It <strong>merges</strong> into what is here — days, foods, meals and weigh-ins are combined, and nothing currently logged is deleted. Anything you deleted here stays deleted rather than reappearing.</p>
             <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={(event) => { void chooseFile(event.target.files?.[0] ?? null); event.target.value = ""; }} />
             <button className="button secondary" onClick={() => fileRef.current?.click()}>Choose a backup file…</button>
             {error ? <p className="settings-error" role="alert">{error}</p> : null}
+          </section>
+
+          <section className="settings-block settings-danger">
+            <h3>Delete everything</h3>
+            <p>
+              Removes every diary day, food, meal, weigh-in and target from this browser. There is
+              no Undo for this one. Download a backup first if there is any chance you want it back —
+              a backup restores normally afterwards.
+            </p>
+            {clearing ? (
+              <div className="danger-confirm">
+                <label htmlFor="confirm-delete">Type <b>DELETE</b> to confirm</label>
+                <input id="confirm-delete" value={confirmText} onChange={(event) => setConfirmText(event.target.value)} autoComplete="off" placeholder="DELETE" aria-label="Type DELETE to confirm" />
+                <div><button className="button danger" disabled={confirmText.trim() !== "DELETE"} onClick={onClearAll}>Delete everything</button><button className="text-button" onClick={() => { setClearing(false); setConfirmText(""); }}>Cancel</button></div>
+              </div>
+            ) : (
+              <button className="button danger" onClick={() => setClearing(true)}>Delete everything…</button>
+            )}
           </section>
 
           <section className="settings-block settings-truth">
@@ -1223,6 +1330,14 @@ function SettingsPanel({ state, dayKey, onClose, onImport }: {
     </div>
   );
 }
+
+/**
+ * What a single Undo would put back. A deleted diary entry has to remember which
+ * day and which position it came from; everything else is restored whole.
+ */
+type PendingUndo =
+  | { kind: "log"; dayKey: string; entry: SavedLogEntry; index: number }
+  | { kind: "record"; record: RemovedRecord };
 
 export default function Home() {
   const [clock, setClock] = useState(() => getBangaloreClock(new Date()));
@@ -1242,9 +1357,33 @@ export default function Home() {
   const [toast, setToast] = useState("");
   const toastTimer = useRef<number | null>(null);
   const [storageLoaded, setStorageLoaded] = useState(false);
+  /**
+   * Which profile the diary currently in `saved` actually belongs to.
+   *
+   * Every read, write and sync is gated on this matching the profile in view.
+   * Without it there is a window right after switching person where `saved` still
+   * holds the previous diary while the storage keys and the sync target have
+   * already moved — and in that window the app writes one person's food into
+   * another person's diary, on the device and on the server. That is not a
+   * cosmetic glitch; it is the exact thing separate profiles exist to prevent.
+   */
+  const [loadedProfile, setLoadedProfile] = useState<string | null>(null);
   const [cardIqImport, setCardIqImport] = useState<CardIqFoodImport | null>(null);
   const [saved, setSaved] = useState<SavedNutritionState>(emptyNutritionState);
   const [saveFailed, setSaveFailed] = useState(false);
+  /** Which person's diary is open. Persisted so a phone reopens where it left off. */
+  const [profileId, setProfileId] = useState<string>(DEFAULT_PROFILE_ID);
+  const [profiles, setProfiles] = useState<DiaryProfile[] | null>(null);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>("unknown");
+  /** The revision this device last agreed with the server on, for optimistic concurrency. */
+  const revisionRef = useRef(0);
+  const pushTimer = useRef<number | null>(null);
+  /** The live diary, readable from inside async work without making it a dependency. */
+  const savedRef = useRef<SavedNutritionState>(emptyNutritionState());
+  /** The exact object last accepted by the server, so an unchanged diary is not re-sent. */
+  const lastPushedRef = useRef<SavedNutritionState | null>(null);
+  const storageKeys = nutritionStorageKeys(profileId);
+  const activeProfile = profiles?.find((profile) => profile.id === profileId) ?? null;
   const foodCatalog = mergeFoodCatalog(baseLogFoods, saved.customFoods);
   const legacyMeals: UserMeal[] = saved.customFoods.filter((food) => food.category === "Meal").map((food) => ({
     id: `legacy-${food.id}`,
@@ -1262,13 +1401,39 @@ export default function Home() {
       toastTimer.current = null;
     }, holdMs);
   };
+  // Which person was last open on this device. Read before any diary, because it
+  // decides which diary to read.
+  useEffect(() => {
+    // Deferred like every other load in this file: reading storage during the
+    // effect body would set state mid-render and cascade a second pass.
+    const timer = window.setTimeout(() => {
+      try {
+        const remembered = window.localStorage.getItem(PROFILE_STORAGE_KEY);
+        if (remembered) setProfileId(remembered);
+      } catch {
+        // A browser that refuses storage still gets the default profile.
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
   useEffect(() => {
     const timer = window.setTimeout(() => {
+      setStorageLoaded(false);
       // Newest schema first, then older keys, then the backup — so a corrupted live
       // key recovers instead of presenting an empty diary as if nothing was logged.
-      const raw = readStoredNutritionRaw(window.localStorage);
+      const raw = readStoredNutritionRaw(window.localStorage, storageKeys);
       const restored = parseSavedNutritionState(raw);
-      setSaved(restored);
+      // Stamping ids here rather than in the parser keeps parsing pure, and gets it
+      // done before anything can be synced — an unidentified entry cannot be merged.
+      const loaded = withLogIds(restored, freshUnique);
+      // The ref is updated in the same breath as the state: the sync effects read
+      // it, and a ref still pointing at the previous person is how a diary ends up
+      // filed under the wrong name.
+      savedRef.current = loaded;
+      lastPushedRef.current = null;
+      revisionRef.current = 0;
+      setSaved(loaded);
+      setLoadedProfile(profileId);
       setStorageLoaded(true);
       // Discarding a damaged record is right — guessing at it would corrupt
       // totals — but doing it silently is not. KP gets told his diary shrank.
@@ -1277,22 +1442,86 @@ export default function Home() {
       }
     }, 0);
     return () => window.clearTimeout(timer);
-  }, []);
+  }, [profileId, storageKeys.live]);
+
+  /**
+   * Fold in whatever the Mac Mini already holds for this person, once, on open.
+   *
+   * Local first, server second, and the merge keeps both — so opening the app on
+   * a second phone adds to the diary rather than replacing either copy.
+   */
+  useEffect(() => {
+    // Never sync a diary that belongs to whoever was on screen a moment ago.
+    if (!storageLoaded || loadedProfile !== profileId) return;
+    let cancelled = false;
+    void (async () => {
+      setSyncStatus("syncing");
+      const available = await fetchProfiles();
+      if (cancelled) return;
+      setProfiles(available);
+      if (!available) {
+        setSyncStatus("local-only");
+        return;
+      }
+      const pulled = await pullDiary(profileId, savedRef.current);
+      if (cancelled) return;
+      if (pulled.state) {
+        setSaved(pulled.state);
+        revisionRef.current = pulled.revision ?? 0;
+      }
+      setSyncStatus(pulled.status);
+    })();
+    return () => { cancelled = true; };
+  }, [storageLoaded, loadedProfile, profileId]);
   useEffect(() => {
     // Pure external-system sync: the diary is the source of truth and this mirrors it to
     // storage. Only today's slice is ever rewritten, so earlier days survive midnight.
-    if (!storageLoaded) return;
+    // Same guard: mid-switch, these keys belong to the new person and `saved` does not.
+    if (!storageLoaded || loadedProfile !== profileId) return;
     try {
       // Mirror the newest successful payload, so even the first real log has a
       // recoverable copy if the live key is later corrupted.
-      writeStoredNutritionState(window.localStorage, saved);
+      writeStoredNutritionState(window.localStorage, saved, storageKeys);
     } catch {
       // A persistent banner, not a toast that disappears: if the diary has stopped being
       // written, KP must keep seeing that until it is fixed. Deferred so the effect body
       // does not set state synchronously.
       window.setTimeout(() => setSaveFailed(true), 0);
     }
-  }, [saved, storageLoaded]);
+  }, [saved, storageLoaded, loadedProfile, profileId, storageKeys]);
+
+  /**
+   * Push up shortly after things stop changing.
+   *
+   * Debounced rather than immediate because logging a meal is several state
+   * changes in a row (pick, adjust, add) and each one is not worth a round trip.
+   * Local storage is already written synchronously above, so nothing is at risk
+   * while this waits — the delay costs freshness on the other device, never data.
+   */
+  useEffect(() => {
+    savedRef.current = saved;
+    // Nothing to send, and no diary database to send it to, are both normal.
+    if (!storageLoaded || loadedProfile !== profileId || profiles === null || lastPushedRef.current === saved) return;
+    if (pushTimer.current !== null) window.clearTimeout(pushTimer.current);
+    pushTimer.current = window.setTimeout(() => {
+      pushTimer.current = null;
+      const outgoing = savedRef.current;
+      void (async () => {
+        const result = await pushDiary(profileId, outgoing, revisionRef.current);
+        if (result.revision !== undefined) revisionRef.current = result.revision;
+        // Recording what actually went up is what stops this effect from
+        // re-sending the same diary forever once the server answers.
+        lastPushedRef.current = result.state ?? outgoing;
+        // A merge that came back from a conflict has to be adopted, or this device
+        // keeps arguing with a server that has already moved past it.
+        if (result.state && result.state !== outgoing) setSaved(result.state);
+        setSyncStatus(result.status);
+      })();
+    }, 1200);
+    return () => {
+      if (pushTimer.current !== null) window.clearTimeout(pushTimer.current);
+    };
+  }, [saved, storageLoaded, loadedProfile, profileId, profiles]);
   useEffect(() => {
     const timer = window.setInterval(() => setClock(getBangaloreClock(new Date())), 60_000);
     return () => window.clearInterval(timer);
@@ -1330,7 +1559,7 @@ export default function Home() {
   const quickFoods = cardIqQuickFoods.length ? cardIqQuickFoods : foodCatalog.filter((food) => food.common);
   const entries = restoreDayEntries(saved, clock.dayKey, foodCatalog);
   const extras = entries.map((entry) => entry.food);
-  const undoRef = useRef<{ entry: SavedLogEntry; index: number } | null>(null);
+  const undoRef = useRef<PendingUndo | null>(null);
   const planned = restorePlanEntries(saved, foodCatalog);
   const totals = sumLoggedNutrition(extras, { calories: 0, protein: 0, carbs: 0, fat: 0 });
   const calories = totals.calories;
@@ -1425,26 +1654,105 @@ export default function Home() {
     setSaved((current) => ({ ...current, userMeals: upsertUserMeal(current.userMeals, meal) }));
     notify(`${meal.name} saved to Meals`);
   };
-  /** Removing a log keeps the entry aside so a misclick is one tap from undone. */
+  /**
+   * Removing anything keeps the removed thing aside so a misclick is one tap from
+   * undone. Nothing small asks for confirmation — a modal on every delete makes
+   * tidying up a chore, and an Undo that actually works is the better guarantee.
+   */
+  const deleteLoggedEntry = (dayKey: string, logIndex: number, label: string) => {
+    const entry = logsForDay(saved, dayKey)[logIndex];
+    if (!entry) return;
+    undoRef.current = { kind: "log", dayKey, entry, index: logIndex };
+    setSaved((current) => withDayLogs(current, dayKey, logsForDay(current, dayKey).filter((_, index) => index !== logIndex)));
+    notify(`${label} removed · tap Undo to put it back`, 10_000);
+  };
   const deleteLoggedFood = (index: number) => {
     const removed = entries[index];
-    if (!removed) return;
-    const logIndex = removed.logIndex;
-    if (logIndex === undefined) return;
-    undoRef.current = { entry: logsForDay(saved, clock.dayKey)[logIndex], index: logIndex };
-    setTodayLogs((logs) => logs.filter((_, entryIndex) => entryIndex !== logIndex));
-    notify(`${removed.meal?.name ?? foodLabel(removed.food)} removed · tap Undo to put it back`, 10_000);
+    if (!removed || removed.logIndex === undefined) return;
+    deleteLoggedEntry(clock.dayKey, removed.logIndex, removed.meal?.name ?? foodLabel(removed.food));
+  };
+  /** Deletes a saved food, meal, weigh-in or whole day, and remembers the deletion. */
+  const deleteRecord = (kind: RemovableKind, id: string, label: string) => {
+    const outcome = removeRecord(saved, kind, id);
+    if (!outcome.removed) return;
+    undoRef.current = { kind: "record", record: outcome.removed };
+    setSaved(outcome.state);
+    notify(`${label} deleted · tap Undo to put it back`, 10_000);
   };
   const undoDelete = () => {
     const pending = undoRef.current;
     if (!pending) return;
-    setTodayLogs((logs) => {
-      const next = [...logs];
-      next.splice(Math.min(pending.index, next.length), 0, pending.entry);
-      return next;
-    });
+    if (pending.kind === "log") {
+      setSaved((current) => withDayLogs(current, pending.dayKey, (() => {
+        const logs = [...logsForDay(current, pending.dayKey)];
+        logs.splice(Math.min(pending.index, logs.length), 0, pending.entry);
+        return logs;
+      })()));
+    } else {
+      setSaved((current) => restoreRecord(current, pending.record));
+    }
     undoRef.current = null;
-    notify("Entry restored");
+    notify("Put back");
+  };
+  /**
+   * The one genuinely destructive control in the app, so it is the one place that
+   * insists KP types the word rather than offering an Undo he might not reach in time.
+   */
+  /**
+   * Open a different person's diary. Their entries live under their own storage
+   * keys and their own row in the database, so this swaps the whole diary rather
+   * than filtering one — nothing of theirs can leak into a total of KP's.
+   */
+  const switchProfile = (id: string) => {
+    if (id === profileId) return;
+    if (pushTimer.current !== null) {
+      window.clearTimeout(pushTimer.current);
+      pushTimer.current = null;
+    }
+    lastPushedRef.current = null;
+    undoRef.current = null;
+    try {
+      window.localStorage.setItem(PROFILE_STORAGE_KEY, id);
+    } catch {
+      // Not remembering which profile was open is a small loss, not a reason to refuse.
+    }
+    setProfileId(id);
+    setSettingsOpen(false);
+    notify(`Now showing ${profiles?.find((profile) => profile.id === id)?.name ?? id}’s diary`);
+  };
+  const addProfile = async (name: string) => {
+    const id = toProfileId(name);
+    const created = await createProfile(id, name);
+    if (!created) {
+      notify("Could not add that person — the Mac Mini did not accept it");
+      return;
+    }
+    setProfiles(await fetchProfiles());
+    notify(`${created.name} added · switch to their diary from Settings`);
+  };
+  const removeProfile = async (id: string) => {
+    const name = profiles?.find((profile) => profile.id === id)?.name ?? id;
+    if (!await deleteRemoteProfile(id)) {
+      notify("Could not remove that person from the Mac Mini");
+      return;
+    }
+    setProfiles(await fetchProfiles());
+    if (id === profileId) switchProfile(DEFAULT_PROFILE_ID);
+    notify(`${name} and everything they logged has been deleted`, 6000);
+  };
+  const renameActiveProfile = async (id: string, name: string) => {
+    if (!await renameProfile(id, name)) {
+      notify("Could not rename that person");
+      return;
+    }
+    setProfiles(await fetchProfiles());
+    notify(`Renamed to ${name}`);
+  };
+  const clearEverything = () => {
+    setSaved((current) => clearAllUserData(current));
+    undoRef.current = null;
+    setSettingsOpen(false);
+    notify("Everything deleted. Nourish is back to a blank diary.", 8000);
   };
   const openFoodLogger = (food: Food | null = null, editIndex: number | null = null, meal: UserMeal | null = null) => {
     setFoodDialogSelection(food);
@@ -1473,13 +1781,13 @@ export default function Home() {
 
   const renderContent = () => {
     if (area === "track") {
-      if (trackView === "today") return <TodayView clock={clock} calories={calories} macros={macros} entries={entries} quickFoods={quickFoods} weights={saved.weights} hasCardIqImport={cardIqImport !== null} targets={targets} targetsAreDefaults={targetsAreDefaults} history={history} onLog={() => openFoodLogger()} onAdd={(food) => openFoodLogger(food)} onEdit={(index) => openFoodLogger(entries[index]?.food ?? null, index, entries[index]?.meal ?? null)} onDelete={deleteLoggedFood} onSaveWeight={saveWeight} onOpenMeals={() => { setArea("plan"); setPlanView("meals"); window.scrollTo({ top: 0, behavior: "smooth" }); }} onSaveTargets={saveTargets} />;
-      if (trackView === "history") return <HistoryView history={history} clock={clock} targets={targets} />;
+      if (trackView === "today") return <TodayView clock={clock} calories={calories} macros={macros} entries={entries} quickFoods={quickFoods} weights={saved.weights} hasCardIqImport={cardIqImport !== null} targets={targets} targetsAreDefaults={targetsAreDefaults} history={history} onLog={() => openFoodLogger()} onAdd={(food) => openFoodLogger(food)} onEdit={(index) => openFoodLogger(entries[index]?.food ?? null, index, entries[index]?.meal ?? null)} onDelete={deleteLoggedFood} onSaveWeight={saveWeight} onDeleteWeight={(date) => deleteRecord("weight", date, `The ${date} weigh-in`)} onOpenMeals={() => { setArea("plan"); setPlanView("meals"); window.scrollTo({ top: 0, behavior: "smooth" }); }} onSaveTargets={saveTargets} />;
+      if (trackView === "history") return <HistoryView history={history} clock={clock} targets={targets} entriesFor={(dayKey) => restoreDayEntries(saved, dayKey, foodCatalog)} onDeleteEntry={deleteLoggedEntry} onDeleteDay={(dayKey) => deleteRecord("day", dayKey, `${dayKey}`)} />;
       if (trackView === "trends") return <TrendsView history={history} targets={targets} />;
       return <PurchasesView cardIqImport={cardIqImport} onAdd={(food) => openFoodLogger(food)} />;
     }
-    if (planView === "items") return <ItemsView planned={planned} catalog={foodCatalog} onPlan={addItemToPlan} onRemove={removeFromPlan} onCreate={() => setPlanFoodEditor({ initial: null })} onEdit={(food) => setPlanFoodEditor({ initial: food })} />;
-    return <MealsView onRecipe={setRecipe} planned={planned} catalog={foodCatalog} userMeals={saved.userMeals} onPlan={addMealToPlan} onPlanFood={addItemToPlan} onRemove={removeFromPlan} onCreateMeal={() => setPlanMealBuilder({ initial: null })} onEditMeal={(meal) => setPlanMealBuilder({ initial: meal })} />;
+    if (planView === "items") return <ItemsView planned={planned} catalog={foodCatalog} onPlan={addItemToPlan} onRemove={removeFromPlan} onCreate={() => setPlanFoodEditor({ initial: null })} onEdit={(food) => setPlanFoodEditor({ initial: food })} onDelete={(food) => deleteRecord("customFood", food.id, foodLabel(food))} />;
+    return <MealsView onRecipe={setRecipe} planned={planned} catalog={foodCatalog} userMeals={saved.userMeals} onPlan={addMealToPlan} onPlanFood={addItemToPlan} onRemove={removeFromPlan} onCreateMeal={() => setPlanMealBuilder({ initial: null })} onEditMeal={(meal) => setPlanMealBuilder({ initial: meal })} onDeleteMeal={(meal) => deleteRecord("userMeal", meal.id, meal.name)} />;
   };
 
   return (
@@ -1499,7 +1807,7 @@ export default function Home() {
       {area === "track" ? <button className="mobile-log-button" onClick={() => openFoodLogger()}>＋ Log food</button> : null}
       {foodDialog ? <FoodDialog initialFood={foodDialogSelection} initialMeal={foodDialogMealSelection} editing={editingFoodIndex !== null} catalog={foodCatalog} meals={logMeals} dayKey={clock.dayKey} onClose={() => { setFoodDialog(false); setFoodDialogSelection(null); setFoodDialogMealSelection(null); setEditingFoodIndex(null); }} onAdd={addFood} onAddMeal={addMeal} onSaveFood={saveCustomFood} onSaveMeal={saveUserMeal} /> : null}
       <RecipeDrawer recipe={recipe} onClose={() => setRecipe(null)} onPlan={addMealToPlan} />
-      {settingsOpen ? <SettingsPanel state={saved} dayKey={clock.dayKey} onClose={() => setSettingsOpen(false)} onImport={importBackup} /> : null}
+      {settingsOpen ? <SettingsPanel state={saved} dayKey={clock.dayKey} onClose={() => setSettingsOpen(false)} onImport={importBackup} onClearAll={clearEverything} profiles={profiles} profileId={profileId} activeProfile={activeProfile} syncStatus={syncStatus} onSwitchProfile={switchProfile} onAddProfile={addProfile} onRenameProfile={renameActiveProfile} onRemoveProfile={removeProfile} /> : null}
       {planFoodEditor ? <PlanFoodEditor initial={planFoodEditor.initial} onClose={() => setPlanFoodEditor(null)} onSave={savePlanFood} /> : null}
       {planMealBuilder ? <PlanMealBuilder initial={planMealBuilder.initial} catalog={foodCatalog} dayKey={clock.dayKey} onClose={() => setPlanMealBuilder(null)} onSave={(meal) => { saveUserMeal(meal); setPlanMealBuilder(null); }} /> : null}
       <div className={`toast ${toast ? "visible" : ""}`} role="status" aria-live="polite"><i>✓</i><span>{toast}</span>{toast.includes("tap Undo") ? <button className="toast-undo" onClick={undoDelete}>Undo</button> : null}</div>

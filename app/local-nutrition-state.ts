@@ -16,7 +16,7 @@ export const NUTRITION_BACKUP_STORAGE_KEY = "nourish.nutrition.backup";
  * does not recognise destroys data written by a newer one — which is exactly how
  * "my entries vanished after an update" happens.
  */
-export const KNOWN_STATE_KEYS = ["schemaVersion", "days", "planned", "targets", "customFoods", "userMeals", "weights"] as const;
+export const KNOWN_STATE_KEYS = ["schemaVersion", "days", "planned", "targets", "customFoods", "userMeals", "weights", "removed"] as const;
 
 /**
  * How many days of diary are kept. Thirteen months so a full year of trends always has a
@@ -26,6 +26,13 @@ export const KNOWN_STATE_KEYS = ["schemaVersion", "days", "planned", "targets", 
 export const MAX_STORED_DAYS = 400;
 export const MAX_CUSTOM_FOODS = 500;
 export const MAX_WEIGHT_ENTRIES = 5000;
+/**
+ * How many deletions are remembered per collection. Deleting is a normal, frequent
+ * action, so this list has to be bounded — but it is only ids, and forgetting the
+ * oldest deletion is harmless: the worst case is that a very old backup re-adds a
+ * record deleted long ago, which restore already reports as an addition.
+ */
+export const MAX_REMOVED_IDS = 1000;
 
 /**
  * A hand-typed replacement for a log entry's name and macros. KP must always be able to
@@ -43,6 +50,18 @@ export type SavedLogOverride = {
 };
 
 export type SavedLogEntry = {
+  /**
+   * Stable identity for one logged entry, so two devices can be merged without
+   * guessing. Position cannot do this job: log lunch on the phone and dinner on
+   * the laptop before they sync and both are "entry 2" of the same day, so a
+   * merge keyed on position drops one meal without saying so.
+   *
+   * Optional because every entry written before sync existed predates it. Those
+   * are stamped on the next load by `withLogIds`, not invented during a parse —
+   * parsing has to stay pure, or the same stored bytes would read differently
+   * each time.
+   */
+  logId?: string;
   foodId: string;
   amount: number;
   /** Exact food identity, displayed unit and calculated totals at the moment of logging. */
@@ -79,6 +98,44 @@ export type SavedTargets = {
 export type WeightEntry = { date: string; kg: number };
 
 /**
+ * What KP has deliberately deleted, remembered by id.
+ *
+ * Restore is deliberately additive — on a collision what is already here wins and
+ * nothing is removed (that rule is why a stale backup can never undo today's work).
+ * The gap that leaves is deletion: without a record of it, importing any older
+ * backup silently resurrects every meal, food and weigh-in KP has ever removed.
+ * A deletion is a decision, so it has to be stored as one.
+ */
+export type RemovedRecords = {
+  customFoods: string[];
+  userMeals: string[];
+  days: string[];
+  weights: string[];
+};
+
+/** The collections a record can be deleted from, and what identifies a record in each. */
+export type RemovableKind = "customFood" | "userMeal" | "weight" | "day";
+
+/**
+ * A deleted record, complete enough to put back exactly as it was. Returned by
+ * `removeRecord` so the caller can offer Undo without re-reading storage.
+ */
+export type RemovedRecord =
+  | { kind: "customFood"; food: NutritionItem }
+  | { kind: "userMeal"; meal: UserMeal }
+  | { kind: "weight"; entry: WeightEntry }
+  | { kind: "day"; day: SavedDay };
+
+const REMOVED_KEYS: Record<RemovableKind, keyof RemovedRecords> = {
+  customFood: "customFoods",
+  userMeal: "userMeals",
+  weight: "weights",
+  day: "days",
+};
+
+export const emptyRemovedRecords = (): RemovedRecords => ({ customFoods: [], userMeals: [], days: [], weights: [] });
+
+/**
  * Schema 2 keeps every day rather than only the current one.
  *
  * Schema 1 stored a single `{ dayKey, logs }`. When the Bangalore day rolled over, the app
@@ -96,6 +153,8 @@ export type PersistedNutritionState = {
   /** Groups you saved from a logging tray, each keeping its own component snapshots. */
   userMeals: UserMeal[];
   weights: WeightEntry[];
+  /** Ids KP deleted on purpose, so a restore cannot bring them back. */
+  removed: RemovedRecords;
   /**
    * Fields found in storage that this build does not know about, preserved
    * verbatim and written back, so an older build cannot silently delete data a
@@ -115,7 +174,7 @@ export type SavedNutritionState = PersistedNutritionState & {
 
 const DAY_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
-export const emptyNutritionState = (): SavedNutritionState => ({ schemaVersion: 2, days: [], planned: [], targets: null, customFoods: [], userMeals: [], weights: [], rejected: 0 });
+export const emptyNutritionState = (): SavedNutritionState => ({ schemaVersion: 2, days: [], planned: [], targets: null, customFoods: [], userMeals: [], weights: [], removed: emptyRemovedRecords(), rejected: 0 });
 
 const units = new Set<NutritionItem["unit"]>(["g", "ml", "scoop", "pack", "piece", "serving"]);
 const categories = new Set<NutritionItem["category"]>(["Ordered", "Product", "Ingredient", "OrderedFood", "Meal", "Composite"]);
@@ -276,6 +335,8 @@ function parseLogEntry(entry: unknown): SavedLogEntry[] {
     })
     : [];
   const saved: SavedLogEntry = { foodId: candidate.foodId, amount: candidate.amount as number };
+  const logId = (candidate as { logId?: unknown }).logId;
+  if (typeof logId === "string" && logId.trim() && logId.length <= 64) saved.logId = logId.trim();
   const snapshot = candidate.snapshot === undefined ? undefined : parseFood(candidate.snapshot);
   if (candidate.snapshot !== undefined && (!snapshot || snapshot.id !== candidate.foodId)) return [];
   if (snapshot) {
@@ -323,6 +384,28 @@ function parseTargets(value: unknown): SavedTargets | null {
   return parsed;
 }
 
+/**
+ * A tombstone list is only ever ids. A malformed one loses the deletion record,
+ * never the diary, so bad entries are dropped rather than failing the whole load.
+ */
+function parseRemovedIds(value: unknown, isValidId: (id: string) => boolean): string[] {
+  if (!Array.isArray(value)) return [];
+  const ids = value.filter((id): id is string => typeof id === "string" && isValidId(id));
+  return [...new Set(ids)].slice(-MAX_REMOVED_IDS);
+}
+
+function parseRemovedRecords(value: unknown): RemovedRecords {
+  if (!value || typeof value !== "object") return emptyRemovedRecords();
+  const candidate = value as Partial<Record<keyof RemovedRecords, unknown>>;
+  const isId = (id: string) => id.length > 0 && id.length <= 200;
+  return {
+    customFoods: parseRemovedIds(candidate.customFoods, isId),
+    userMeals: parseRemovedIds(candidate.userMeals, isId),
+    days: parseRemovedIds(candidate.days, isDateKey),
+    weights: parseRemovedIds(candidate.weights, isDateKey),
+  };
+}
+
 /** Newest first, one entry per day, capped. Empty days are dropped so they cannot masquerade as fasted days. */
 function normaliseDays(days: SavedDay[]): SavedDay[] {
   const byKey = new Map<string, SavedDay>();
@@ -351,7 +434,7 @@ export function parseSavedNutritionState(raw: string | null): SavedNutritionStat
   try {
     const parsed: unknown = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return emptyNutritionState();
-    const value = parsed as { schemaVersion?: unknown; days?: unknown; dayKey?: unknown; logs?: unknown; planned?: unknown; targets?: unknown; customFoods?: unknown; userMeals?: unknown; weights?: unknown };
+    const value = parsed as { schemaVersion?: unknown; days?: unknown; dayKey?: unknown; logs?: unknown; planned?: unknown; targets?: unknown; customFoods?: unknown; userMeals?: unknown; weights?: unknown; removed?: unknown };
     // Anything this build does not recognise rides along untouched. `dayKey` and
     // `logs` are schema-1 fields consumed by the migration below, and `rejected`
     // describes a load, so none of those are carried.
@@ -381,6 +464,7 @@ export function parseSavedNutritionState(raw: string | null): SavedNutritionStat
       weightByDate.set(candidate.date, { date: candidate.date, kg: Math.round((candidate.kg as number) * 10) / 10 });
     }
     const weights = [...weightByDate.values()].sort((left, right) => left.date.localeCompare(right.date));
+    const removed = parseRemovedRecords(value.removed);
     // Duplicate ids collapse legitimately, so custom foods and meals are counted
     // against the parsed list rather than the deduplicated one.
     const droppedSoFar = countDropped(value.planned, planned.length)
@@ -400,6 +484,7 @@ export function parseSavedNutritionState(raw: string | null): SavedNutritionStat
         customFoods,
         userMeals,
         weights,
+        removed,
         ...(carried ? { carried } : {}),
         rejected: droppedSoFar + countDropped(value.logs, logs.length),
       };
@@ -425,6 +510,7 @@ export function parseSavedNutritionState(raw: string | null): SavedNutritionStat
       customFoods,
       userMeals,
       weights,
+      removed,
       ...(carried ? { carried } : {}),
       rejected: droppedSoFar + countDropped(value.days, days.length) + Math.max(0, storedLogs - keptLogs),
     };
@@ -435,10 +521,10 @@ export function parseSavedNutritionState(raw: string | null): SavedNutritionStat
 
 export function stringifySavedNutritionState(state: PersistedNutritionState) {
   // `rejected` describes a load, not the diary, so the write type excludes it.
-  const { schemaVersion, days, planned, targets, customFoods, userMeals, weights, carried } = state;
+  const { schemaVersion, days, planned, targets, customFoods, userMeals, weights, removed, carried } = state;
   // Unknown fields go down first so this build's own keys always win, but nothing
   // a newer build wrote is dropped on the way through.
-  return JSON.stringify({ ...(carried ?? {}), schemaVersion, days, planned, targets, customFoods, userMeals, weights });
+  return JSON.stringify({ ...(carried ?? {}), schemaVersion, days, planned, targets, customFoods, userMeals, weights, removed });
 }
 
 export function logsForDay(state: SavedNutritionState, dayKey: string): SavedLogEntry[] {
@@ -452,7 +538,103 @@ export function logsForDay(state: SavedNutritionState, dayKey: string): SavedLog
 export function withDayLogs(state: SavedNutritionState, dayKey: string, logs: SavedLogEntry[]): SavedNutritionState {
   if (!isDateKey(dayKey) || dayKey > currentBangaloreDayKey()) return state;
   const others = state.days.filter((day) => day.dayKey !== dayKey);
-  return { ...state, days: normaliseDays(logs.length > 0 ? [{ dayKey, logs }, ...others] : others) };
+  return {
+    ...state,
+    days: normaliseDays(logs.length > 0 ? [{ dayKey, logs }, ...others] : others),
+    // Logging on a day KP had deleted un-deletes it. Leaving the tombstone would
+    // quietly block that day from ever being restored from a backup again.
+    ...(logs.length > 0 ? { removed: withoutTombstone(state.removed, "day", dayKey) } : {}),
+  };
+}
+
+function withTombstone(removed: RemovedRecords, kind: RemovableKind, id: string): RemovedRecords {
+  const key = REMOVED_KEYS[kind];
+  return { ...removed, [key]: [...removed[key].filter((existing) => existing !== id), id].slice(-MAX_REMOVED_IDS) };
+}
+
+function withoutTombstone(removed: RemovedRecords, kind: RemovableKind, id: string): RemovedRecords {
+  const key = REMOVED_KEYS[kind];
+  if (!removed[key].includes(id)) return removed;
+  return { ...removed, [key]: removed[key].filter((existing) => existing !== id) };
+}
+
+/** True when KP deleted this record here, so a restore must not put it back. */
+export function isRemoved(removed: RemovedRecords, kind: RemovableKind, id: string) {
+  return removed[REMOVED_KEYS[kind]].includes(id);
+}
+
+/**
+ * Delete one record and hand back what was deleted.
+ *
+ * Returning the record is what makes Undo possible without a second read: the
+ * caller holds the only copy until KP either uses Undo or lets the toast go. A
+ * record that is not there is not an error — it returns the state untouched and
+ * a null, so a double tap cannot tombstone something it did not remove.
+ */
+export function removeRecord(state: SavedNutritionState, kind: RemovableKind, id: string): { state: SavedNutritionState; removed: RemovedRecord | null } {
+  const tombstoned = () => withTombstone(state.removed, kind, id);
+  if (kind === "customFood") {
+    const food = state.customFoods.find((candidate) => candidate.id === id);
+    if (!food) return { state, removed: null };
+    return {
+      state: {
+        ...state,
+        customFoods: state.customFoods.filter((candidate) => candidate.id !== id),
+        // A plan entry pointing at a food that no longer exists is already invisible,
+        // but leaving it stored means the draft silently repopulates if the id ever
+        // comes back. Deleting the food deletes the plan line that named it.
+        planned: state.planned.filter((entry) => !(entry.kind === "food" && entry.id === id)),
+        removed: tombstoned(),
+      },
+      removed: { kind, food },
+    };
+  }
+  if (kind === "userMeal") {
+    const meal = state.userMeals.find((candidate) => candidate.id === id);
+    if (!meal) return { state, removed: null };
+    return { state: { ...state, userMeals: state.userMeals.filter((candidate) => candidate.id !== id), removed: tombstoned() }, removed: { kind, meal } };
+  }
+  if (kind === "weight") {
+    const entry = state.weights.find((candidate) => candidate.date === id);
+    if (!entry) return { state, removed: null };
+    return { state: { ...state, weights: state.weights.filter((candidate) => candidate.date !== id), removed: tombstoned() }, removed: { kind, entry } };
+  }
+  const day = state.days.find((candidate) => candidate.dayKey === id);
+  if (!day) return { state, removed: null };
+  return { state: { ...state, days: state.days.filter((candidate) => candidate.dayKey !== id), removed: tombstoned() }, removed: { kind, day } };
+}
+
+/** Put a deleted record back exactly as it was, and forget that it was ever deleted. */
+export function restoreRecord(state: SavedNutritionState, record: RemovedRecord): SavedNutritionState {
+  if (record.kind === "customFood") {
+    const removed = withoutTombstone(state.removed, "customFood", record.food.id);
+    return { ...state, customFoods: [...state.customFoods.filter((food) => food.id !== record.food.id), record.food].slice(-MAX_CUSTOM_FOODS), removed };
+  }
+  if (record.kind === "userMeal") {
+    const removed = withoutTombstone(state.removed, "userMeal", record.meal.id);
+    return { ...state, userMeals: [...state.userMeals.filter((meal) => meal.id !== record.meal.id), record.meal].slice(-MAX_USER_MEALS), removed };
+  }
+  if (record.kind === "weight") {
+    const removed = withoutTombstone(state.removed, "weight", record.entry.date);
+    return { ...state, weights: upsertWeightEntry(state.weights, record.entry), removed };
+  }
+  const removed = withoutTombstone(state.removed, "day", record.day.dayKey);
+  return { ...state, days: normaliseDays([record.day, ...state.days.filter((day) => day.dayKey !== record.day.dayKey)]), removed };
+}
+
+/**
+ * A genuine fresh start: every diary day, food, meal, weigh-in and target goes,
+ * and so does the record of what was deleted.
+ *
+ * Keeping the tombstones would make this button permanent in a way KP would not
+ * expect — a later restore from his own backup would come back empty, because
+ * every id in the file would be marked deleted. Anything he does not want back
+ * he can delete again; a reset he cannot undo from a backup is a trap.
+ * Fields this build does not recognise are carried through untouched, because
+ * clearing this build's data is not licence to delete another build's.
+ */
+export function clearAllUserData(state: SavedNutritionState): SavedNutritionState {
+  return { ...emptyNutritionState(), ...(state.carried ? { carried: state.carried } : {}), rejected: 0 };
 }
 
 /** True when saving would push the oldest day out of storage, so the caller can say so. */
@@ -468,12 +650,18 @@ type BackupMergeCounts = {
   targets: number;
 };
 
-function mergeCollection<T>(current: T[], restored: T[], key: (item: T) => string, limit: number) {
+function mergeCollection<T>(current: T[], restored: T[], key: (item: T) => string, limit: number, isDeleted: (id: string) => boolean = () => false) {
   const occupied = new Set(current.map(key));
   const room = Math.max(0, limit - current.length);
-  const available = restored.filter((item) => !occupied.has(key(item)));
+  const notColliding = restored.filter((item) => !occupied.has(key(item)));
+  const available = notColliding.filter((item) => !isDeleted(key(item)));
   const additions = available.slice(0, room);
-  return { additions, collisions: restored.length - available.length, skippedAtCapacity: available.length - additions.length };
+  return {
+    additions,
+    collisions: restored.length - notColliding.length,
+    skippedAsDeleted: notColliding.length - available.length,
+    skippedAtCapacity: available.length - additions.length,
+  };
 }
 
 /**
@@ -481,11 +669,11 @@ function mergeCollection<T>(current: T[], restored: T[], key: (item: T) => strin
  * Current records win every collision. At a storage cap, the backup simply has
  * no room; exceeding a cap here would only make the next reload discard data.
  */
-export function mergeNutritionBackup(current: SavedNutritionState, restored: SavedNutritionState): { state: SavedNutritionState; added: BackupMergeCounts; collisions: BackupMergeCounts; skippedAtCapacity: BackupMergeCounts } {
-  const days = mergeCollection(current.days, restored.days, (day) => day.dayKey, MAX_STORED_DAYS);
-  const customFoods = mergeCollection(current.customFoods, restored.customFoods, (food) => food.id, MAX_CUSTOM_FOODS);
-  const userMeals = mergeCollection(current.userMeals, restored.userMeals, (meal) => meal.id, MAX_USER_MEALS);
-  const weights = mergeCollection(current.weights, restored.weights, (entry) => entry.date, MAX_WEIGHT_ENTRIES);
+export function mergeNutritionBackup(current: SavedNutritionState, restored: SavedNutritionState): { state: SavedNutritionState; added: BackupMergeCounts; collisions: BackupMergeCounts; skippedAsDeleted: BackupMergeCounts; skippedAtCapacity: BackupMergeCounts } {
+  const days = mergeCollection(current.days, restored.days, (day) => day.dayKey, MAX_STORED_DAYS, (id) => isRemoved(current.removed, "day", id));
+  const customFoods = mergeCollection(current.customFoods, restored.customFoods, (food) => food.id, MAX_CUSTOM_FOODS, (id) => isRemoved(current.removed, "customFood", id));
+  const userMeals = mergeCollection(current.userMeals, restored.userMeals, (meal) => meal.id, MAX_USER_MEALS, (id) => isRemoved(current.removed, "userMeal", id));
+  const weights = mergeCollection(current.weights, restored.weights, (entry) => entry.date, MAX_WEIGHT_ENTRIES, (id) => isRemoved(current.removed, "weight", id));
   const targets = current.targets === null && restored.targets !== null ? 1 : 0;
   return {
     state: {
@@ -495,11 +683,110 @@ export function mergeNutritionBackup(current: SavedNutritionState, restored: Sav
       userMeals: [...current.userMeals, ...userMeals.additions],
       weights: [...current.weights, ...weights.additions].sort((left, right) => left.date.localeCompare(right.date)),
       targets: current.targets ?? restored.targets,
+      // Only this browser's own deletions survive the merge. Importing the file's
+      // tombstones would let a backup delete records that are here now, which is
+      // exactly what "restore never removes anything" exists to prevent.
+      removed: current.removed,
       carried: { ...(restored.carried ?? {}), ...(current.carried ?? {}) },
     },
     added: { days: days.additions.length, customFoods: customFoods.additions.length, userMeals: userMeals.additions.length, weights: weights.additions.length, targets },
     collisions: { days: days.collisions, customFoods: customFoods.collisions, userMeals: userMeals.collisions, weights: weights.collisions, targets: current.targets !== null && restored.targets !== null ? 1 : 0 },
+    skippedAsDeleted: { days: days.skippedAsDeleted, customFoods: customFoods.skippedAsDeleted, userMeals: userMeals.skippedAsDeleted, weights: weights.skippedAsDeleted, targets: 0 },
     skippedAtCapacity: { days: days.skippedAtCapacity, customFoods: customFoods.skippedAtCapacity, userMeals: userMeals.skippedAtCapacity, weights: weights.skippedAtCapacity, targets: 0 },
+  };
+}
+
+/**
+ * Give every logged entry a stable id, leaving the ones that already have one alone.
+ *
+ * Runs on load rather than inside the parser, because a parse must return the same
+ * thing every time it sees the same bytes. A duplicate id is treated as missing —
+ * two entries claiming the same identity would collapse into one on the next sync.
+ */
+export function withLogIds(state: SavedNutritionState, makeId: () => string): SavedNutritionState {
+  const seen = new Set<string>();
+  let changed = false;
+  const days = state.days.map((day) => ({
+    ...day,
+    logs: day.logs.map((log) => {
+      if (log.logId && !seen.has(log.logId)) {
+        seen.add(log.logId);
+        return log;
+      }
+      let id = makeId();
+      while (seen.has(id)) id = makeId();
+      seen.add(id);
+      changed = true;
+      return { ...log, logId: id };
+    }),
+  }));
+  return changed ? { ...state, days } : state;
+}
+
+function unionIds(left: string[], right: string[]) {
+  return [...new Set([...right, ...left])].slice(-MAX_REMOVED_IDS);
+}
+
+function unionRecords<T>(local: T[], remote: T[], key: (item: T) => string, deleted: Set<string>) {
+  const byId = new Map<string, T>();
+  for (const item of remote) byId.set(key(item), item);
+  // Local wins a collision: it is the copy in front of whoever is looking at it.
+  for (const item of local) byId.set(key(item), item);
+  return [...byId.values()].filter((item) => !deleted.has(key(item)));
+}
+
+/**
+ * Combine this device's diary with the one on the Mac Mini.
+ *
+ * This is deliberately NOT `mergeNutritionBackup`. Restoring a file is a one-way,
+ * additive operation where the file has no authority to delete anything. Syncing is
+ * two-way between copies of the same diary, so a deletion made on the phone has to
+ * reach the laptop — otherwise every sync would resurrect it, which is the same
+ * zombie problem tombstones exist to solve, just from the other direction.
+ *
+ * Nothing is ever dropped for being in conflict: within a day, entries are unioned
+ * by id and only genuine duplicates collapse. Where a day predates entry ids, the
+ * side holding more entries wins outright, because half a day's food is a worse
+ * answer than a stale one.
+ */
+export function mergeSyncedStates(local: SavedNutritionState, remote: SavedNutritionState): SavedNutritionState {
+  const removed: RemovedRecords = {
+    customFoods: unionIds(local.removed.customFoods, remote.removed.customFoods),
+    userMeals: unionIds(local.removed.userMeals, remote.removed.userMeals),
+    days: unionIds(local.removed.days, remote.removed.days),
+    weights: unionIds(local.removed.weights, remote.removed.weights),
+  };
+  const deleted = {
+    customFoods: new Set(removed.customFoods),
+    userMeals: new Set(removed.userMeals),
+    days: new Set(removed.days),
+    weights: new Set(removed.weights),
+  };
+
+  const remoteDays = new Map(remote.days.map((day) => [day.dayKey, day]));
+  const mergedDays = local.days.map((day) => {
+    const other = remoteDays.get(day.dayKey);
+    if (!other) return day;
+    remoteDays.delete(day.dayKey);
+    const identified = [...day.logs, ...other.logs].every((log) => Boolean(log.logId));
+    if (!identified) return day.logs.length >= other.logs.length ? day : other;
+    const mine = new Set(day.logs.map((log) => log.logId));
+    return { ...day, logs: [...day.logs, ...other.logs.filter((log) => !mine.has(log.logId))] };
+  });
+
+  return {
+    ...local,
+    days: normaliseDays([...mergedDays, ...remoteDays.values()].filter((day) => !deleted.days.has(day.dayKey))),
+    customFoods: unionRecords(local.customFoods, remote.customFoods, (food) => food.id, deleted.customFoods).slice(0, MAX_CUSTOM_FOODS),
+    userMeals: unionRecords(local.userMeals, remote.userMeals, (meal) => meal.id, deleted.userMeals).slice(-MAX_USER_MEALS),
+    weights: unionRecords(local.weights, remote.weights, (entry) => entry.date, deleted.weights)
+      .sort((left, right) => left.date.localeCompare(right.date))
+      .slice(-MAX_WEIGHT_ENTRIES),
+    // The plan draft is today's scratch pad on one device, not shared state.
+    planned: local.planned,
+    targets: local.targets ?? remote.targets,
+    removed,
+    carried: { ...(remote.carried ?? {}), ...(local.carried ?? {}) },
   };
 }
 
@@ -517,8 +804,26 @@ export type StorageLike = {
  * that parses is always preferred, even if the backup is newer, because the live
  * key is what the app has been writing to.
  */
-export function readStoredNutritionRaw(storage: StorageLike): string | null {
-  const candidates = [LOCAL_NUTRITION_STORAGE_KEY, ...LEGACY_NUTRITION_STORAGE_KEYS, NUTRITION_BACKUP_STORAGE_KEY];
+/**
+ * Which storage keys belong to which person.
+ *
+ * The first profile deliberately keeps the original, unsuffixed keys. That is
+ * what makes the existing diary become KP's the moment profiles arrive: no
+ * migration step to get wrong, nothing to copy, and an older build reading the
+ * same browser still finds exactly what it wrote.
+ */
+export function nutritionStorageKeys(profileId?: string): { live: string; backup: string; legacy: readonly string[] } {
+  if (!profileId || profileId === FIRST_PROFILE_ID) {
+    return { live: LOCAL_NUTRITION_STORAGE_KEY, backup: NUTRITION_BACKUP_STORAGE_KEY, legacy: LEGACY_NUTRITION_STORAGE_KEYS };
+  }
+  return { live: `${LOCAL_NUTRITION_STORAGE_KEY}:${profileId}`, backup: `${NUTRITION_BACKUP_STORAGE_KEY}:${profileId}`, legacy: [] };
+}
+
+/** Kept here rather than imported, so the storage layer has no dependency on the sync layer. */
+export const FIRST_PROFILE_ID = "kp";
+
+export function readStoredNutritionRaw(storage: StorageLike, keys = nutritionStorageKeys()): string | null {
+  const candidates = [keys.live, ...keys.legacy, keys.backup];
   let firstPresent: string | null = null;
   for (const key of candidates) {
     let raw: string | null = null;
@@ -554,11 +859,11 @@ export function readStoredNutritionRaw(storage: StorageLike): string | null {
  * diary that has silently stopped recording is the worst outcome here. The mirror
  * never throws: failing to duplicate is not a reason to fail the real save.
  */
-export function writeStoredNutritionState(storage: StorageLike, state: PersistedNutritionState): void {
+export function writeStoredNutritionState(storage: StorageLike, state: PersistedNutritionState, keys = nutritionStorageKeys()): void {
   const next = stringifySavedNutritionState(state);
-  storage.setItem(LOCAL_NUTRITION_STORAGE_KEY, next);
+  storage.setItem(keys.live, next);
   try {
-    storage.setItem(NUTRITION_BACKUP_STORAGE_KEY, next);
+    storage.setItem(keys.backup, next);
   } catch {
     // Out of quota for the duplicate. The real diary is already written, which is
     // what matters; the next successful save re-establishes the mirror.

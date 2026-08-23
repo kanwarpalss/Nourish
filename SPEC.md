@@ -213,6 +213,17 @@ Amazon’s export does not reliably identify the Now channel by itself, so that 
 | 2026-08-08 | Natural-unit discrete meal optimisation | Pure continuous macro solver | Continuous optimisation creates inedible fractions and frustrating plans |
 | 2026-08-08 | Package label calories remain authoritative for exact products | Always replace energy with 4/4/9 | Fibre, polyols, alcohol, and rounding can legitimately create differences |
 | 2026-08-08 | Plan has exactly two subsections: Items and Meals | Separate Discover, Library, Meal Studio, and Week Plan navigation | Matches the two planning entry points KP actually uses and removes navigation overhead |
+| 2026-08-22 | Deleting anything records a tombstone | Delete by simply removing the record | Restore is additive by design, so with no record of a deletion any older backup silently resurrects every deleted meal, food and weigh-in |
+| 2026-08-22 | Small deletes are instant with a 10s Undo | A confirmation modal on every delete | A modal per delete makes tidying a chore; a working Undo is the stronger guarantee. Only whole-day and delete-everything confirm |
+| 2026-08-22 | "Delete everything" also clears tombstones | Keep them, so the reset is absolute | Otherwise restoring KP's own backup after a reset returns nothing — a trap |
+| 2026-08-22 | Today drops to 2 columns below 1440px | Keep the 1260px breakpoint | Three columns need 1034px and a 1280px window offers ~926px; the old breakpoint overflowed the page sideways by 117px |
+| 2026-08-23 | Diary stored in SQLite via `node:sqlite` on the host | Cloudflare D1 (already scaffolded) | `vinext start` is a plain `node:http` server, not workerd, so D1 needs miniflare — whose state would live inside `releases/<id>/` and be orphaned by every release |
+| 2026-08-23 | Local-first: browser copy is the working copy, SQLite is durable | Server as sole source of truth | Logging food must not wait on a network round trip, and the app has to work with the Mac Mini asleep |
+| 2026-08-23 | One JSON document per profile, with a revision counter | Normalised days/logs/foods tables | The diary's shape, validation and merge rules already live in `local-nutrition-state.ts`; a second definition in SQL is exactly the divergence ARCH-04 warns about |
+| 2026-08-23 | Diary API is same-origin under `/api/nourish`, with no CORS headers | A second public port with permissive CORS | Open CORS lets any site KP visits read the diary off the tailnet address, and an `http://` call from an `https://` page is blocked as mixed content |
+| 2026-08-23 | Sync propagates deletions; restore never does | One shared merge function | Restoring a file is one-way and may not delete anything; syncing is two-way and must carry a deletion across, or every sync resurrects it |
+| 2026-08-23 | Each person gets a separate diary; first profile keeps the original storage keys | One shared household diary | KP asked for separate diaries; reusing the original keys means the existing diary becomes his with no migration step to get wrong |
+| 2026-08-23 | cardIQ and the static sites belong in the cloud; Nourish, Wealth, Watch Book and whats-up stay on the Mac Mini | Push every app to Vercel | Vercel functions are not tailnet members, so "apps on Vercel, data on the Mac Mini" cannot work without exposing the Mini publicly. Wealth writes files to disk and whats-up holds a WhatsApp socket open — serverless can host neither |
 | 2026-08-08 | Filter badges use visible numeric rules | Unexplained “healthy” labels | A meal only earns High protein (25 g+), Low fat (≤10 g), or High fibre (8 g+) when its displayed serving meets the rule |
 | 2026-08-08 | Quantity is edited before a log is committed | One-tap fixed-serving logging only | Grams, millilitres, scoops, packs, and servings all update nutrition from the same evidence-backed basis |
 | 2026-08-09 | cardIQ imports create an ignored local food snapshot | Embed cardIQ credentials or raw orders in Nourish/Git | Keeps cardIQ the source of truth, prevents a second live database dependency, and never commits purchase history |
@@ -267,7 +278,13 @@ The current local cardIQ snapshot contains 193 food rows. Exactly 18 complete pu
 
 Photo coverage is 54 exact or visually accepted images across 123 foods. The other 69 cards use the truthful drawn icon fallback. Free-text Commons search and automatic retailer scraping are retired fail-closed. The remaining generic Wikipedia allow-list emits review candidates only. `scripts/apply-food-photos.mjs` parses TypeScript, edits only the uniquely identified catalogue object, validates HTTPS URLs, rejects duplicate IDs, writes atomically, and preserves existing photos unless `--replace-existing` is supplied.
 
-Browser-local state remains the current persistence layer. Diary days, targets, custom foods, reusable Meals, weights, Plan selections, immutable log snapshots, and Meal component snapshots survive reload. Export/import is additive and current-data-first: current records win collisions and keep their reserved capacity; imports fill free slots only; additions, conflicts, and rejected overflow are reported separately. Invalid or future diary dates are rejected. The backed-up local database in Phase 1 is still pending.
+As of 2026-08-23 the diary is stored in **SQLite on the machine hosting the app** (`~/Library/Application Support/Nourish/nourish.db`, override `NOURISH_DB_PATH`), deliberately outside the repository so `npm run release` and `npm test` cannot touch it. The browser copy remains the working copy: the app still runs and logs with no network, and the two reconcile automatically. Verified by clearing browser storage entirely and reloading — the diary, targets and weights all returned from the database.
+
+Each person has a completely separate diary, targets and weigh-ins. The first profile keeps the original localStorage keys, so the existing diary became KP's without a migration. Every save keeps the last 50 versions per profile server-side, so even "Delete everything" is recoverable. There is no authentication: tailnet membership is the boundary, and profiles separate diaries without locking them.
+
+Everything KP creates can now be deleted — saved Meals, foods he added, weigh-ins, individual entries on past days, whole past days, and a full reset. Small deletes are immediate with a 10-second Undo; whole-day and delete-everything require confirmation. Deletions are recorded, so restoring an older backup cannot resurrect them, and the restore reports what it held back.
+
+Diary days, targets, custom foods, reusable Meals, weights, Plan selections, immutable log snapshots, and Meal component snapshots survive reload. Export/import is additive and current-data-first: current records win collisions and keep their reserved capacity; imports fill free slots only; additions, conflicts, records held back as deleted, and rejected overflow are reported separately. Invalid or future diary dates are rejected.
 
 The 2026-08-21 full-repository lead review passed the production build, lint, dependency audit, and all 115 automated checks, including failure injection. New boundary tests prove that photo edits cannot cross object boundaries and that a full backup import cannot evict current data. The same new tests were run against the previous code and failed there. No deployment, service restart, commit, staging, or push was performed in this audit.
 
@@ -280,9 +297,12 @@ The 2026-08-21 full-repository lead review passed the production build, lint, de
 | Nandini and Epigamia seed entries rely on current label mirrors | Needs exact-pack confirmation | Reconcile barcode/variant and pack photo during cardIQ import before promotion |
 | 175 food purchase rows are deliberately not auto-linked | Open, enumerated | Exact Brand + Item + Variant/form + pack evidence was accepted for 18 titles. The complete unresolved list is generated in `data/UNMATCHED_CARDIQ_FOODS.md`; label photos, barcodes, or exact retailer IDs are the safe next input. |
 | Food photos cover 54 of 123 foods; 69 use drawn icons | Open, deliberately | Add a photo only after exact brand/product/variant/pack or raw/cooked form is visually confirmed. Unsafe automatic retailer/free-text sourcing stays retired. |
-| Main UI module and stylesheet are oversized | Architectural debt | `app/page.tsx` is 1,508 lines and `app/globals.css` is 904 lines. Split by Plan/Track/product-area ownership before the next broad UI feature so one change does not require editing the whole screen. |
+| Main UI module and stylesheet are oversized | Architectural debt, worsening | `app/page.tsx` is now ~1,700 lines and `app/globals.css` ~1,000. Split by Plan/Track/product-area ownership before the next broad UI feature so one change does not require editing the whole screen. |
 | Legacy meal and schema compatibility paths have no deletion date | Architectural debt | Measure whether old schema-1/single-meal data still exists, document a sunset condition, then remove the compatibility branch only after a migration/backup checkpoint. |
-| Backed-up Mac Mini database is not implemented | Open | Phase 1: local canonical database, migrations, encrypted backup, and a restore drill. Browser export/import is a safety net, not off-browser automatic backup. |
+| Local canonical database | **Done 2026-08-23** | SQLite via `node:sqlite`, per-profile documents, 50-version server-side history, optimistic concurrency. Encrypted off-machine backup and a restore drill are still outstanding. |
+| Nourish has never run on the Mac Mini | Open | The Mini was offline all session (`tailscale status`: last seen 34 days). Caddy front door, launchd services, shared port registry and the launcher page are designed but not built. |
+| No authentication on the diary API | Open, by design for now | Tailnet membership is the only boundary; anyone on it can open any profile. A PIN was offered and not requested. |
+| Watch Book has no assigned port | Open | 4400 proposed in the architecture doc; nothing depends on it yet. |
 | Fullness score is an estimate, not a measurement | By design, labelled "est." | Revisit if a measured satiety source with real Indian coverage becomes available |
 | `basis` field on `NutritionItem` is declared but never populated | Open | SPEC §4.1 wants label calories kept alongside a 4/4/9 comparison; the field exists but nothing writes it |
 | Plan · Items cannot search imported purchases | Open | Items searches only the seed catalogue; the "Ordered" chip shows 3 entries rather than KP's real purchases |
@@ -357,6 +377,38 @@ The 2026-08-21 full-repository lead review passed the production build, lint, de
 - Add private-network access, health checks, restart policy, encrypted backup, restore drill, and update runbook.
 
 **Exit gate:** service survives restart, private access works, and a fresh restore reproduces totals.
+
+### Handoff — as of 2026-08-23
+
+**Where things stand.** Phase 1's local canonical database is built: SQLite via
+`node:sqlite` (no new dependencies), one JSON document per person with a revision
+counter, 50-version history per profile, WAL + `synchronous=FULL`. The client syncs
+local-first. Everything KP creates can be deleted, with tombstones so a restore
+cannot resurrect it. 171 tests green, lint clean.
+
+**Nothing has ever run on the Mac Mini.** It was offline this whole session
+(`tailscale status`: last seen 34 days ago). Phase 6 is the next real step and needs
+KP physically there.
+
+**Next session, in order:**
+1. KP powers on the Mini, disables sleep, installs Tailscale, enables MagicDNS, and
+   shares the `mac-mini` node with his wife. These need his logins; they are steps 1–5
+   of the architecture doc.
+2. Build the fleet: Caddy front door on port 80, one launchd service per app, a shared
+   port registry in AI HQ, and the launcher page. Port map: Nourish 4317 (front door)
+   → vinext 4316 internal, cardIQ 3128, Wealth 8000, alug 4173, Watch Book 4400 proposed.
+3. Publish a Nourish release on the Mini and confirm the diary API answers there —
+   the front door has only been proven on this MacBook.
+
+**Read first:** `AI HQ/summaries/Nourish/diary-database-and-sync.md` — it records why
+D1 was rejected, why sync and restore use different merge rules, and the profile-switch
+bug that wrote one person's diary into another's.
+
+**Watch out for:** `app/page.tsx` is ~1,700 lines and genuinely needs splitting before
+the next broad UI feature. The diary API has no authentication by design.
+
+**Architecture doc:** artifact `https://claude.ai/code/artifact/1f20befd-35f2-4742-b16a-992b73ed0795`
+("Two Homes for Your Apps"), also exported as a 7-page PDF for KP.
 
 ### Current handoff
 

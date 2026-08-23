@@ -13,7 +13,9 @@ Local-only, single user, no cloud backend.
 
 1. **Port 4317 only.** `scripts/require-nourish-port.mjs` must never gain a
    fallback port. If 4317 is occupied the app must exit with a plain-English
-   error.
+   error. Since 2026-08-23 the process on 4317 is `server/front-door.mjs`, which
+   answers `/api/nourish/*` from SQLite and reverse-proxies the rest to vinext on
+   loopback 4316. 4316 is internal and must never be exposed.
 2. **Package-label calories are authoritative for packaged foods.** A 4/4/9
    calculation may be displayed alongside for comparison but must NEVER
    overwrite a label value.
@@ -46,6 +48,23 @@ Local-only, single user, no cloud backend.
     Item Name; Ordered Food requires Restaurant/Brand + Menu Item; Open Ingredient requires
     only its ingredient name. Variant may be blank. Commercial products must never be
     collapsed into a generic/category match merely because they share an ingredient.
+
+16. **Sync and restore are different operations and must stay different.**
+    `mergeNutritionBackup()` is one-way and additive — a backup file may never delete
+    anything that is here now. `mergeSyncedStates()` is two-way and MUST carry
+    deletions across, or every sync resurrects what the other device deleted. Never
+    collapse them into one function.
+
+17. **Every logged entry carries a `logId`.** Two devices logging the same day both
+    produce an "entry 2"; any merge keyed on position silently drops one meal. Ids are
+    stamped by `withLogIds()` on load, never inside the parser — parsing must return
+    the same result for the same bytes.
+
+18. **Nothing may read, write or sync a diary until that profile's own load has
+    finished.** All three effects in `page.tsx` guard on
+    `loadedProfile !== profileId`. Without it, switching person wrote one person's
+    entire diary into another's — on the device and in SQLite (fixed 2026-08-23;
+    a rendered-html assertion counts exactly three guards).
 
 12. **A save must never drop a field this build does not recognise.** `stringifySavedNutritionState`
     re-emits unknown top-level keys from `carried`; this build's own keys win a collision.
@@ -105,8 +124,11 @@ test that fails against the previous behaviour (TEST-01).
 
 ## Project-specific rules
 
-- Browser localStorage is the ONLY persistence today. Never describe a log as
-  "saved" without saying "saved in this browser".
+- **The diary lives in SQLite on the host** (`~/Library/Application Support/Nourish/nourish.db`,
+  override `NOURISH_DB_PATH`) with the browser copy as the working copy. The database
+  path stays outside the repo — `npm run release` and `npm test` both rewrite the tree.
+  Never claim a log is "saved on the Mac Mini" unless a write to it actually succeeded;
+  `describeSyncStatus()` owns that wording and must keep telling the truth when offline.
 - Logs are day-scoped via `getBangaloreClock()`. Anything date-related must use
   `Asia/Kolkata`, never the host timezone.
 - No network at render time — `next/font` and other remote fetches are banned;

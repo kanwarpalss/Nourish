@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "nourish-preview",
+      "runtimeExecutable": "node_modules/.bin/vinext",
+      "runtimeArgs": ["start", "--port", "4318", "--hostname", "127.0.0.1"],
+      "port": 4318
+    },
+    {
+      "name": "nourish-frontdoor",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["/private/tmp/claude-501/-Users-kanwar-Code-Nourish/ec08a6fc-4a0c-4147-ad76-478a90d32bda/scratchpad/preview-frontdoor.mjs"],
+      "port": 4318
+    }
+  ]
+}

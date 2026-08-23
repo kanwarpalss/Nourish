@@ -39,14 +39,36 @@ console.log(`Nourish is serving release ${path.basename(releaseDir)}`);
 // working directory — vinext serves whatever sits at <cwd>/dist.
 const vinextBin = path.join(repoRoot, "node_modules", ".bin", "vinext");
 
-const child = spawn(vinextBin, ["start", "--port", "4317", "--hostname", "0.0.0.0"], {
+/**
+ * The app renders on an internal port and the front door owns 4317.
+ *
+ * The diary API has to be same-origin with the page: a separate port would mean
+ * CORS, and once the Mac Mini serves HTTPS a page on https:// calling http:// on
+ * another port is blocked outright as mixed content. Fronting both on one port
+ * side-steps all of it, and keeps 4317 the only port Nourish ever occupies.
+ */
+const INTERNAL_APP_PORT = 4316;
+const PUBLIC_PORT = 4317;
+
+const child = spawn(vinextBin, ["start", "--port", String(INTERNAL_APP_PORT), "--hostname", "127.0.0.1"], {
   cwd: releaseDir,
   stdio: "inherit",
   env: { ...process.env, WRANGLER_LOG_PATH: path.join(repoRoot, ".wrangler", "wrangler.log") },
 });
 
+const { startFrontDoor } = await import(new URL("../server/front-door.mjs", import.meta.url).href);
+const frontDoor = await startFrontDoor({
+  port: PUBLIC_PORT,
+  host: "0.0.0.0",
+  appOrigin: `http://127.0.0.1:${INTERNAL_APP_PORT}`,
+});
+console.log(`Nourish is answering on http://0.0.0.0:${PUBLIC_PORT} (diary database at ${frontDoor.databasePath})`);
+
 for (const signal of ["SIGINT", "SIGTERM"]) {
-  process.on(signal, () => child.kill(signal));
+  process.on(signal, () => {
+    child.kill(signal);
+    frontDoor.close();
+  });
 }
 
 child.on("exit", (code, signal) => {
