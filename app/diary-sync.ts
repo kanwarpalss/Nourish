@@ -30,6 +30,8 @@ export type SyncOutcome = {
   state?: SavedNutritionState;
   revision?: number;
   detail?: string;
+  /** Which logIds have a photo on the server. Live-only — never persisted, never merged. */
+  photos?: Record<string, { mimeType: string; createdAt: string }>;
 };
 
 const REQUEST_TIMEOUT_MS = 8000;
@@ -106,12 +108,12 @@ export async function pullDiary(profileId: string, local: SavedNutritionState): 
   if (response.status === 404) return { status: "local-only", detail: "That profile does not exist on the Mac Mini yet." };
   if (!response.ok) return { status: "failed", detail: `The diary database answered ${response.status}.` };
 
-  const body = await response.json() as { revision: number; state: unknown };
+  const body = await response.json() as { revision: number; state: unknown; photos?: Record<string, { mimeType: string; createdAt: string }> };
   // Revision 0 with no state is a profile that has never saved: this device's
   // copy is the whole truth, and pushing it up is the right next move.
-  if (!body.state) return { status: "synced", state: local, revision: body.revision };
+  if (!body.state) return { status: "synced", state: local, revision: body.revision, photos: body.photos };
   const remote = parseSavedNutritionState(JSON.stringify(body.state));
-  return { status: "synced", state: mergeSyncedStates(local, remote), revision: body.revision };
+  return { status: "synced", state: mergeSyncedStates(local, remote), revision: body.revision, photos: body.photos };
 }
 
 /**

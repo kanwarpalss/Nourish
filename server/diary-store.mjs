@@ -31,6 +31,11 @@ export const MAX_PROFILE_NAME_LENGTH = 40;
 export const MAX_PAYLOAD_BYTES = 8 * 1024 * 1024;
 export const HISTORY_PER_PROFILE = 50;
 
+export const LOG_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+/** A phone camera JPEG comfortably; large enough to be useful, small enough that 30 days of them stays bounded. */
+export const MAX_PHOTO_BYTES = 6 * 1024 * 1024;
+export const PHOTO_MIME_EXTENSIONS = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
+
 export function isValidProfileId(id) {
   return typeof id === "string" && PROFILE_ID_PATTERN.test(id);
 }
@@ -39,8 +44,20 @@ export function isValidProfileName(name) {
   return typeof name === "string" && name.trim().length > 0 && name.trim().length <= MAX_PROFILE_NAME_LENGTH;
 }
 
+export function isValidLogId(id) {
+  return typeof id === "string" && LOG_ID_PATTERN.test(id);
+}
+
+export function isSupportedPhotoMimeType(mimeType) {
+  return Object.prototype.hasOwnProperty.call(PHOTO_MIME_EXTENSIONS, mimeType);
+}
+
 export function openDiaryStore(databasePath = defaultDatabasePath()) {
   fs.mkdirSync(path.dirname(databasePath), { recursive: true });
+  // Photos live beside the database, not inside it: a BLOB in every diary row would
+  // bloat the file this whole layer exists to keep small and easy to back up.
+  const photosDir = path.join(path.dirname(databasePath), "photos");
+  fs.mkdirSync(photosDir, { recursive: true });
   const db = new DatabaseSync(databasePath);
   // WAL survives a hard power cut mid-write far better than the rollback journal,
   // which matters on a Mac Mini that may simply lose power.
@@ -67,6 +84,15 @@ export function openDiaryStore(databasePath = defaultDatabasePath()) {
       saved_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS diary_history_profile ON diary_history (profile_id, id DESC);
+    CREATE TABLE IF NOT EXISTS log_photos (
+      profile_id TEXT NOT NULL,
+      log_id TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      byte_size INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (profile_id, log_id)
+    );
   `);
 
   const statements = {
@@ -88,6 +114,14 @@ export function openDiaryStore(databasePath = defaultDatabasePath()) {
     `),
     listHistory: db.prepare("SELECT id, revision, saved_at, length(payload) AS bytes FROM diary_history WHERE profile_id = ? ORDER BY id DESC"),
     getHistoryEntry: db.prepare("SELECT payload, revision, saved_at FROM diary_history WHERE profile_id = ? AND id = ?"),
+    getPhotoRow: db.prepare("SELECT file_name, mime_type, created_at FROM log_photos WHERE profile_id = ? AND log_id = ?"),
+    upsertPhotoRow: db.prepare(`
+      INSERT INTO log_photos (profile_id, log_id, file_name, mime_type, byte_size, created_at) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT (profile_id, log_id) DO UPDATE SET file_name = excluded.file_name, mime_type = excluded.mime_type, byte_size = excluded.byte_size, created_at = excluded.created_at
+    `),
+    deletePhotoRow: db.prepare("DELETE FROM log_photos WHERE profile_id = ? AND log_id = ?"),
+    listPhotoRows: db.prepare("SELECT log_id, mime_type, created_at FROM log_photos WHERE profile_id = ?"),
+    listExpiredPhotos: db.prepare("SELECT profile_id, log_id, file_name FROM log_photos WHERE created_at < ?"),
   };
 
   const now = () => new Date().toISOString();
@@ -179,6 +213,63 @@ export function openDiaryStore(databasePath = defaultDatabasePath()) {
     readHistoryEntry(profileId, historyId) {
       const row = statements.getHistoryEntry.get(profileId, historyId);
       return row ? { revision: row.revision, savedAt: row.saved_at, state: JSON.parse(row.payload) } : null;
+    },
+
+    /**
+     * Replaces whatever photo (if any) was on this entry before. Re-attaching after
+     * a mistake is meant to just work, not pile up orphaned files next to the good one.
+     */
+    savePhoto(profileId, logId, buffer, mimeType) {
+      if (!isSupportedPhotoMimeType(mimeType)) return { ok: false, reason: "unsupported-type" };
+      if (buffer.length > MAX_PHOTO_BYTES) return { ok: false, reason: "too-large" };
+      const existing = statements.getPhotoRow.get(profileId, logId);
+      if (existing) {
+        const oldPath = path.join(photosDir, existing.file_name);
+        if (fs.existsSync(oldPath)) fs.rmSync(oldPath);
+      }
+      const fileName = `${profileId}__${logId}.${PHOTO_MIME_EXTENSIONS[mimeType]}`;
+      fs.writeFileSync(path.join(photosDir, fileName), buffer);
+      const createdAt = now();
+      statements.upsertPhotoRow.run(profileId, logId, fileName, mimeType, buffer.length, createdAt);
+      return { ok: true, mimeType, createdAt };
+    },
+
+    getPhoto(profileId, logId) {
+      const row = statements.getPhotoRow.get(profileId, logId);
+      if (!row) return null;
+      const filePath = path.join(photosDir, row.file_name);
+      if (!fs.existsSync(filePath)) return null;
+      return { buffer: fs.readFileSync(filePath), mimeType: row.mime_type, createdAt: row.created_at };
+    },
+
+    /** Idempotent: removing a photo that is already gone is a no-op, not a failure. */
+    deletePhoto(profileId, logId) {
+      const row = statements.getPhotoRow.get(profileId, logId);
+      if (!row) return false;
+      const filePath = path.join(photosDir, row.file_name);
+      if (fs.existsSync(filePath)) fs.rmSync(filePath);
+      statements.deletePhotoRow.run(profileId, logId);
+      return true;
+    },
+
+    listPhotos(profileId) {
+      const result = {};
+      for (const row of statements.listPhotoRows.all(profileId)) {
+        result[row.log_id] = { mimeType: row.mime_type, createdAt: row.created_at };
+      }
+      return result;
+    },
+
+    /** Bounds photo storage to roughly a month of logging, regardless of how many profiles use this database. */
+    sweepExpiredPhotos(maxAgeDays = 30) {
+      const cutoff = new Date(Date.now() - maxAgeDays * 24 * 60 * 60 * 1000).toISOString();
+      const expired = statements.listExpiredPhotos.all(cutoff);
+      for (const row of expired) {
+        const filePath = path.join(photosDir, row.file_name);
+        if (fs.existsSync(filePath)) fs.rmSync(filePath);
+        statements.deletePhotoRow.run(row.profile_id, row.log_id);
+      }
+      return expired.length;
     },
 
     close() {

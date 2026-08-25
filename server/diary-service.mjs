@@ -15,10 +15,11 @@
  */
 
 import { createServer } from "node:http";
-import { openDiaryStore, isValidProfileId, isValidProfileName, MAX_PAYLOAD_BYTES } from "./diary-store.mjs";
+import { openDiaryStore, isValidProfileId, isValidProfileName, isValidLogId, isSupportedPhotoMimeType, MAX_PAYLOAD_BYTES, MAX_PHOTO_BYTES } from "./diary-store.mjs";
 
 export const API_PREFIX = "/api/nourish";
 const BODY_LIMIT = MAX_PAYLOAD_BYTES + 64 * 1024;
+const PHOTO_BODY_LIMIT = MAX_PHOTO_BYTES + 16 * 1024;
 
 function send(response, status, body) {
   const text = JSON.stringify(body);
@@ -43,6 +44,17 @@ async function readJsonBody(request) {
   }
   if (chunks.length === 0) return null;
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
+async function readBinaryBody(request, limit) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > limit) throw new Error("body-too-large");
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
 }
 
 export function createDiaryHandler(store) {
@@ -110,8 +122,62 @@ export function createDiaryHandler(store) {
             send(response, 404, { error: "No such profile." });
             return true;
           }
-          send(response, 200, store.readDiary(profileId));
+          // photos rides alongside the diary rather than inside it: it never goes
+          // through localStorage or the merge/backup path, only ever this live read.
+          send(response, 200, { ...store.readDiary(profileId), photos: store.listPhotos(profileId) });
           return true;
+        }
+
+        if (segments[2] === "log" && segments[3] && segments[4] === "photo" && segments.length === 5) {
+          const logId = segments[3];
+          if (!isValidLogId(logId)) {
+            send(response, 400, { error: "Not a usable log id." });
+            return true;
+          }
+          if (method === "PUT") {
+            const contentType = (request.headers["content-type"] ?? "").split(";")[0].trim();
+            if (!isSupportedPhotoMimeType(contentType)) {
+              send(response, 400, { error: "Photos must be JPEG, PNG or WebP." });
+              return true;
+            }
+            let buffer;
+            try {
+              buffer = await readBinaryBody(request, PHOTO_BODY_LIMIT);
+            } catch (error) {
+              if (error instanceof Error && error.message === "body-too-large") {
+                send(response, 413, { error: "That photo is too large." });
+                return true;
+              }
+              throw error;
+            }
+            const result = store.savePhoto(profileId, logId, buffer, contentType);
+            if (!result.ok) {
+              send(response, result.reason === "too-large" ? 413 : 400, { error: result.reason === "too-large" ? "That photo is too large." : "Not a usable photo." });
+              return true;
+            }
+            send(response, 200, { mimeType: result.mimeType, createdAt: result.createdAt });
+            return true;
+          }
+          if (method === "GET") {
+            const photo = store.getPhoto(profileId, logId);
+            if (!photo) {
+              send(response, 404, { error: "No photo for that entry." });
+              return true;
+            }
+            response.writeHead(200, {
+              "content-type": photo.mimeType,
+              "content-length": photo.buffer.length,
+              // Immutable in practice — a replacement is a new upload, not an edit — so this is safe to cache.
+              "cache-control": "private, max-age=86400",
+            });
+            response.end(photo.buffer);
+            return true;
+          }
+          if (method === "DELETE") {
+            store.deletePhoto(profileId, logId);
+            send(response, 200, { deleted: true });
+            return true;
+          }
         }
         if (segments.length === 2 && method === "PUT") {
           const body = await readJsonBody(request);
@@ -165,9 +231,25 @@ export function ensureFirstProfile(store, id = "kp", name = "KP") {
   return store.listProfiles();
 }
 
+/**
+ * Runs the 30-day photo sweep once immediately, then daily. `unref()`'d so a lone
+ * background timer never keeps the test runner (or a graceful shutdown) waiting.
+ */
+export function schedulePhotoSweep(store, { intervalMs = 24 * 60 * 60 * 1000 } = {}) {
+  const sweep = () => {
+    const removed = store.sweepExpiredPhotos(30);
+    if (removed > 0) console.log(`[nourish-data] removed ${removed} photo${removed === 1 ? "" : "s"} older than 30 days`);
+  };
+  sweep();
+  const timer = setInterval(sweep, intervalMs);
+  if (typeof timer.unref === "function") timer.unref();
+  return () => clearInterval(timer);
+}
+
 export function startDiaryService({ port = 4319, host = "127.0.0.1", databasePath } = {}) {
   const store = openDiaryStore(databasePath);
   ensureFirstProfile(store);
+  schedulePhotoSweep(store);
   const handle = createDiaryHandler(store);
   const server = createServer((request, response) => {
     handle(request, response).then((handled) => {

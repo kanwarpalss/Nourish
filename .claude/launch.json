@@ -12,6 +12,12 @@
       "runtimeExecutable": "node",
       "runtimeArgs": ["/private/tmp/claude-501/-Users-kanwar-Code-Nourish/ec08a6fc-4a0c-4147-ad76-478a90d32bda/scratchpad/preview-frontdoor.mjs"],
       "port": 4318
+    },
+    {
+      "name": "nourish-photos-preview",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["/private/tmp/claude-501/-Users-kanwar-Code-Nourish/61730fa3-fbab-444e-8c8b-a885567e3649/scratchpad/preview-photos.mjs"],
+      "port": 4318
     }
   ]
 }
