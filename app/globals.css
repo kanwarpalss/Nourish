@@ -28,7 +28,7 @@
 html { scroll-behavior: smooth; }
 body { margin: 0; background: var(--canvas); color: var(--text); font-family: "Avenir Next", Avenir, Inter, Arial, sans-serif; }
 button, input, select { font: inherit; }
-button { color: inherit; }
+button { color: inherit; user-select: none; -webkit-user-select: none; touch-action: manipulation; }
 button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid rgb(185 237 85 / 0.6); outline-offset: 2px; }
 
 .app-shell { min-height: 100dvh; }
@@ -611,6 +611,9 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 }
 
 @media (max-width: 700px) {
+  /* Below 16px, iOS Safari zooms the whole page in on focus instead of just
+     the field — every input/select in the app dips under that on a phone. */
+  input, select, textarea { font-size: 16px; }
   .workspace { padding: 24px 15px 90px; }
   .mobile-topbar { grid-template-columns: 1fr auto auto; gap: 12px; }
   /* The avatar was decoration, so narrow screens dropped it. It is now the way
