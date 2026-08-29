@@ -29,8 +29,22 @@ function toProfileId(name: string) {
   return slug ? `${slug}-${Math.random().toString(36).slice(2, 6)}` : `person-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/**
+ * crypto.randomUUID() only exists in a "secure context" (HTTPS, or the
+ * browser's special-cased localhost). Nourish is reached over plain HTTP on
+ * a private Tailscale IP by design (no public ingress, so no TLS) — every
+ * real device hits an insecure context, and randomUUID silently doesn't
+ * exist there. getRandomValues has no such restriction.
+ */
+function randomHex(byteLength: number) {
+  const bytes = new Uint8Array(byteLength);
+  if (globalThis.crypto?.getRandomValues) globalThis.crypto.getRandomValues(bytes);
+  else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 function freshUnique() {
-  return globalThis.crypto.randomUUID().slice(0, 12);
+  return randomHex(6);
 }
 
 const trackNav: Array<{ id: TrackView; label: string; icon: string }> = [
@@ -955,7 +969,7 @@ function PlanMealBuilder({ initial, catalog, dayKey, onClose, onSave }: {
             {choices.length > 0 ? (
               <div className="component-choices">
                 {choices.map((food) => (
-                  <button key={food.id} onClick={() => { setItems((current) => addToTray(current, food, window.crypto.randomUUID())); setSearch(""); }}>
+                  <button key={food.id} onClick={() => { setItems((current) => addToTray(current, food, randomHex(16))); setSearch(""); }}>
                     <span>{foodLabel(food)}</span><small>{Math.round(food.calories)} kcal / {food.amount} {food.unit}</small><b>＋</b>
                   </button>
                 ))}
@@ -1178,7 +1192,7 @@ function FoodDialog({ initialFood, initialMeal, editing, editingLogId, catalog, 
       setDraftIsNew(false);
       setDetailsOpen(false);
       const ready = scaleNutritionForUnit(withConversions, withConversions.amount, withConversions.unit);
-      if (buildingMeal) setMealLines((lines) => addToTray(lines, ready, window.crypto.randomUUID()));
+      if (buildingMeal) setMealLines((lines) => addToTray(lines, ready, randomHex(16)));
       else onAdd(ready, activeLogId ?? undefined);
       return;
     }
@@ -1209,7 +1223,7 @@ function FoodDialog({ initialFood, initialMeal, editing, editingLogId, catalog, 
   };
   const addMealLine = () => {
     if (!scaled || !quantityValid) return;
-    setMealLines((lines) => addToTray(lines, scaled, window.crypto.randomUUID()));
+    setMealLines((lines) => addToTray(lines, scaled, randomHex(16)));
   };
   const saveBuiltMeal = () => {
     const meal = createUserMeal(mealName, mealLines, nextUnique(), dayKey);
