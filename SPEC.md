@@ -215,6 +215,10 @@ Amazon’s export does not reliably identify the Now channel by itself, so that 
 | 2026-08-08 | Plan has exactly two subsections: Items and Meals | Separate Discover, Library, Meal Studio, and Week Plan navigation | Matches the two planning entry points KP actually uses and removes navigation overhead |
 | 2026-08-22 | Deleting anything records a tombstone | Delete by simply removing the record | Restore is additive by design, so with no record of a deletion any older backup silently resurrects every deleted meal, food and weigh-in |
 | 2026-08-22 | Small deletes are instant with a 10s Undo | A confirmation modal on every delete | A modal per delete makes tidying a chore; a working Undo is the stronger guarantee. Only whole-day and delete-everything confirm |
+| 2026-08-30 | Ids come from `crypto.getRandomValues`, never `randomUUID` | Keep `randomUUID` and serve the app over HTTPS | `randomUUID` needs a secure context, which a plain-HTTP tailnet address is not. Adding TLS to a private local app is real ongoing cost (certificates, renewal, trust on every device) to regain one convenience function that has a restriction-free equivalent |
+| 2026-08-30 | A source scan bans every secure-context-only Web API from client code | Fix `randomUUID` alone and move on | The bug was invisible for weeks because tests and dev both run on `localhost`, the one origin exempt from the rule. `clipboard`, `mediaDevices` and `subtle` would each fail the same silent way, so the whole class is refused rather than one instance |
+| 2026-08-30 | Food photos get their own `food_photos` table and routes | Reuse `log_photos` keyed by food id | The 30-day sweep exists to bound meal-photo storage. A food's picture is catalogue data that must live as long as the food, so sharing the table would silently strip pictures off items added months earlier |
+| 2026-08-30 | A failed photo upload clears the preview | Leave the picture on screen and show an error beside it | The preview appears the instant a file is picked, so leaving it visible after a failure is the app implying it saved something it did not — the same class of lie the 'saved on the Mac Mini' wording already forbids |
 | 2026-08-22 | "Delete everything" also clears tombstones | Keep them, so the reset is absolute | Otherwise restoring KP's own backup after a reset returns nothing — a trap |
 | 2026-08-22 | Today drops to 2 columns below 1440px | Keep the 1260px breakpoint | Three columns need 1034px and a 1280px window offers ~926px; the old breakpoint overflowed the page sideways by 117px |
 | 2026-08-23 | Diary stored in SQLite via `node:sqlite` on the host | Cloudflare D1 (already scaffolded) | `vinext start` is a plain `node:http` server, not workerd, so D1 needs miniflare — whose state would live inside `releases/<id>/` and be orphaned by every release |
@@ -288,6 +292,79 @@ Diary days, targets, custom foods, reusable Meals, weights, Plan selections, imm
 
 The 2026-08-21 full-repository lead review passed the production build, lint, dependency audit, and all 115 automated checks, including failure injection. New boundary tests prove that photo edits cannot cross object boundaries and that a full backup import cannot evict current data. The same new tests were run against the previous code and failed there. No deployment, service restart, commit, staging, or push was performed in this audit.
 
+### §6.1 Session state — 2026-08-30 (READ THIS FIRST if you are picking up)
+
+**Shipped, live, and verified**
+
+`bb9f726` fixed the bug that made Log Food dead on every real device. `crypto.randomUUID()`
+exists only in a browser **secure context** — HTTPS, or the special-cased `localhost`.
+Nourish is served over plain HTTP on a private Tailscale IP by design, so every real
+device (phone, laptop via the `nourish` alias, the Mac Mini itself) loaded an *insecure*
+context where `randomUUID` is silently `undefined`. Opening Log Food called it during
+render with no error boundary above it, so React unmounted the whole tree to a blank page.
+It survived weeks of testing because everything was only ever tested on `localhost`, the
+one origin exempt from that rule. Pulled, released and confirmed working on the Mac Mini,
+then confirmed by KP on both his iPhone and his laptop.
+
+This also corrected a wrong diagnosis from earlier the same day: the preceding commit
+(`fd65693`, tap-target CSS and iOS input zoom) was a real, separate fix, but it was **not**
+what made the buttons dead, and was wrongly declared as such after being tested only on
+localhost.
+
+**Work in progress, committed but NOT yet pushed or deployed**
+
+All of the below is one commit on top of `bb9f726`. The full suite (196 checks) and lint
+are green, but see the explicit unverified list at the end — do not describe this as done.
+
+1. *The bug class is now structurally shut.* `app/ids.ts` is the single home for id
+   generation, built on `crypto.getRandomValues` (no secure-context restriction).
+   `tests/insecure-context.test.ts` proves the helpers work with `randomUUID` removed and
+   with `crypto` absent entirely, and scans all client source for **any** secure-context-only
+   API (`crypto.subtle`, `navigator.clipboard`, `mediaDevices`, `geolocation`, …). Failure
+   injection confirmed: 3 of its 5 tests fail against the old code.
+2. *An error boundary.* `AppErrorBoundary` in `app/page.tsx` wraps the app. Its absence is
+   what turned a small bug into a total blank-screen outage. It states plainly that logged
+   food is safe and offers a reload.
+3. *Photo confirmation.* `PhotoAttachControl` now shows "✓ Photo saved to the Mac Mini ·
+   removed automatically after 30 days" on success, and on failure clears the preview and
+   names the reason. Previously the local preview appeared instantly whether or not the
+   upload landed, so the screen looked identical either way.
+4. *Photos for a food KP adds himself.* Pasting an `https://` URL used to be the only
+   option, which is unusable on the phone where items actually get added. New
+   `FoodPhotoField` offers the camera first, link second.
+   - Stored server-side in a **separate `food_photos` table** with its own
+     `/api/nourish/diary/:profile/food/:foodId/photo` routes. Deliberately not `log_photos`:
+     a meal photo is evidence that ages out after 30 days, a food's picture is catalogue
+     data that must last as long as the food. Sharing one table would let the sweep silently
+     strip pictures off items added months ago — regression-tested, failure-injection proven.
+   - `isSafeImageUrl` now also accepts same-origin `/api/nourish/…` paths, since these
+     photos have no scheme or host. Traversal and `//host` forms still rejected.
+
+**Explicitly NOT verified — pick up here**
+
+- `FoodPhotoField` has **never been exercised in a browser.** The session was stopped at
+  exactly that step. Everything else in the list was driven live at
+  `http://100.89.12.6:4318` (a genuinely insecure context, `isSecureContext === false`,
+  `randomUUID === undefined`): Log Food opens, an item logs and persists to SQLite, and the
+  log-photo success *and* offline-failure paths both behave correctly.
+- `AppErrorBoundary` has not been triggered in a browser.
+- The flow audit KP asked for is **barely started.** Only the Track → Log food path was
+  walked. Plan, Meals, History, Trends, Purchases, Settings, backup/restore, weight, and
+  profile switching were not examined at all.
+
+**Findings raised but not yet acted on**
+
+- *Catalogue thumbnails fetch from `bbassets.com` at render time* — 51 requests on opening
+  the logger. This contradicts the project's own local-first rule ("no network at render
+  time"). They are `loading="lazy"` and only fall back to the drawn icon on `error`, so a
+  request that *hangs* (offline, or the Mini without internet) leaves blank white boxes
+  indefinitely rather than falling back. Worth either caching images locally or showing the
+  icon until the photo actually decodes.
+- *Sharing with KP's wife and trainer was not assessed.* Profiles separate diaries but do
+  not lock them; anyone on the tailnet can open any profile. That is recorded below as a
+  deliberate open item, but it has not been re-examined against an actual multi-person use
+  case, which is now the stated goal.
+
 ## §7 Known Issues and deferred scope
 
 | Item | State | Resolution point |
@@ -297,6 +374,8 @@ The 2026-08-21 full-repository lead review passed the production build, lint, de
 | Nandini and Epigamia seed entries rely on current label mirrors | Needs exact-pack confirmation | Reconcile barcode/variant and pack photo during cardIQ import before promotion |
 | 175 food purchase rows are deliberately not auto-linked | Open, enumerated | Exact Brand + Item + Variant/form + pack evidence was accepted for 18 titles. The complete unresolved list is generated in `data/UNMATCHED_CARDIQ_FOODS.md`; label photos, barcodes, or exact retailer IDs are the safe next input. |
 | Food photos cover 54 of 123 foods; 69 use drawn icons | Open, deliberately | Add a photo only after exact brand/product/variant/pack or raw/cooked form is visually confirmed. Unsafe automatic retailer/free-text sourcing stays retired. |
+| Catalogue thumbnails are fetched from `bbassets.com` while rendering | **Open, found 2026-08-30** | Contradicts the local-first rule that bans network at render time. 51 lazy image requests open with the logger; a hanging request never fires `error`, so the icon fallback never runs and the row shows a blank box. Cache the images locally, or show the drawn icon until the photo actually decodes. |
+| Any render error blanks the entire app | **Fixed 2026-08-30, unverified in browser** | `AppErrorBoundary` now catches it and offers a reload. Its absence is what turned the `randomUUID` bug into a total outage. Needs a live trigger to confirm. |
 | Main UI module and stylesheet are oversized | Architectural debt, worsening | `app/page.tsx` is now ~1,700 lines and `app/globals.css` ~1,000. Split by Plan/Track/product-area ownership before the next broad UI feature so one change does not require editing the whole screen. |
 | Legacy meal and schema compatibility paths have no deletion date | Architectural debt | Measure whether old schema-1/single-meal data still exists, document a sunset condition, then remove the compatibility branch only after a migration/backup checkpoint. |
 | Local canonical database | **Done 2026-08-23** | SQLite via `node:sqlite`, per-profile documents, 50-version server-side history, optimistic concurrency. Encrypted off-machine backup and a restore drill are still outstanding. |

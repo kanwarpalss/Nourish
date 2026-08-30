@@ -8,6 +8,7 @@ import {
   NUTRITION_BACKUP_STORAGE_KEY,
   emptyNutritionState,
   exportNutritionState,
+  isSafeImageUrl,
   mergeNutritionBackup,
   parseExportedNutritionState,
   parseSavedNutritionState,
@@ -214,4 +215,29 @@ test("backup parsing rejects impossible and future diary dates", () => {
   const restored = parseSavedNutritionState(raw);
   assert.deepEqual(restored.days, [aDay]);
   assert.ok(restored.rejected >= 2, "discarded diary days must be reported, not disappear silently");
+});
+
+/**
+ * Food photos KP takes himself are served from the diary database over a
+ * same-origin path with no scheme. `isSafeImageUrl` guards what reaches an
+ * <img src>, so it has to allow exactly that shape and nothing looser.
+ */
+test("a food photo path from the diary database is treated as safe", () => {
+  assert.equal(isSafeImageUrl("/api/nourish/diary/kp/food/abc123/photo"), true);
+  assert.equal(isSafeImageUrl("/api/nourish/diary/kp/food/abc123/photo?v=1724928000000"), true);
+});
+
+test("only the diary API's own paths are allowed without a scheme", () => {
+  assert.equal(isSafeImageUrl("/etc/passwd"), false);
+  assert.equal(isSafeImageUrl("/api/other/thing.png"), false);
+  assert.equal(isSafeImageUrl("//evil.example.com/x.png"), false);
+  // A traversal out of the API prefix must not be talked into passing.
+  assert.equal(isSafeImageUrl("/api/nourish/../../secret.png"), false);
+});
+
+test("javascript: and data: urls are still refused", () => {
+  assert.equal(isSafeImageUrl("javascript:alert(1)"), false);
+  assert.equal(isSafeImageUrl("data:image/png;base64,AAAA"), false);
+  assert.equal(isSafeImageUrl(""), false);
+  assert.equal(isSafeImageUrl(undefined), false);
 });

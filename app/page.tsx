@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { Component, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { isCardIqFoodImport, refineCardIqImport, type CardIqFoodImport } from "./cardiq-food";
 import { FoodIcon, foodIconKey } from "./food-icon";
+import { freshTrayId, freshUnique } from "./ids";
 import { addToTray, cloneUserMeal, createCustomFood, createUserMeal, forkFoodForEdit, getSingleItemKind, isOwnedFood, isUserMealNameValid, MAX_MEAL_NAME_LENGTH, mergeFoodCatalog, singleItemKindLabel, upsertUserMeal, userMealToNutritionItem, userMealTotals, type SingleItemKind, type TrayItem, type UserMeal } from "./logging-session";
 import { defaultCompositeItems, findComponentFood } from "./composite-foods";
 import { createProfile, deleteProfile as deleteRemoteProfile, describeSyncStatus, fetchProfiles, pullDiary, pushDiary, renameProfile, DEFAULT_PROFILE_ID, type DiaryProfile, type SyncStatus } from "./diary-sync";
-import { deleteLogPhoto, isSupportedPhotoFile, photoUrl, uploadLogPhoto, type LogPhotoMeta } from "./log-photos";
+import { deleteFoodPhoto, deleteLogPhoto, foodPhotoKeyFromUrl, isFoodPhotoUrl, isSupportedPhotoFile, photoUrl, uploadFoodPhoto, uploadLogPhoto, type LogPhotoMeta } from "./log-photos";
 import { clearAllUserData, emptyNutritionState, exportNutritionState, nutritionStorageKeys, withLogIds, getWeightTrendPoints, isSafeImageUrl, logsForDay, MAX_STORED_DAYS, mergeNutritionBackup, parseExportedNutritionState, parseSavedNutritionState, readStoredNutritionRaw, removeRecord, restoreRecord, upsertWeightEntry, withDayLogs, wouldDropOldestDay, writeStoredNutritionState, type RemovableKind, type RemovedRecord, type SavedLogEntry, type SavedNutritionState, type WeightEntry } from "./local-nutrition-state";
 import { DEFAULT_TARGETS, loggableMeals, recentDayKeys, resolveLoggedFood, summariseHistory, summariseTrend, type DaySummary } from "./day-history";
 import { estimateSatiety, getBangaloreClock, getBasisAmountForLogging, getEnergyRunway, getLoggingUnitLabel, getLoggingUnits, getQuantityLimit, hasNutritionTarget, isQuantityValid, matchesNutritionTarget, matchesRecipe, satietyLabel, scaleNutrition, scaleNutritionForUnit, sumLoggedNutrition, sumNutritionDetails, type DashboardClock, type NutritionTarget } from "./prototype-logic";
@@ -29,23 +30,6 @@ function toProfileId(name: string) {
   return slug ? `${slug}-${Math.random().toString(36).slice(2, 6)}` : `person-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-/**
- * crypto.randomUUID() only exists in a "secure context" (HTTPS, or the
- * browser's special-cased localhost). Nourish is reached over plain HTTP on
- * a private Tailscale IP by design (no public ingress, so no TLS) — every
- * real device hits an insecure context, and randomUUID silently doesn't
- * exist there. getRandomValues has no such restriction.
- */
-function randomHex(byteLength: number) {
-  const bytes = new Uint8Array(byteLength);
-  if (globalThis.crypto?.getRandomValues) globalThis.crypto.getRandomValues(bytes);
-  else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-function freshUnique() {
-  return randomHex(6);
-}
 
 const trackNav: Array<{ id: TrackView; label: string; icon: string }> = [
   { id: "today", label: "Today", icon: "●" },
@@ -676,7 +660,7 @@ function RecipeCard({ recipe, onOpen, onPlan }: { recipe: Recipe; onOpen: (recip
  * can create and correct foods without going through Track. One editing surface,
  * two doors into it — a second form would be a second set of validation rules.
  */
-function PlanFoodEditor({ initial, onClose, onSave }: { initial: Food | null; onClose: () => void; onSave: (food: Food, isNew: boolean) => void }) {
+function PlanFoodEditor({ initial, profileId, onClose, onSave }: { initial: Food | null; profileId: string; onClose: () => void; onSave: (food: Food, isNew: boolean) => void }) {
   const creating = initial === null;
   // Editing a researched food forks a personal copy rather than rewriting the
   // catalogue entry, which is what forkFoodForEdit already guarantees for Track.
@@ -690,6 +674,7 @@ function PlanFoodEditor({ initial, onClose, onSave }: { initial: Food | null; on
         </header>
         <div className="plan-food-dialog-body quantity-editor dark-card">
           <FoodDetailsEditor
+            profileId={profileId}
             draft={draft}
             setDraft={setDraft}
             draftIsNew={creating}
@@ -969,7 +954,7 @@ function PlanMealBuilder({ initial, catalog, dayKey, onClose, onSave }: {
             {choices.length > 0 ? (
               <div className="component-choices">
                 {choices.map((food) => (
-                  <button key={food.id} onClick={() => { setItems((current) => addToTray(current, food, randomHex(16))); setSearch(""); }}>
+                  <button key={food.id} onClick={() => { setItems((current) => addToTray(current, food, freshTrayId())); setSearch(""); }}>
                     <span>{foodLabel(food)}</span><small>{Math.round(food.calories)} kcal / {food.amount} {food.unit}</small><b>＋</b>
                   </button>
                 ))}
@@ -992,7 +977,79 @@ function getShownSingleItems(catalog: Food[], kind: "all" | SingleItemKind, sear
   });
 }
 
-function FoodDetailsEditor({ draft, setDraft, draftIsNew, saveToLibrary, setSaveToLibrary, onCancel, onSave, submitLabel }: {
+/**
+ * A picture for a food KP is adding himself.
+ *
+ * Pasting an `https://` link was the only way to do this until 2026-08-30,
+ * which is unusable on the phone where most items actually get added — there
+ * is no URL to paste for the packet in your hand. The camera comes first now;
+ * the link stays for the desktop case of copying a product shot.
+ *
+ * The photo is uploaded immediately under its own key, so it survives even if
+ * the food is renamed or its id changes on save, and is stored apart from meal
+ * photos so the 30-day sweep never strips it.
+ */
+function FoodPhotoField({ profileId, draft, setDraft }: { profileId: string; draft: Food; setDraft: React.Dispatch<React.SetStateAction<Food>> }) {
+  const [photoKey] = useState(() => foodPhotoKeyFromUrl(draft.imageUrl) ?? freshUnique());
+  const [status, setStatus] = useState<"idle" | "uploading" | "saved" | "error">("idle");
+  const [failureReason, setFailureReason] = useState("");
+  const [linkOpen, setLinkOpen] = useState(false);
+  const hasPhoto = Boolean(draft.imageUrl && isSafeImageUrl(draft.imageUrl));
+
+  const handlePick = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!isSupportedPhotoFile(file)) {
+      setFailureReason("That file type isn’t supported — use a JPEG, PNG or WebP.");
+      setStatus("error");
+      return;
+    }
+    setStatus("uploading");
+    const result = await uploadFoodPhoto(profileId, photoKey, file);
+    if (result.ok) {
+      // Cache-buster: the URL is unchanged when replacing a photo, so without it
+      // the browser keeps showing the old picture it already has.
+      setDraft((food) => ({ ...food, imageUrl: `${result.url}?v=${Date.now()}` }));
+      setFailureReason("");
+      setStatus("saved");
+    } else {
+      setFailureReason(result.reason);
+      setStatus("error");
+    }
+  };
+
+  const handleRemove = async () => {
+    if (isFoodPhotoUrl(draft.imageUrl?.split("?")[0])) await deleteFoodPhoto(profileId, photoKey);
+    setDraft((food) => ({ ...food, imageUrl: "" }));
+    setStatus("idle");
+    setFailureReason("");
+  };
+
+  return (
+    <div className="food-photo-field">
+      <span className="food-photo-label">Photo <small>optional</small></span>
+      <div className="food-photo-row">
+        {hasPhoto ? <span className="food-photo-preview"><img src={draft.imageUrl} alt="" /></span> : <span className="food-photo-preview empty" aria-hidden="true">🍽</span>}
+        <div className="food-photo-actions">
+          <label className="food-photo-button">
+            {hasPhoto ? "Replace photo" : "📷 Take or choose a photo"}
+            <input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={handlePick} />
+          </label>
+          {hasPhoto ? <button type="button" className="text-button" onClick={handleRemove}>Remove</button> : null}
+          <button type="button" className="text-button subtle" onClick={() => setLinkOpen((open) => !open)}>{linkOpen ? "Hide link field" : "or paste a link"}</button>
+        </div>
+      </div>
+      {linkOpen ? <input className="food-photo-link" value={draft.imageUrl ?? ""} onChange={(event) => { setDraft((food) => ({ ...food, imageUrl: event.target.value })); setStatus("idle"); }} placeholder="https:// link to a picture" /> : null}
+      {status === "uploading" ? <small className="photo-attach-status" role="status">Saving photo…</small> : null}
+      {status === "saved" ? <small className="photo-attach-status saved" role="status">✓ Photo saved to the Mac Mini</small> : null}
+      {status === "error" ? <small className="photo-attach-status error" role="alert">Photo not saved — {failureReason} The item itself is unaffected.</small> : null}
+    </div>
+  );
+}
+
+function FoodDetailsEditor({ profileId, draft, setDraft, draftIsNew, saveToLibrary, setSaveToLibrary, onCancel, onSave, submitLabel }: {
+  profileId: string;
   draft: Food;
   setDraft: React.Dispatch<React.SetStateAction<Food>>;
   draftIsNew: boolean;
@@ -1023,7 +1080,7 @@ function FoodDetailsEditor({ draft, setDraft, draftIsNew, saveToLibrary, setSave
     </div>
     <div className="nutrition-fields">{(["calories", "protein", "carbs", "fat", "fiber"] as const).map((field) => <label key={field}><span>{field === "fiber" ? "Fibre" : field.charAt(0).toUpperCase() + field.slice(1)}</span><div><input type="number" min="0" max="50000" step="0.1" value={draft[field]} onChange={(event) => setDraft((food) => ({ ...food, [field]: Number(event.target.value) }))} /><b>{field === "calories" ? "kcal" : "g"}</b></div></label>)}</div>
     {draftIsNew ? <label className="save-choice"><input type="checkbox" checked={saveToLibrary} onChange={(event) => setSaveToLibrary(event.target.checked)} /><span><strong>Save to Single Items for next time</strong><small>{saveToLibrary ? "It will be waiting here tomorrow." : "This one is used today only."}</small></span></label> : null}
-    <label className="photo-field"><span>Photo URL</span><input value={draft.imageUrl ?? ""} onChange={(event) => setDraft((food) => ({ ...food, imageUrl: event.target.value }))} placeholder="Optional https:// link to a picture" /></label>
+    <FoodPhotoField profileId={profileId} draft={draft} setDraft={setDraft} />
     <button className="button lime full" disabled={!isFoodDetailsValid(draft)} onClick={onSave}>{submitLabel}</button>
   </div>;
 }
@@ -1058,6 +1115,7 @@ function PhotoAttachControl({ profileId, logId, initialMeta, onChange }: { profi
   const [meta, setMeta] = useState<LogPhotoMeta | undefined>(initialMeta);
   const [localPreview, setLocalPreview] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "uploading" | "error">("idle");
+  const [failureReason, setFailureReason] = useState("");
   useEffect(() => () => { if (localPreview) URL.revokeObjectURL(localPreview); }, [localPreview]);
   if (!logId) return null;
   const handlePick = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -1065,6 +1123,7 @@ function PhotoAttachControl({ profileId, logId, initialMeta, onChange }: { profi
     event.target.value = "";
     if (!file) return;
     if (!isSupportedPhotoFile(file)) {
+      setFailureReason("That file type isn’t supported — use a JPEG, PNG or WebP.");
       setStatus("error");
       return;
     }
@@ -1076,9 +1135,17 @@ function PhotoAttachControl({ profileId, logId, initialMeta, onChange }: { profi
     const result = await uploadLogPhoto(profileId, logId, file);
     if (result.ok) {
       setStatus("idle");
+      setFailureReason("");
       setMeta(result.meta);
       onChange(result.meta);
     } else {
+      // The preview is cleared on failure on purpose. Leaving the picture on
+      // screen after a failed upload is the app quietly implying it saved.
+      setLocalPreview((previous) => {
+        if (previous) URL.revokeObjectURL(previous);
+        return null;
+      });
+      setFailureReason(result.reason);
       setStatus("error");
     }
   };
@@ -1107,8 +1174,11 @@ function PhotoAttachControl({ profileId, logId, initialMeta, onChange }: { profi
           <input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={handlePick} />
         </label>
       )}
-      {status === "error" ? <small className="photo-attach-status error">The photo didn’t save — the food itself is unaffected.</small> : null}
-      {status === "uploading" ? <small className="photo-attach-status">Saving photo…</small> : null}
+      {status === "error" ? <small className="photo-attach-status error" role="alert">Photo not saved — {failureReason} The food itself is unaffected; tap to try again.</small> : null}
+      {status === "uploading" ? <small className="photo-attach-status" role="status">Saving photo…</small> : null}
+      {/* The preview appears the instant a file is picked, so without this the
+          screen looks identical whether or not the upload actually landed. */}
+      {status === "idle" && meta ? <small className="photo-attach-status saved" role="status">✓ Photo saved to the Mac Mini · removed automatically after 30 days</small> : null}
     </div>
   );
 }
@@ -1192,7 +1262,7 @@ function FoodDialog({ initialFood, initialMeal, editing, editingLogId, catalog, 
       setDraftIsNew(false);
       setDetailsOpen(false);
       const ready = scaleNutritionForUnit(withConversions, withConversions.amount, withConversions.unit);
-      if (buildingMeal) setMealLines((lines) => addToTray(lines, ready, randomHex(16)));
+      if (buildingMeal) setMealLines((lines) => addToTray(lines, ready, freshTrayId()));
       else onAdd(ready, activeLogId ?? undefined);
       return;
     }
@@ -1223,7 +1293,7 @@ function FoodDialog({ initialFood, initialMeal, editing, editingLogId, catalog, 
   };
   const addMealLine = () => {
     if (!scaled || !quantityValid) return;
-    setMealLines((lines) => addToTray(lines, scaled, randomHex(16)));
+    setMealLines((lines) => addToTray(lines, scaled, freshTrayId()));
   };
   const saveBuiltMeal = () => {
     const meal = createUserMeal(mealName, mealLines, nextUnique(), dayKey);
@@ -1246,7 +1316,7 @@ function FoodDialog({ initialFood, initialMeal, editing, editingLogId, catalog, 
         <div className="food-dialog-body">
           <div className="food-results">{mode === "meals" && !buildingMeal ? <>{editing ? null : <button className="create-food-row" onClick={() => { setBuildingMeal(true); setSearch(""); setMealName(""); setMealLines([]); }}><span className="food-thumb icon create" aria-hidden="true">＋</span><span><strong>Create a Meal</strong><small>Group one or more Single Items for quick logging</small></span></button>}{shownMeals.map((meal) => { const totals = userMealTotals(meal); return <button className={visibleMealDraft?.id === meal.id ? "selected" : ""} key={meal.id} onClick={() => setMealDraft(cloneUserMeal(meal))}><span className="food-thumb icon meal" aria-hidden="true"><FoodIcon name="meal" /></span><span><strong>{meal.name}</strong><small>{meal.components.length} item{meal.components.length === 1 ? "" : "s"}</small></span><span><b>{Math.round(totals.calories)}</b><small>kcal</small></span><i>→</i></button>; })}{shownMeals.length === 0 ? <div className="food-results-empty"><strong>No Meal found</strong><span>Create one from your Single Items.</span></div> : null}</> : <>{editing ? null : <button className="create-food-row" onClick={startCreate}><span className="food-thumb icon create" aria-hidden="true">＋</span><span><strong>{search.trim() ? `Add “${search.trim()}” as a new Single Item` : "Add a new Single Item"}</strong><small>Packaged Food, Open Ingredient, or Ordered Food</small></span></button>}{shownItems.map((food) => <button className={selected?.id === food.id ? "selected" : ""} key={food.id} onClick={() => chooseFood(food)}><FoodThumb food={food} /><span><strong>{foodLabel(food)}</strong><small>{singleItemKindLabel(getSingleItemKind(food))} · {food.amount} {food.unit}</small></span><span><b>{Math.round(food.calories)}</b><small>kcal</small></span><i>→</i></button>)}{shownItems.length === 0 ? <div className="food-results-empty"><strong>No match yet</strong><span>Add it as a new Single Item without leaving this flow.</span></div> : null}</>}</div>
           {mode === "meals" && !buildingMeal ? (visibleMealDraft ? <MealEditor meal={visibleMealDraft} onChange={setMealDraft} onLog={() => { onAddMeal(visibleMealDraft, activeLogId ?? undefined); close(); }} buttonLabel={editing ? "Update today’s Meal" : "Log this Meal"} /> : <aside className="quantity-editor quantity-editor-empty dark-card"><span className="eyebrow bright">Meal</span><h3>{search.trim() ? "No Meal selected" : "Choose a Meal"}</h3><p>{search.trim() ? "Try a different Meal name or create a new one." : "Your saved Meals will appear here."}</p></aside>) : <aside className={`quantity-editor dark-card ${detailsOpen ? "details-mode" : ""} ${buildingMeal ? "meal-builder-mode" : ""}`}>
-            {detailsOpen ? <FoodDetailsEditor draft={draft} setDraft={setDraft} draftIsNew={draftIsNew} saveToLibrary={saveToLibrary} setSaveToLibrary={setSaveToLibrary} onCancel={() => { setDetailsOpen(false); setDraftIsNew(false); }} onSave={saveDetails} submitLabel={draftIsNew ? buildingMeal ? "Create & add to Meal" : "Create & log it" : "Save changes"} /> : selected && scaled ? <>
+            {detailsOpen ? <FoodDetailsEditor profileId={profileId} draft={draft} setDraft={setDraft} draftIsNew={draftIsNew} saveToLibrary={saveToLibrary} setSaveToLibrary={setSaveToLibrary} onCancel={() => { setDetailsOpen(false); setDraftIsNew(false); }} onSave={saveDetails} submitLabel={draftIsNew ? buildingMeal ? "Create & add to Meal" : "Create & log it" : "Save changes"} /> : selected && scaled ? <>
             <span className="eyebrow bright">Single Item</span><h3>{foodLabel(selected)}</h3><p>Choose weight, volume, or a natural unit. Nutrition stays on the same evidence-backed basis.</p>
             <label className="logging-unit-field"><span>Log by</span><select aria-label={`${selected.name} logging unit`} value={loggingUnit} onChange={(event) => { const unit = event.target.value as NutritionUnit; setLoggingUnit(unit); setQuantity(unit === (selected.basis?.unit ?? selected.unit) ? (selected.basis?.amount ?? selected.amount) : 1); }}>{getLoggingUnits(selected).map((unit) => <option value={unit} key={unit}>{unit === (selected.basis?.unit ?? selected.unit) ? unit : `${unit} · ${getLoggingUnitLabel(selected, unit)}`}</option>)}</select></label>
             <div className="quantity-control"><button onClick={() => setQuantity((value) => Math.max(step, Number((value - step).toFixed(2))))} aria-label={`Decrease ${selected.name} quantity`}>−</button><label><input type="number" min={step} max={maxQuantity} step={step} value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} aria-label={`${selected.name} quantity`} /><span>{loggingUnit}</span></label><button onClick={() => setQuantity((value) => Math.min(maxQuantity, Number((value + step).toFixed(2))))} aria-label={`Increase ${selected.name} quantity`}>＋</button></div>
@@ -1443,7 +1513,52 @@ type PendingUndo =
   | { kind: "log"; dayKey: string; entry: SavedLogEntry; index: number }
   | { kind: "record"; record: RemovedRecord };
 
+/**
+ * The last line of defence between a rendering bug and a blank white screen.
+ *
+ * On 2026-08-30 a single call to an API that does not exist outside a secure
+ * context took down the entire app: no message, no recovery, just a blank page
+ * on every phone. React unmounts the whole tree when a render throws and
+ * nothing catches it, so the *absence* of this boundary is what turned a small
+ * bug into a total outage.
+ *
+ * It deliberately does not try to be clever. It says what happened in plain
+ * English, states that logged food is safe (it is — the diary is written to
+ * storage and the Mac Mini as it happens, not on unmount), and offers a reload.
+ */
+class AppErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error) {
+    // The only place this is recoverable from, so it must never be swallowed.
+    console.error("[nourish] the app stopped rendering:", error);
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div className="app-crash" role="alert">
+        <div className="app-crash-card">
+          <span className="eyebrow">Nourish hit a problem</span>
+          <h1>Something on this screen stopped working.</h1>
+          <p>Your logged food is safe — every entry is saved as you add it, on this device and on the Mac Mini. Nothing has been lost.</p>
+          <p className="app-crash-detail">{this.state.error.message}</p>
+          <button className="button lime full" onClick={() => window.location.reload()}>Reload Nourish</button>
+        </div>
+      </div>
+    );
+  }
+}
+
 export default function Home() {
+  return <AppErrorBoundary><NourishApp /></AppErrorBoundary>;
+}
+
+function NourishApp() {
   const [clock, setClock] = useState(() => getBangaloreClock(new Date()));
   const [area, setArea] = useState<Area>("track");
   const [trackView, setTrackView] = useState<TrackView>("today");
@@ -1934,7 +2049,7 @@ export default function Home() {
       {foodDialog ? <FoodDialog initialFood={foodDialogSelection} initialMeal={foodDialogMealSelection} editing={editingFoodIndex !== null} editingLogId={editingFoodIndex !== null ? entries[editingFoodIndex]?.logId ?? null : null} catalog={foodCatalog} meals={logMeals} dayKey={clock.dayKey} profileId={profileId} photoIndex={photoIndex} onClose={() => { setFoodDialog(false); setFoodDialogSelection(null); setFoodDialogMealSelection(null); setEditingFoodIndex(null); }} onAdd={addFood} onAddMeal={addMeal} onSaveFood={saveCustomFood} onSaveMeal={saveUserMeal} onPhotoChange={updatePhotoIndex} /> : null}
       <RecipeDrawer recipe={recipe} onClose={() => setRecipe(null)} onPlan={addMealToPlan} />
       {settingsOpen ? <SettingsPanel state={saved} dayKey={clock.dayKey} onClose={() => setSettingsOpen(false)} onImport={importBackup} onClearAll={clearEverything} profiles={profiles} profileId={profileId} activeProfile={activeProfile} syncStatus={syncStatus} onSwitchProfile={switchProfile} onAddProfile={addProfile} onRenameProfile={renameActiveProfile} onRemoveProfile={removeProfile} /> : null}
-      {planFoodEditor ? <PlanFoodEditor initial={planFoodEditor.initial} onClose={() => setPlanFoodEditor(null)} onSave={savePlanFood} /> : null}
+      {planFoodEditor ? <PlanFoodEditor initial={planFoodEditor.initial} profileId={profileId} onClose={() => setPlanFoodEditor(null)} onSave={savePlanFood} /> : null}
       {planMealBuilder ? <PlanMealBuilder initial={planMealBuilder.initial} catalog={foodCatalog} dayKey={clock.dayKey} onClose={() => setPlanMealBuilder(null)} onSave={(meal) => { saveUserMeal(meal); setPlanMealBuilder(null); }} /> : null}
       <div className={`toast ${toast ? "visible" : ""}`} role="status" aria-live="polite"><i>✓</i><span>{toast}</span>{toast.includes("tap Undo") ? <button className="toast-undo" onClick={undoDelete}>Undo</button> : null}</div>
     </div>

@@ -246,6 +246,11 @@ function parseFood(value: unknown): NutritionItem | null {
  */
 export function isSafeImageUrl(value: unknown): value is string {
   if (typeof value !== "string" || value.length > 2000) return false;
+  // A photo KP took of his own food is stored on the diary database and
+  // referenced by this same-origin path. It has no scheme or host, so it must
+  // be allowed explicitly — `new URL()` below would reject it. Anchored to the
+  // API prefix and free of "..", so it can only ever point back at the diary.
+  if (value.startsWith("/api/nourish/")) return !value.includes("..");
   try {
     const url = new URL(value);
     return url.protocol === "https:" || url.protocol === "http:";

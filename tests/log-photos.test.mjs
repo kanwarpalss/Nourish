@@ -172,3 +172,89 @@ test("failure injection: a sweep that forgets to delete the file would leave sto
     assert.equal(fs.readdirSync(photosDir).length, 0, "the file, not just the database row, must be gone — this is the entire point of a bounded sweep");
   });
 });
+
+/**
+ * A food photo is catalogue data, not evidence of one meal. These tests exist
+ * because the obvious implementation — reusing the log_photos table — would
+ * have let the 30-day sweep silently strip pictures off items KP added months
+ * earlier, and nothing else in the suite would have noticed.
+ */
+test("a food photo round-trips its exact bytes", async () => {
+  await withService(async ({ call }) => {
+    const bytes = jpegBytes();
+    const uploaded = await call("PUT", "/diary/kp/food/oats-1/photo", bytes, { "content-type": "image/jpeg" });
+    assert.equal(uploaded.status, 200);
+    assert.equal(uploaded.body.mimeType, "image/jpeg");
+
+    const fetched = await call("GET", "/diary/kp/food/oats-1/photo");
+    assert.equal(fetched.status, 200);
+    assert.deepEqual(fetched.buffer, bytes);
+  });
+});
+
+test("the 30-day sweep never removes a food photo, however old", async () => {
+  await withService(async ({ store, call }) => {
+    store.saveFoodPhoto("kp", "oats-1", jpegBytes(), "image/jpeg");
+    store.savePhoto("kp", "lunch-1", jpegBytes(), "image/jpeg");
+
+    // A cutoff in the future expires everything the sweep is allowed to touch.
+    const removed = store.sweepExpiredPhotos(-1);
+
+    assert.equal(removed, 1, "only the meal photo is the sweep's business");
+    assert.deepEqual(store.listPhotos("kp"), {}, "the meal photo should be gone");
+    const survivor = await call("GET", "/diary/kp/food/oats-1/photo");
+    assert.equal(survivor.status, 200, "a food's own picture must outlive the meal-photo sweep");
+  });
+});
+
+test("a food photo and a log photo with the same id never overwrite each other", async () => {
+  await withService(async ({ call }) => {
+    const foodBytes = Buffer.from([0x01, 0x02, 0x03, 0x04]);
+    const logBytes = Buffer.from([0x09, 0x08, 0x07, 0x06]);
+    await call("PUT", "/diary/kp/food/same-id/photo", foodBytes, { "content-type": "image/jpeg" });
+    await call("PUT", "/diary/kp/log/same-id/photo", logBytes, { "content-type": "image/jpeg" });
+
+    assert.deepEqual((await call("GET", "/diary/kp/food/same-id/photo")).buffer, foodBytes);
+    assert.deepEqual((await call("GET", "/diary/kp/log/same-id/photo")).buffer, logBytes);
+  });
+});
+
+test("replacing a food photo leaves no orphan file behind", async () => {
+  await withService(async ({ call, store }) => {
+    await call("PUT", "/diary/kp/food/oats-1/photo", jpegBytes(), { "content-type": "image/jpeg" });
+    const replacement = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d]);
+    await call("PUT", "/diary/kp/food/oats-1/photo", replacement, { "content-type": "image/png" });
+
+    const photosDir = path.join(path.dirname(store.path), "photos");
+    assert.equal(fs.readdirSync(photosDir).length, 1, "the replaced .jpg must not linger");
+    assert.deepEqual((await call("GET", "/diary/kp/food/oats-1/photo")).buffer, replacement);
+  });
+});
+
+test("a food photo is rejected when it is not an image type", async () => {
+  await withService(async ({ call }) => {
+    const refused = await call("PUT", "/diary/kp/food/oats-1/photo", Buffer.from("nope"), { "content-type": "application/pdf" });
+    assert.equal(refused.status, 400);
+    assert.equal((await call("GET", "/diary/kp/food/oats-1/photo")).status, 404);
+  });
+});
+
+test("deleting a food photo is idempotent and actually removes the file", async () => {
+  await withService(async ({ call, store }) => {
+    await call("PUT", "/diary/kp/food/oats-1/photo", jpegBytes(), { "content-type": "image/jpeg" });
+    const photosDir = path.join(path.dirname(store.path), "photos");
+
+    assert.equal((await call("DELETE", "/diary/kp/food/oats-1/photo")).status, 200);
+    assert.equal(fs.readdirSync(photosDir).length, 0);
+    assert.equal((await call("DELETE", "/diary/kp/food/oats-1/photo")).status, 200, "deleting twice must not fail");
+  });
+});
+
+test("a food photo over the size limit is refused rather than truncated", async () => {
+  await withService(async ({ call }) => {
+    const tooBig = Buffer.alloc(MAX_PHOTO_BYTES + 1024, 0x41);
+    const refused = await call("PUT", "/diary/kp/food/oats-1/photo", tooBig, { "content-type": "image/jpeg" });
+    assert.equal(refused.status, 413);
+    assert.equal((await call("GET", "/diary/kp/food/oats-1/photo")).status, 404, "a refused upload must leave nothing behind");
+  });
+});

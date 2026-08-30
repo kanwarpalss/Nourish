@@ -179,6 +179,58 @@ export function createDiaryHandler(store) {
             return true;
           }
         }
+        // A photo belonging to a food in KP's own catalogue, not to one meal.
+        // Same shape as the log photo above, but never swept — see saveFoodPhoto.
+        if (segments[2] === "food" && segments[3] && segments[4] === "photo" && segments.length === 5) {
+          const foodId = segments[3];
+          if (!isValidLogId(foodId)) {
+            send(response, 400, { error: "Not a usable food id." });
+            return true;
+          }
+          if (method === "PUT") {
+            const contentType = (request.headers["content-type"] ?? "").split(";")[0].trim();
+            if (!isSupportedPhotoMimeType(contentType)) {
+              send(response, 400, { error: "Photos must be JPEG, PNG or WebP." });
+              return true;
+            }
+            let buffer;
+            try {
+              buffer = await readBinaryBody(request, PHOTO_BODY_LIMIT);
+            } catch (error) {
+              if (error instanceof Error && error.message === "body-too-large") {
+                send(response, 413, { error: "That photo is too large." });
+                return true;
+              }
+              throw error;
+            }
+            const result = store.saveFoodPhoto(profileId, foodId, buffer, contentType);
+            if (!result.ok) {
+              send(response, result.reason === "too-large" ? 413 : 400, { error: result.reason === "too-large" ? "That photo is too large." : "Not a usable photo." });
+              return true;
+            }
+            send(response, 200, { mimeType: result.mimeType, createdAt: result.createdAt });
+            return true;
+          }
+          if (method === "GET") {
+            const photo = store.getFoodPhoto(profileId, foodId);
+            if (!photo) {
+              send(response, 404, { error: "No photo for that food." });
+              return true;
+            }
+            response.writeHead(200, {
+              "content-type": photo.mimeType,
+              "content-length": photo.buffer.length,
+              "cache-control": "private, max-age=86400",
+            });
+            response.end(photo.buffer);
+            return true;
+          }
+          if (method === "DELETE") {
+            store.deleteFoodPhoto(profileId, foodId);
+            send(response, 200, { deleted: true });
+            return true;
+          }
+        }
         if (segments.length === 2 && method === "PUT") {
           const body = await readJsonBody(request);
           if (!body || typeof body !== "object" || typeof body.baseRevision !== "number" || !body.state || typeof body.state !== "object") {

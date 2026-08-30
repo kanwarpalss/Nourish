@@ -852,6 +852,32 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .photo-field { display: grid; gap: 5px; margin-top: 10px; }
 .photo-field input { height: 38px; padding: 0 11px; border: 0; border-radius: 10px; background: white; }
 
+/* A food's own picture. Camera-first, because most items are added on the phone
+   with the packet in hand and no link to paste. */
+.food-photo-field { display: grid; gap: 7px; margin-top: 10px; }
+.food-photo-label { color: #c1cbc4; font-size: 9px; font-weight: 750; text-transform: uppercase; letter-spacing: 0.06em; }
+.food-photo-label small { margin-left: 5px; color: #8f9c94; font-size: 9px; font-weight: 600; text-transform: none; letter-spacing: 0; }
+.food-photo-row { display: flex; align-items: center; gap: 11px; }
+.food-photo-preview { flex: 0 0 auto; display: grid; place-items: center; width: 56px; height: 56px; overflow: hidden; border-radius: 12px; background: rgb(255 255 255 / 0.08); }
+.food-photo-preview img { width: 100%; height: 100%; object-fit: cover; }
+.food-photo-preview.empty { border: 1px dashed rgb(255 255 255 / 0.24); font-size: 20px; }
+.food-photo-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.food-photo-button { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 14px; border: 1px dashed rgb(255 255 255 / 0.28); border-radius: 11px; color: #d5ded8; background: transparent; font-size: 10px; font-weight: 750; cursor: pointer; }
+.food-photo-button input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; }
+.food-photo-actions .text-button { color: var(--lime); font-size: 10px; }
+.food-photo-actions .text-button.subtle { color: #8f9c94; font-weight: 650; }
+.food-photo-link { height: 38px; padding: 0 11px; border: 0; border-radius: 10px; background: white; font-size: 11px; }
+.photo-attach-status.saved { color: var(--lime); }
+
+/* Shown only when the app itself has failed to render. Deliberately plain and
+   self-contained: it must not depend on anything that might be what broke. */
+.app-crash { display: grid; place-items: center; min-height: 100dvh; padding: 24px; background: var(--paper); }
+.app-crash-card { display: grid; gap: 12px; width: min(460px, 100%); padding: 26px; border-radius: 20px; background: var(--ink); text-align: left; }
+.app-crash-card h1 { margin: 0; color: white; font-size: 22px; line-height: 1.25; }
+.app-crash-card p { margin: 0; color: #c1cbc4; font-size: 12px; line-height: 1.55; }
+.app-crash-detail { padding: 9px 11px; border-radius: 9px; background: rgb(255 255 255 / 0.06); color: #8f9c94 !important; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px !important; word-break: break-word; }
+.app-crash-card .button { margin-top: 4px; }
+
 /* Plan-side food creation and editing. Reuses the logger's FoodDetailsEditor,
    which is styled for a dark card, so the dialog body keeps that surface. */
 .plan-food-dialog { width: min(560px, 100%); }

@@ -93,6 +93,20 @@ export function openDiaryStore(databasePath = defaultDatabasePath()) {
       created_at TEXT NOT NULL,
       PRIMARY KEY (profile_id, log_id)
     );
+    -- Deliberately NOT log_photos. A photo of the meal you ate is evidence that
+    -- ages out after 30 days; a photo of a food you added to your catalogue is
+    -- part of that food and must last as long as the food does. Sharing one
+    -- table would mean the 30-day sweep silently stripped pictures off items
+    -- KP created months ago.
+    CREATE TABLE IF NOT EXISTS food_photos (
+      profile_id TEXT NOT NULL,
+      food_id TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      byte_size INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (profile_id, food_id)
+    );
   `);
 
   const statements = {
@@ -122,6 +136,12 @@ export function openDiaryStore(databasePath = defaultDatabasePath()) {
     deletePhotoRow: db.prepare("DELETE FROM log_photos WHERE profile_id = ? AND log_id = ?"),
     listPhotoRows: db.prepare("SELECT log_id, mime_type, created_at FROM log_photos WHERE profile_id = ?"),
     listExpiredPhotos: db.prepare("SELECT profile_id, log_id, file_name FROM log_photos WHERE created_at < ?"),
+    getFoodPhotoRow: db.prepare("SELECT file_name, mime_type, created_at FROM food_photos WHERE profile_id = ? AND food_id = ?"),
+    upsertFoodPhotoRow: db.prepare(`
+      INSERT INTO food_photos (profile_id, food_id, file_name, mime_type, byte_size, created_at) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT (profile_id, food_id) DO UPDATE SET file_name = excluded.file_name, mime_type = excluded.mime_type, byte_size = excluded.byte_size, created_at = excluded.created_at
+    `),
+    deleteFoodPhotoRow: db.prepare("DELETE FROM food_photos WHERE profile_id = ? AND food_id = ?"),
   };
 
   const now = () => new Date().toISOString();
@@ -260,7 +280,48 @@ export function openDiaryStore(databasePath = defaultDatabasePath()) {
       return result;
     },
 
-    /** Bounds photo storage to roughly a month of logging, regardless of how many profiles use this database. */
+    /**
+     * A picture of a food KP added to his own catalogue. Kept for as long as the
+     * food exists — never swept — because it identifies the item rather than
+     * recording a single meal.
+     */
+    saveFoodPhoto(profileId, foodId, buffer, mimeType) {
+      if (!isSupportedPhotoMimeType(mimeType)) return { ok: false, reason: "unsupported-type" };
+      if (buffer.length > MAX_PHOTO_BYTES) return { ok: false, reason: "too-large" };
+      const existing = statements.getFoodPhotoRow.get(profileId, foodId);
+      if (existing) {
+        const oldPath = path.join(photosDir, existing.file_name);
+        if (fs.existsSync(oldPath)) fs.rmSync(oldPath);
+      }
+      const fileName = `${profileId}__food__${foodId}.${PHOTO_MIME_EXTENSIONS[mimeType]}`;
+      fs.writeFileSync(path.join(photosDir, fileName), buffer);
+      const createdAt = now();
+      statements.upsertFoodPhotoRow.run(profileId, foodId, fileName, mimeType, buffer.length, createdAt);
+      return { ok: true, mimeType, createdAt };
+    },
+
+    getFoodPhoto(profileId, foodId) {
+      const row = statements.getFoodPhotoRow.get(profileId, foodId);
+      if (!row) return null;
+      const filePath = path.join(photosDir, row.file_name);
+      if (!fs.existsSync(filePath)) return null;
+      return { buffer: fs.readFileSync(filePath), mimeType: row.mime_type, createdAt: row.created_at };
+    },
+
+    deleteFoodPhoto(profileId, foodId) {
+      const row = statements.getFoodPhotoRow.get(profileId, foodId);
+      if (!row) return false;
+      const filePath = path.join(photosDir, row.file_name);
+      if (fs.existsSync(filePath)) fs.rmSync(filePath);
+      statements.deleteFoodPhotoRow.run(profileId, foodId);
+      return true;
+    },
+
+    /**
+     * Bounds photo storage to roughly a month of logging, regardless of how many
+     * profiles use this database. Reads log_photos only — food_photos is catalogue
+     * data and is intentionally out of its reach.
+     */
     sweepExpiredPhotos(maxAgeDays = 30) {
       const cutoff = new Date(Date.now() - maxAgeDays * 24 * 60 * 60 * 1000).toISOString();
       const expired = statements.listExpiredPhotos.all(cutoff);
