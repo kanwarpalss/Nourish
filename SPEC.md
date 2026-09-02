@@ -553,8 +553,9 @@ service, household diary, commit, push or deployment action has occurred.
 
 Checkpoint B's claims were re-verified rather than trusted: `npm test` reproduced **209
 passing checks** and `npm run lint` passed. The browser walk then ran against a disposable
-SQLite database on an isolated preview port, never port 4317, the live service, or the
-household diary.
+SQLite database in an isolated MacBook preview process, never the live service or the
+household diary. (The preview used the then-current port; Nourish moved to 3902/3903 later
+that day.)
 
 1. **Undo was completely unclickable — found and fixed here.** `.toast` is
    `pointer-events: none` so the toast never blocks the page beneath it, but that value is
@@ -707,8 +708,9 @@ KP physically there.
    shares the `mac-mini` node with his wife. These need his logins; they are steps 1–5
    of the architecture doc.
 2. Build the fleet: Caddy front door on port 80, one launchd service per app, a shared
-   port registry in AI HQ, and the launcher page. Port map: Nourish 4317 (front door)
-   → vinext 4316 internal, cardIQ 3128, Wealth 8000, alug 4173, Watch Book 4400 proposed.
+   port registry in AI HQ, and the launcher page. Current port map after the 2026-09-02
+   migration: Nourish 3902 (front door) → vinext 3903 internal, cardIQ 3128, Wealth 8000,
+   alug 4173, Watch Book 4400 proposed.
 3. Publish a Nourish release on the Mini and confirm the diary API answers there —
    the front door has only been proven on this MacBook.
 
@@ -739,10 +741,10 @@ The next foundation phase remains backed-up local persistence and exact product 
 
 ## §10 Deployment
 
-Target deployment is the always-on Mac Mini, not a public cloud product. The named service is `com.kanwar.nourish` and its dedicated port is **4317**. The service never selects a fallback port: if 4317 is already occupied, it exits with a clear error so the conflicting application can be fixed.
+Target deployment is the always-on Mac Mini, not a public cloud product. The named service is `com.kanwar.nourish`; its public front door is **3902** and vinext stays loopback-only on **3903**. The service never selects a fallback port: if 3902 is already occupied, it exits with a clear error so the conflicting application can be fixed.
 
 - Application: `launchd` service using `ops/com.kanwar.nourish.plist`, with `RunAtLoad`, restart after failure, and a 10-second restart throttle.
-- Address: `http://localhost:4317` on each Mac. The shared launcher pulls the latest public GitHub `main` checkout before opening the local app.
+- Address: `http://localhost:3902` on each Mac. The shared launcher pulls the latest public GitHub `main` checkout before opening the local app.
 - Database: local SQLite in a private ignored directory; WAL mode and foreign keys enabled.
 - Access: private network/Tailscale only, with no public ingress.
 - Backups: encrypted, versioned daily snapshots with retention and a scheduled restore test.

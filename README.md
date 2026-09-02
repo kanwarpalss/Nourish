@@ -35,7 +35,7 @@ Nourish always uses port **3902**. It will stop with a plain-English error if an
 
 ## Launch from any Mac
 
-The iCloud-synced `nourish` and `health` terminal commands clone or fast-forward the local checkout from GitHub `main`, refresh dependencies only when the release changed, start Nourish on port 3902, and open it. This works on the Mac Mini and any other Mac that signs into KP’s iCloud aliases and has Git plus Node 22.13 or newer. Each Mac keeps its browser-local food diary separately until the shared local-database phase is built.
+The iCloud-synced `nourish` and `health` terminal commands clone or fast-forward the local checkout from GitHub `main`, refresh dependencies only when the release changed, start Nourish on port 3902, and open it. This works on the Mac Mini and any other Mac that signs into KP’s iCloud aliases and has Git plus Node 22.13 or newer. The Mac Mini SQLite diary is the shared durable copy; each browser also keeps a local working copy for offline resilience.
 
 ## Always-on Mac Mini
 

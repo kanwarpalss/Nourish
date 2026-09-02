@@ -53,7 +53,7 @@ House rules that are actually enforced in review:
 
 ## Deploying
 
-The Mac Mini runs the `launchd` service `com.kanwar.nourish` on **port 4317** — this
+The Mac Mini runs the `launchd` service `com.kanwar.nourish` on **port 3902** — this
 project is the exception to the usual pm2 rule. `npm run release` is the only sanctioned
 deploy: it builds, snapshots, swaps, restarts, verifies the live page and every asset, and
 rolls back automatically. `git push` alone is not a deploy.
@@ -66,7 +66,7 @@ instance on 2026-08-29.
 
 Full list in `.claude/CLAUDE.md`. The ones most easily broken by accident:
 
-- Port 4317 only, no fallback. 4316 is internal and never exposed.
+- Port 3902 only, no fallback. 3903 is internal and never exposed.
 - Never show a guessed macro as if it were known; every displayed value carries its
   provenance tier. A missing number beats a wrong one.
 - Never claim something saved to the Mac Mini unless the write actually succeeded — and
