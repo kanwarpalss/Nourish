@@ -130,14 +130,16 @@ export async function checkNourishHealth(baseUrl = DEFAULT_BASE_URL) {
   return { healthy: problems.length === 0, problems, assetsChecked: checked.size };
 }
 
+export function healthyMessage(baseUrl, assetsChecked) {
+  return `Nourish is healthy — its page and all ${assetsChecked} of its code files load correctly at ${baseUrl}`;
+}
+
 async function main() {
   const baseUrl = process.argv[2] ?? DEFAULT_BASE_URL;
   const report = await checkNourishHealth(baseUrl);
 
   if (report.healthy) {
-    console.log(
-      `Nourish is healthy — its page and all ${report.assetsChecked} of its code files load correctly at http://localhost:3902`,
-    );
+    console.log(healthyMessage(baseUrl, report.assetsChecked));
     return;
   }
 

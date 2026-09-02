@@ -11,10 +11,17 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 
-import { checkNourishHealth } from "../scripts/health.mjs";
+import { checkNourishHealth, healthyMessage } from "../scripts/health.mjs";
 
 const ENTRY = "/assets/index-TESTHASH.js";
 const LAZY = "/assets/lazy-CHUNKHASH.js";
+
+test("the success message names the address that was actually checked", () => {
+  const tailscaleUrl = "http://100.81.29.11:3902";
+  const message = healthyMessage(tailscaleUrl, 6);
+  assert.match(message, new RegExp(tailscaleUrl.replaceAll(".", "\\.")));
+  assert.doesNotMatch(message, /localhost/);
+});
 
 function pageHtml(assetPath = ENTRY) {
   return `<!doctype html><html><head><link rel="modulepreload" href="${assetPath}"></head><body><div id="root">Nourish</div><script type="module" src="${assetPath}"></script></body></html>`;

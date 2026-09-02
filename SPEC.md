@@ -620,6 +620,30 @@ service was not restarted. Local `main` is clean at `ba84471` and five commits a
 `npm run release`, and run a final live health + real hit-test at
 `http://100.81.29.11:3902`. Do not deploy the older remote tip and do not force-push.
 
+**Checkpoint E — 2026-09-02, production release completed; final diagnostic micro-fix pending**
+
+The ordinary push succeeded on retry with no force: GitHub `main`, the MacBook checkout,
+and the clean Mac Mini checkout all reached `fc604a5`. The Mac Mini's guarded
+`npm run release` built and froze `releases/2026-09-02T15-18-15-052Z`, switched the
+`com.kanwar.nourish` LaunchAgent, and loaded the live page plus all six referenced code
+assets. A second health check from the MacBook reached `http://100.81.29.11:3902`; port
+4317 refused connections as intended. Launchd reported the service running and `lsof`
+reported Node listening on `*:3902`.
+
+The live browser loaded the dashboard from the Tailscale HTTP origin with no console errors.
+It was deliberately kept read-only: surfacing the transient Undo button requires a real
+diary mutation, so the household diary was not changed merely to repeat the already-passing
+desktop and 375px pointer hit-tests from Checkpoint C. The live asset check confirms that
+the released stylesheet contains that correction.
+
+One honest diagnostic flaw surfaced: `scripts/health.mjs` checked the supplied Tailscale URL
+but its success sentence always printed `localhost`. The local correction now prints the
+address actually checked and has a regression test. The complete suite passes **210 checks**
+(50 JavaScript/render/service + 160 TypeScript) and lint is clean. This two-file micro-fix
+is the only unreleased work at this checkpoint; commit it, push normally, fast-forward the
+clean Mini, run `npm run release`, repeat the external health check, then replace this
+paragraph with the final release evidence.
+
 ## §7 Known Issues and deferred scope
 
 | Item | State | Resolution point |
