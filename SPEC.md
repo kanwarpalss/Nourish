@@ -590,9 +590,35 @@ during this checkpoint.
 
 **Still open after Checkpoint C**
 
-- The final cold review has not been done.
-- Backup restore, full reset, profile creation/switching and the physical photo file-picker
-  still require action-time approval and remain manually unexercised.
+- Backup restore, full reset and profile creation/switching remain manually unexercised.
+- A real file chooser successfully uploaded and saved a food photo against the disposable
+  MacBook database. The cancel/backdrop branch still relies on its source and server
+  regressions rather than a second destructive browser exercise.
+
+**Checkpoint D — 2026-09-02, port merge complete; release stopped at GitHub**
+
+The current `main` branch now contains the complete Full Control pass and the independently
+prepared port migration from `origin/main`: public front door **3902**, loopback vinext
+**3903**. One merge conflict occurred in a Settings comment because the remote branch still
+described the pre-SQLite browser-only diary; resolution kept the current shared-database
+truth. Merge commit: `23cf93b`. Port/handoff corrections: `ba84471`.
+
+After that merge, the full `npm test` command completed with **209 passing checks** and
+`npm run lint` completed cleanly. The shared `claim-gate` and `sync-agents` executables could
+not be opened by macOS Python (`Operation not permitted`), so the direct command evidence is
+current but no claim-gate record was written. `AGENTS.md` was aligned manually with its
+already-updated `.claude/CLAUDE.md` source so no future agent is sent back to 4317/4316.
+
+`git push origin main` was attempted normally and GitHub rejected it with an **Internal
+Server Error** (request `E434:11EC0A:E9859E:F64FF8:6A983417`). Per the explicit ship plan,
+there was no force push and no speculative retry. The Mac Mini was not contacted and the live
+service was not restarted. Local `main` is clean at `ba84471` and five commits ahead of
+`origin/main` (`994bc4b`).
+
+**Exact resume point:** confirm GitHub is accepting writes, run the ordinary
+`git push origin main`, then SSH to the Mac Mini, pull `main`, run the sanctioned
+`npm run release`, and run a final live health + real hit-test at
+`http://100.81.29.11:3902`. Do not deploy the older remote tip and do not force-push.
 
 ## §7 Known Issues and deferred scope
 
@@ -607,8 +633,8 @@ during this checkpoint.
 | 175 food purchase rows are deliberately not auto-linked | Open, enumerated | Exact Brand + Item + Variant/form + pack evidence was accepted for 18 titles. The complete unresolved list is generated in `data/UNMATCHED_CARDIQ_FOODS.md`; label photos, barcodes, or exact retailer IDs are the safe next input. |
 | Food photos cover 54 of 123 foods; 69 use drawn icons | Open, deliberately | Add a photo only after exact brand/product/variant/pack or raw/cooked form is visually confirmed. Unsafe automatic retailer/free-text sourcing stays retired. |
 | Browser file-picker acceptance for food-photo cancel/backdrop cleanup | Deferred safely | Uploading a local file requires action-time approval. Source and server regressions cover the cleanup; perform one manual disposable-database acceptance pass before a release that changes this area again. |
-| Full Control UX/data-safety pass | **Implementation complete; final validation in progress 2026-09-02** | Checkpoints A–B record the audit and repairs. Complete lint, a disposable-database browser walk, and the final cold review in Checkpoint C before release. |
-| Catalogue thumbnails are fetched from `bbassets.com` while rendering | **Resolved in working tree 2026-09-02; browser validation pending** | Catalogue cards now auto-load only bundled or Nourish-managed photos and otherwise use the drawn icon. Third-party retailer URLs remain useful as source metadata but do not run at render time. |
+| Full Control UX/data-safety pass | **Complete locally; release blocked at GitHub 2026-09-02** | Checkpoints A–D record the audit, repairs, adversarial tests and browser pass. The merged tree has 209 passing checks and clean lint; push/release resume instructions are in Checkpoint D. |
+| Catalogue thumbnails are fetched from `bbassets.com` while rendering | **Resolved and browser-checked 2026-09-02** | Catalogue cards auto-load only bundled or Nourish-managed photos and otherwise use the drawn icon. Opening the logger on insecure HTTP produced zero third-party image requests. |
 | Any render error blanks the entire app | **Fixed 2026-08-30, unverified in browser** | `AppErrorBoundary` now catches it and offers a reload. Its absence is what turned the `randomUUID` bug into a total outage. Needs a live trigger to confirm. |
 | Main UI module and stylesheet are oversized | Architectural debt, worsening | `app/page.tsx` is now ~1,700 lines and `app/globals.css` ~1,000. Split by Plan/Track/product-area ownership before the next broad UI feature so one change does not require editing the whole screen. |
 | Legacy meal and schema compatibility paths have no deletion date | Architectural debt | Measure whether old schema-1/single-meal data still exists, document a sunset condition, then remove the compatibility branch only after a migration/backup checkpoint. |
