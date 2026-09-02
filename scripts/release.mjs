@@ -142,7 +142,7 @@ const report = await waitForHealth();
 
 if (report.healthy) {
   step(`Nourish is live and healthy — page plus all ${report.assetsChecked} code files load correctly.`);
-  console.log("   http://localhost:4317");
+  console.log("   http://localhost:3902");
 
   // Keep a few releases so a rollback is always possible.
   const olderReleases = fs

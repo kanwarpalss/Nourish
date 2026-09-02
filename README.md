@@ -31,11 +31,11 @@ npm run start
 npm run import:cardiq
 ```
 
-Nourish always uses port **4317**. It will stop with a plain-English error if another app owns that port; it will never silently choose a different one. Open it at `http://localhost:4317` on its host Mac.
+Nourish always uses port **3902**. It will stop with a plain-English error if another app owns that port; it will never silently choose a different one. Open it at `http://localhost:3902` on its host Mac.
 
 ## Launch from any Mac
 
-The iCloud-synced `nourish` and `health` terminal commands clone or fast-forward the local checkout from GitHub `main`, refresh dependencies only when the release changed, start Nourish on port 4317, and open it. This works on the Mac Mini and any other Mac that signs into KP’s iCloud aliases and has Git plus Node 22.13 or newer. Each Mac keeps its browser-local food diary separately until the shared local-database phase is built.
+The iCloud-synced `nourish` and `health` terminal commands clone or fast-forward the local checkout from GitHub `main`, refresh dependencies only when the release changed, start Nourish on port 3902, and open it. This works on the Mac Mini and any other Mac that signs into KP’s iCloud aliases and has Git plus Node 22.13 or newer. Each Mac keeps its browser-local food diary separately until the shared local-database phase is built.
 
 ## Always-on Mac Mini
 

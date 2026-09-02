@@ -45,7 +45,7 @@ export default defineConfig(async () => {
 
   // In development the diary service runs beside Vite and Vite proxies to it, so
   // the browser calls the same relative /api/nourish path it will call in
-  // production. Production instead fronts both on 4317 (see server/front-door.mjs);
+  // production. Production instead fronts both on 3902 (see server/front-door.mjs);
   // either way the app never learns a second origin.
   const diaryServicePort = Number(process.env.NOURISH_DATA_PORT ?? 4319);
 

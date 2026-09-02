@@ -40,15 +40,15 @@ console.log(`Nourish is serving release ${path.basename(releaseDir)}`);
 const vinextBin = path.join(repoRoot, "node_modules", ".bin", "vinext");
 
 /**
- * The app renders on an internal port and the front door owns 4317.
+ * The app renders on an internal port and the front door owns 3902.
  *
  * The diary API has to be same-origin with the page: a separate port would mean
  * CORS, and once the Mac Mini serves HTTPS a page on https:// calling http:// on
  * another port is blocked outright as mixed content. Fronting both on one port
- * side-steps all of it, and keeps 4317 the only port Nourish ever occupies.
+ * side-steps all of it, and keeps 3902 the only port Nourish ever occupies.
  */
-const INTERNAL_APP_PORT = 4316;
-const PUBLIC_PORT = 4317;
+const INTERNAL_APP_PORT = 3903;
+const PUBLIC_PORT = 3902;
 
 const child = spawn(vinextBin, ["start", "--port", String(INTERNAL_APP_PORT), "--hostname", "127.0.0.1"], {
   cwd: releaseDir,
