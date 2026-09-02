@@ -1,4 +1,4 @@
-import { DIARY_API_BASE } from "./diary-sync";
+import { DIARY_API_BASE } from "./diary-api";
 
 /**
  * Photos for a logged entry live only on the diary database, never in the
@@ -11,6 +11,8 @@ import { DIARY_API_BASE } from "./diary-sync";
 export type LogPhotoMeta = { mimeType: string; createdAt: string };
 
 const SUPPORTED_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const FOOD_PHOTO_URL_PATTERN = new RegExp(`^${DIARY_API_BASE}/diary/[a-z0-9][a-z0-9-]{0,30}/food/([A-Za-z0-9_-]{1,64})/photo(?:[?#].*)?$`);
+const BUNDLED_FOOD_PHOTO_PATTERN = /^\/food-images\/[A-Za-z0-9._-]+\.(?:jpe?g|png|webp)(?:[?#].*)?$/i;
 
 export function isSupportedPhotoFile(file: File) {
   return SUPPORTED_TYPES.has(file.type);
@@ -65,18 +67,28 @@ export function foodPhotoUrl(profileId: string, foodId: string) {
   return foodPhotoPath(profileId, foodId);
 }
 
+/**
+ * The key encoded in an existing food-photo URL. Cache-busters and fragments
+ * are presentation details, never a reason to lose the durable identifier.
+ */
+export function foodPhotoKeyFromUrl(value: string | undefined): string | null {
+  if (!value) return null;
+  return value.match(FOOD_PHOTO_URL_PATTERN)?.[1] ?? null;
+}
+
+/** Only this app's precise food-photo route may be managed as a stored photo. */
 export function isFoodPhotoUrl(value: string | undefined) {
-  return Boolean(value && value.startsWith(`${DIARY_API_BASE}/diary/`) && value.endsWith("/photo"));
+  return foodPhotoKeyFromUrl(value) !== null;
 }
 
 /**
- * The key an existing food photo was stored under, so re-editing a food replaces
- * its picture instead of orphaning the old file and uploading beside it.
+ * Catalogue cards render during startup, including when the Mac Mini has no
+ * internet connection. Only bundled images and photos stored by Nourish may
+ * auto-load there; hot-linked retailer images would make an offline screen
+ * wait on dozens of third-party hosts.
  */
-export function foodPhotoKeyFromUrl(value: string | undefined): string | null {
-  if (!value || !isFoodPhotoUrl(value)) return null;
-  const match = value.match(/\/diary\/[^/]+\/food\/([^/]+)\/photo$/);
-  return match ? decodeURIComponent(match[1]) : null;
+export function isAutoLoadedFoodImage(value: string | undefined) {
+  return Boolean(value && (BUNDLED_FOOD_PHOTO_PATTERN.test(value) || isFoodPhotoUrl(value)));
 }
 
 export async function uploadFoodPhoto(profileId: string, foodId: string, file: File): Promise<{ ok: true; url: string } | { ok: false; reason: string }> {

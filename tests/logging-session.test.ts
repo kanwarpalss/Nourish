@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   addToTray,
+  areFoodConversionsValid,
   cloneUserMeal,
   createCustomFood,
   createUserMeal,
@@ -10,6 +11,7 @@ import {
   isCustomFoodDraftValid,
   isOwnedFood,
   isUserMealNameValid,
+  MAX_FOOD_CONVERSIONS,
   MAX_MEAL_COMPONENTS,
   MAX_TRAY_ITEMS,
   makeCustomFoodId,
@@ -80,6 +82,37 @@ test("a created food can never take over a researched catalogue entry", () => {
   const seedAfter = merged.find((item) => item.id === seed.id);
   assert.deepEqual(seedAfter, seed, "the researched food must survive untouched");
   assert.equal(merged.length, nutritionItems.length + 1);
+});
+
+test("a created food retains its alternate logging unit as an independent snapshot", () => {
+  const conversions = [{ unit: "pack" as const, basisAmount: 2, label: "2 small packs" }];
+  const created = createCustomFood(draft({ conversions }), "conversion");
+  assert.ok(created);
+  assert.deepEqual(created.conversions, [{ unit: "pack", basisAmount: 2, label: "2 small packs" }]);
+  conversions[0].basisAmount = 9;
+  assert.equal(created.conversions?.[0]?.basisAmount, 2, "later form edits must not alter the saved item");
+});
+
+test("a food can keep every distinct alternate logging unit", () => {
+  const conversions = [
+    { unit: "pack" as const, basisAmount: 250, label: "1 pouch" },
+    { unit: "serving" as const, basisAmount: 50, label: "small bowl" },
+    { unit: "scoop" as const, basisAmount: 30 },
+  ];
+  assert.equal(areFoodConversionsValid("g", conversions), true);
+  const created = createCustomFood(draft({ conversions }), "many-units");
+  assert.deepEqual(created?.conversions, conversions);
+});
+
+test("alternate units reject ambiguity and cruel boundary values", () => {
+  assert.equal(areFoodConversionsValid("g", [{ unit: "g", basisAmount: 1 }]), false, "the basis unit cannot also be an alternate");
+  assert.equal(areFoodConversionsValid("g", [{ unit: "pack", basisAmount: 10 }, { unit: "pack", basisAmount: 20 }]), false, "duplicate units are ambiguous");
+  assert.equal(areFoodConversionsValid("g", [{ unit: "pack", basisAmount: 0 }]), false);
+  assert.equal(areFoodConversionsValid("g", [{ unit: "pack", basisAmount: Number.NaN }]), false);
+  assert.equal(areFoodConversionsValid("g", [{ unit: "pack", basisAmount: 5_001 }]), false);
+  assert.equal(areFoodConversionsValid("g", [{ unit: "pack", basisAmount: 1, label: "x".repeat(81) }]), false);
+  const tooMany = Array.from({ length: MAX_FOOD_CONVERSIONS + 1 }, (_, index) => ({ unit: "pack" as const, basisAmount: index + 1 }));
+  assert.equal(areFoodConversionsValid("g", tooMany), false, "limit + 1 must fail before save");
 });
 
 test("editing a researched food forks a personal copy instead of rewriting it", () => {
@@ -229,13 +262,19 @@ test("a saved meal keeps its own snapshot when the source food later changes", (
 });
 
 test("editing today's Meal clone never changes the reusable saved Meal", () => {
-  const saved = createUserMeal("Usual breakfast", [{ key: "t1", food: food({ amount: 100 }) }], "clone", "2026-08-14");
+  const saved = createUserMeal("Usual breakfast", [{ key: "t1", food: food({ amount: 100, aliases: ["original"], conversions: [{ unit: "pack", basisAmount: 250 }], source: { label: "Original", url: "", trust: "Personal" } }) }], "clone", "2026-08-14");
   assert.ok(saved);
   const today = cloneUserMeal(saved);
   today.components[0].amount = 250;
   today.components[0].calories = 250;
+  today.components[0].aliases[0] = "changed";
+  today.components[0].conversions![0].basisAmount = 999;
+  today.components[0].source.label = "Changed";
   assert.equal(saved.components[0].amount, 100);
   assert.equal(saved.components[0].calories, 100);
+  assert.deepEqual(saved.components[0].aliases, ["original"]);
+  assert.equal(saved.components[0].conversions?.[0].basisAmount, 250);
+  assert.equal(saved.components[0].source.label, "Original");
 });
 
 test("expanding a saved meal reproduces the same nutrition it was saved with", () => {
@@ -320,8 +359,5 @@ test("icon keywords match whole words, not fragments hiding inside longer ones",
   assert.equal(pick("Almonds"), "nut");
   assert.equal(pick("Eggs"), "egg");
 });
-
-
-
 
 

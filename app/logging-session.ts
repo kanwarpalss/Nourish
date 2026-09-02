@@ -9,6 +9,8 @@ export const MAX_USER_MEALS = 200;
 export const MAX_MEAL_COMPONENTS = 40;
 export const MAX_MEAL_NAME_LENGTH = 60;
 export const MAX_NUTRITION_VALUE = 50_000;
+export const MAX_FOOD_CONVERSIONS = 5;
+export const MAX_CONVERSION_LABEL_LENGTH = 80;
 
 const NON_VISIBLE_IDENTITY_CHARACTERS = /[\u200B\u200E\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/g;
 const DAY_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -100,8 +102,28 @@ export function isOwnedFood(food: Pick<NutritionItem, "id" | "source">) {
 
 export type CustomFoodDraft = Pick<
   NutritionItem,
-  "name" | "brand" | "variant" | "amount" | "unit" | "calories" | "protein" | "carbs" | "fat" | "fiber"
+  "name" | "brand" | "variant" | "amount" | "unit" | "calories" | "protein" | "carbs" | "fat" | "fiber" | "conversions"
 > & { category?: NutritionItem["category"]; imageUrl?: string };
+
+/**
+ * Alternate units are an explicit one-to-one mapping onto the nutrition basis.
+ * Duplicates are ambiguous (which "pack" wins?) and a conversion back to the
+ * basis unit itself adds no capability, so both are rejected at the save gate.
+ */
+export function areFoodConversionsValid(unit: NutritionItem["unit"], conversions: CustomFoodDraft["conversions"]) {
+  if (!conversions?.length) return true;
+  if (conversions.length > MAX_FOOD_CONVERSIONS) return false;
+  const units = new Set<NutritionItem["unit"]>();
+  return conversions.every((conversion) => {
+    const label = conversion.label?.trim() ?? "";
+    if (conversion.unit === unit || units.has(conversion.unit)) return false;
+    units.add(conversion.unit);
+    return Number.isFinite(conversion.basisAmount)
+      && conversion.basisAmount > 0
+      && conversion.basisAmount <= 5_000
+      && label.length <= MAX_CONVERSION_LABEL_LENGTH;
+  });
+}
 
 export function isCustomFoodDraftValid(draft: CustomFoodDraft) {
   if (!draft || typeof draft !== "object" || typeof draft.variant !== "string") return false;
@@ -110,6 +132,7 @@ export function isCustomFoodDraftValid(draft: CustomFoodDraft) {
   return Boolean(normaliseIdentityText(draft.name))
     && brandIsValid
     && isQuantityValid(draft.unit, draft.amount)
+    && areFoodConversionsValid(draft.unit, draft.conversions)
     && numbers.every((value) => Number.isFinite(value) && value >= 0 && value <= MAX_NUTRITION_VALUE);
 }
 
@@ -136,6 +159,7 @@ export function createCustomFood(draft: CustomFoodDraft, unique: string): Nutrit
     category: draft.category ?? "Product",
     availability: "Added by you",
     aliases: [],
+    ...(draft.conversions?.length ? { conversions: draft.conversions.map((conversion) => ({ ...conversion })) } : {}),
     ...(draft.imageUrl ? { imageUrl: draft.imageUrl } : {}),
     source: { label: "Added by you", url: "", trust: "Personal" },
   };
@@ -209,6 +233,18 @@ export function isUserMealNameValid(name: string) {
   return trimmed.length > 0 && trimmed.length <= MAX_MEAL_NAME_LENGTH;
 }
 
+/** Deep copy every mutable branch of a food snapshot. */
+export function cloneNutritionItem(food: NutritionItem): NutritionItem {
+  return {
+    ...food,
+    aliases: [...food.aliases],
+    source: { ...food.source },
+    ...(food.conversions ? { conversions: food.conversions.map((conversion) => ({ ...conversion })) } : {}),
+    ...(food.basis ? { basis: { ...food.basis } } : {}),
+    ...(food.components ? { components: food.components.map((component) => ({ ...component })) } : {}),
+  };
+}
+
 /**
  * A saved meal keeps a snapshot of every component, so renaming, editing or
  * deleting a food later can never silently rewrite a meal you already trust.
@@ -227,7 +263,7 @@ export function createUserMeal(name: string, items: TrayItem[], unique: string, 
     id: makeUserMealId(trimmed, unique),
     name: trimmed,
     createdAt,
-    components: components.map((food) => ({ ...food })),
+    components: components.map(cloneNutritionItem),
   };
 }
 
@@ -237,7 +273,7 @@ export function userMealTotals(meal: UserMeal): NutritionTotals {
 
 /** A diary edit receives its own component objects, never the reusable saved Meal. */
 export function cloneUserMeal(meal: UserMeal): UserMeal {
-  return { ...meal, components: meal.components.map((food) => ({ ...food })) };
+  return { ...meal, components: meal.components.map(cloneNutritionItem) };
 }
 
 /** One aggregate diary row backed by expandable component snapshots. */
@@ -278,5 +314,5 @@ export function removeUserMeal(meals: UserMeal[], id: string): UserMeal[] {
 export function userMealToFoods(meal: UserMeal): NutritionItem[] {
   return meal.components
     .filter((food) => isQuantityValid(food.unit, food.amount))
-    .map((food) => ({ ...food }));
+    .map(cloneNutritionItem);
 }

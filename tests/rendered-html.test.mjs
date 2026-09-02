@@ -122,13 +122,34 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
   // Deleting happens on the phone as much as the desktop, so every new control needs a tap target.
   assert.match(css, /\.weight-entry-list button,\s*\.history-entry-list button,\s*\.history-delete-confirm button,\s*\.danger-confirm button \{\s*min-height: 44px;\s*min-width: 44px;/, "the new delete controls need 44px tap targets on a phone");
 
+  /**
+   * The toast floats over the page and must not block what is underneath it, so
+   * `.toast` is `pointer-events: none`. That is inherited, which silently made
+   * the Undo button inside it unclickable: the tap fell straight through to the
+   * panel behind. Undo is the only way back from a deletion, so the button has
+   * to opt back in — and be a real 44px target, because deletions happen on the
+   * phone. Found 2026-09-02 by hit-testing the rendered button.
+   */
+  assert.match(css, /\.toast \{[^}]*pointer-events: none;/, "the toast itself must stay click-through");
+  assert.match(css, /\.toast-undo \{[^}]*pointer-events: auto;/, "the Undo button must opt back into clicks or it is dead on tap");
+  assert.match(css, /\.toast-undo \{[^}]*min-height: 44px;/, "Undo needs a 44px tap target on a phone");
+
   // Photos with a drawn fallback, never a bare letter.
   assert.match(page, /<FoodThumb food=\{food\} \/>/);
   assert.doesNotMatch(page, /food\.name\.charAt\(0\)/, "letter avatars must not come back");
   assert.match(page, /You are adding \$\{quantity\} \$\{loggingUnit\}/);
   assert.match(page, /Save & log Meal/);
   assert.match(page, /mealSnapshot/);
-  assert.match(page, /Adjustments here apply only to today’s diary entry/);
+  assert.match(page, /Rename, resize, add, or remove anything here/);
+  assert.match(page, /Meal name for today/);
+  assert.match(page, /setPendingLogId\(freshUnique\(\)\)/, "each repeated add must rotate to a fresh diary and photo identity");
+  assert.match(page, /disabled=\{photoBusy \|\| !isFoodDetailsValid\(draft\)\}/, "food saving must wait for its photo upload result");
+  assert.match(page, /shouldKeep=\{\(\) => savedPhotoEditRef\.current\}/, "a food photo must survive the editor closing after a real save");
+  assert.match(page, /discardIfUncommitted=\{!editing\}/, "an abandoned new log photo must be removed rather than stranded");
+  assert.match(page, /scheduleLogPhotoCleanup\(entry\.logId\)/, "deleted diary photos must follow their diary entries after the Undo window");
+  assert.match(page, /deleteFoodPhoto\(profileId, photoKey\)/, "deleted custom foods must not leave permanent photo files behind");
+  assert.match(page, /Add another unit/);
+  assert.match(page, /isAutoLoadedFoodImage\(food\.imageUrl\)/, "catalogue thumbnails must stay offline-safe");
   assert.match(page, /Show \$\{meal\.components\.length\} item/);
   assert.doesNotMatch(page, />Combination</, "the rejected Combination label must not return");
   // Modal scroll belongs to the logger and the body is explicitly frozen while it is open.
@@ -171,14 +192,25 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
   assert.match(page, /function SettingsPanel/);
   assert.match(page, /onClick=\{\(\) => setSettingsOpen\(true\)\}/, "the settings button must actually open something");
   assert.match(page, /Download backup/);
-  assert.match(page, /do not sync/, "settings must state that other browsers or ports are separate diaries");
+  assert.match(page, /also stored there and shared between\s+connected devices/, "settings must explain that a confirmed Mac Mini copy is shared, not browser-only");
+  assert.doesNotMatch(page, /different diary — they do not sync/, "settings must not contradict the live sync status");
   // The sidebar is hidden on mobile, so settings needs its own header entry or
   // backup and restore are unreachable on a phone.
   assert.match(page, /mobile-settings/, "settings must be reachable without the desktop sidebar");
   assert.match(css, /\.mobile-topbar > \.mobile-settings \{[^}]*44px/, "the mobile settings control needs a 44px tap target");
   assert.match(page, /30 min or less/);
   assert.doesNotMatch(page, /Number\.parseInt\(recipe\.time/);
-  assert.match(page, /needs nutrition review/);
+  // An unresolved purchase still cannot quick-log guessed macros, but it must
+  // offer the safe escape hatch into a blank, pre-filled label-details editor.
+  assert.match(page, /Exact pack label needed/);
+  assert.match(page, /Add exact label details for/);
+  assert.match(page, /onCreateFromPurchase/);
+  assert.match(page, /initialName: name/);
+  assert.match(page, /Copy Single Item/);
+  assert.match(page, /Copy meal/);
+  assert.match(page, /Search items to add to this one-off meal/);
+  assert.match(page, /disposedRef\.current = true/, "a close during an upload must clean a late successful temporary food photo");
+  assert.match(page, /if \(disposedRef\.current\)/, "the upload completion must not update an unmounted editor");
   assert.match(page, /getBangaloreClock\(new Date\(\)\)/);
   assert.match(page, /sumLoggedNutrition\(extras, \{ calories: 0, protein: 0, carbs: 0, fat: 0 \}\)/);
   // The dashboard reads from the stored diary. No fabricated history may remain anywhere.
@@ -203,6 +235,11 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
   assert.match(page, /Local import needed/);
   assert.match(page, /cardiq-food-import\.json/);
   assert.match(page, /From cardIQ/);
+  // Quick-add can legitimately include several variants with the same visible
+  // name (for example, Coca-Cola Original and Zero). React keys must use the
+  // stable food id, or one button can be duplicated or lost during an update.
+  assert.match(page, /quickFoods\.slice\(0, 4\)\.map\(\(food\) => \(\s*<button key=\{food\.id\}/, "Quick add must key foods by their stable id, not their display name");
+  assert.doesNotMatch(page, /quickFoods\.slice\(0, 4\)\.map\(\(food\) => \(\s*<button key=\{food\.name\}/, "Quick add display names are not unique");
 
   // Plan reads the live catalogue and can create/correct foods itself. Both
   // areas write to the same customFoods list, so neither can drift from the
@@ -213,6 +250,12 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
   assert.match(page, /onEdit=\{\(food\) => setPlanFoodEditor/, "Plan · Items cards must open the editor");
   assert.match(page, /function PlanFoodEditor/);
   assert.match(page, /<FoodDetailsEditor/, "Plan must reuse the logger's editor rather than defining a second form");
+  // A photo picker must not make Cancel lie. A replacement is staged under a
+  // temporary key, abandoned uploads are discarded, and the old picture is
+  // removed only after the food itself has been saved.
+  assert.match(page, /const \[initialFoodPhotoKey\] = useState\(\(\) => foodPhotoKeyFromUrl\(draft\.imageUrl\)\)/);
+  assert.match(page, /if \(pendingPhotoKeyRef\.current\) void deleteFoodPhoto\(profileId, pendingPhotoKeyRef\.current\)/, "Cancel must clean a temporary food photo");
+  assert.match(page, /if \(initialFoodPhotoKey && initialFoodPhotoKey !== finalPhotoKey\) void deleteFoodPhoto\(profileId, initialFoodPhotoKey\)/, "Save must retire the replaced photo only after the food points elsewhere");
   assert.equal(page.match(/function FoodDetailsEditor/g)?.length, 1, "there must be exactly one food-details form");
   assert.match(page, /forkFoodForEdit\(initial, /, "editing a researched food must fork a personal copy");
 

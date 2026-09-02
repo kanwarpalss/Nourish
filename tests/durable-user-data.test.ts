@@ -230,6 +230,7 @@ test("a food photo path from the diary database is treated as safe", () => {
 test("only the diary API's own paths are allowed without a scheme", () => {
   assert.equal(isSafeImageUrl("/etc/passwd"), false);
   assert.equal(isSafeImageUrl("/api/other/thing.png"), false);
+  assert.equal(isSafeImageUrl("/api/nourish/diary/kp/log/lunch-1/photo"), false);
   assert.equal(isSafeImageUrl("//evil.example.com/x.png"), false);
   // A traversal out of the API prefix must not be talked into passing.
   assert.equal(isSafeImageUrl("/api/nourish/../../secret.png"), false);

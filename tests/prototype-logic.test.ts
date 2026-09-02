@@ -1,7 +1,48 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { foodPhotoKeyFromUrl, foodPhotoUrl, isAutoLoadedFoodImage, isFoodPhotoUrl } from "../app/log-photos";
 import { calculateMealNutrition, meals, numericTags, nutritionItems } from "../app/nutrition-data";
 import { estimateSatiety, getBangaloreClock, getEnergyRunway, getLoggingUnits, getNutritionDelta, getQuantityLimit, hasNutritionTarget, isQuantityValid, matchesNutritionTarget, matchesRecipe, satietyLabel, scaleNutrition, scaleNutritionForUnit, sumLoggedNutrition, sumNutritionDetails } from "../app/prototype-logic";
+
+test("food-photo cache-busting keeps the original storage key for later edits", () => {
+  const foodId = "photo_key-42";
+  const canonical = foodPhotoUrl("kp", foodId);
+
+  for (const storedUrl of [
+    canonical,
+    `${canonical}?v=1724928000000`,
+    `${canonical}?width=320&v=1724928000000`,
+    `${canonical}#preview`,
+    `${canonical}?v=1724928000000#preview`,
+  ]) {
+    assert.equal(isFoodPhotoUrl(storedUrl), true, storedUrl);
+    assert.equal(foodPhotoKeyFromUrl(storedUrl), foodId, storedUrl);
+  }
+});
+
+test("food-photo URL helpers reject malformed and non-food routes without throwing", () => {
+  for (const value of [
+    undefined,
+    "",
+    "/api/nourish/diary/kp/log/lunch-1/photo",
+    "/api/nourish/diary/kp/food//photo",
+    "/api/nourish/diary/kp/food/not%ZZ/photo",
+    "/api/nourish/diary/kp/food/oats-1/photo/extra",
+  ]) {
+    assert.equal(isFoodPhotoUrl(value), false, String(value));
+    assert.doesNotThrow(() => foodPhotoKeyFromUrl(value));
+    assert.equal(foodPhotoKeyFromUrl(value), null, String(value));
+  }
+});
+
+test("catalogue cards auto-load only offline-safe food images", () => {
+  assert.equal(isAutoLoadedFoodImage("/food-images/fortune-poha-thick.jpg"), true);
+  assert.equal(isAutoLoadedFoodImage(foodPhotoUrl("kp", "my-oats")), true);
+  assert.equal(isAutoLoadedFoodImage(`${foodPhotoUrl("kp", "my-oats")}?v=123`), true);
+  assert.equal(isAutoLoadedFoodImage("https://retailer.example/product.jpg"), false, "third-party hotlinks must not hold an offline catalogue hostage");
+  assert.equal(isAutoLoadedFoodImage("/food-images/../../secret.png"), false);
+  assert.equal(isAutoLoadedFoodImage(undefined), false);
+});
 
 test("quantity edits scale every displayed nutrient from the same serving basis", () => {
   const milk = nutritionItems.find((food) => food.id === "nandini-goodlife-toned");

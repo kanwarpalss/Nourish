@@ -4,11 +4,11 @@ import { Component, useEffect, useRef, useState, type CSSProperties, type ReactN
 import { isCardIqFoodImport, refineCardIqImport, type CardIqFoodImport } from "./cardiq-food";
 import { FoodIcon, foodIconKey } from "./food-icon";
 import { freshTrayId, freshUnique } from "./ids";
-import { addToTray, cloneUserMeal, createCustomFood, createUserMeal, forkFoodForEdit, getSingleItemKind, isOwnedFood, isUserMealNameValid, MAX_MEAL_NAME_LENGTH, mergeFoodCatalog, singleItemKindLabel, upsertUserMeal, userMealToNutritionItem, userMealTotals, type SingleItemKind, type TrayItem, type UserMeal } from "./logging-session";
+import { addToTray, areFoodConversionsValid, cloneNutritionItem, cloneUserMeal, createCustomFood, createUserMeal, forkFoodForEdit, getSingleItemKind, isOwnedFood, isUserMealNameValid, MAX_CONVERSION_LABEL_LENGTH, MAX_FOOD_CONVERSIONS, MAX_MEAL_COMPONENTS, MAX_MEAL_NAME_LENGTH, mergeFoodCatalog, singleItemKindLabel, upsertUserMeal, userMealToNutritionItem, userMealTotals, type SingleItemKind, type TrayItem, type UserMeal } from "./logging-session";
 import { defaultCompositeItems, findComponentFood } from "./composite-foods";
 import { createProfile, deleteProfile as deleteRemoteProfile, describeSyncStatus, fetchProfiles, pullDiary, pushDiary, renameProfile, DEFAULT_PROFILE_ID, type DiaryProfile, type SyncStatus } from "./diary-sync";
-import { deleteFoodPhoto, deleteLogPhoto, foodPhotoKeyFromUrl, isFoodPhotoUrl, isSupportedPhotoFile, photoUrl, uploadFoodPhoto, uploadLogPhoto, type LogPhotoMeta } from "./log-photos";
-import { clearAllUserData, emptyNutritionState, exportNutritionState, nutritionStorageKeys, withLogIds, getWeightTrendPoints, isSafeImageUrl, logsForDay, MAX_STORED_DAYS, mergeNutritionBackup, parseExportedNutritionState, parseSavedNutritionState, readStoredNutritionRaw, removeRecord, restoreRecord, upsertWeightEntry, withDayLogs, wouldDropOldestDay, writeStoredNutritionState, type RemovableKind, type RemovedRecord, type SavedLogEntry, type SavedNutritionState, type WeightEntry } from "./local-nutrition-state";
+import { deleteFoodPhoto, deleteLogPhoto, foodPhotoKeyFromUrl, isAutoLoadedFoodImage, isSupportedPhotoFile, photoUrl, uploadFoodPhoto, uploadLogPhoto, type LogPhotoMeta } from "./log-photos";
+import { canRestoreRecord, clearAllUserData, emptyNutritionState, exportNutritionState, nutritionStorageKeys, withLogIds, getWeightTrendPoints, isSafeImageUrl, logsForDay, MAX_STORED_DAYS, mergeNutritionBackup, parseExportedNutritionState, parseSavedNutritionState, readStoredNutritionRaw, removeRecord, restoreRecord, upsertWeightEntry, withDayLogs, wouldDropOldestDay, writeStoredNutritionState, type RemovableKind, type RemovedRecord, type SavedLogEntry, type SavedNutritionState, type WeightEntry } from "./local-nutrition-state";
 import { DEFAULT_TARGETS, loggableMeals, recentDayKeys, resolveLoggedFood, summariseHistory, summariseTrend, type DaySummary } from "./day-history";
 import { estimateSatiety, getBangaloreClock, getBasisAmountForLogging, getEnergyRunway, getLoggingUnitLabel, getLoggingUnits, getQuantityLimit, hasNutritionTarget, isQuantityValid, matchesNutritionTarget, matchesRecipe, satietyLabel, scaleNutrition, scaleNutritionForUnit, sumLoggedNutrition, sumNutritionDetails, type DashboardClock, type NutritionTarget } from "./prototype-logic";
 import { meals, nutritionItems, SOURCE_LINKS, type Meal, type NutritionItem, type NutritionUnit } from "./nutrition-data";
@@ -69,7 +69,7 @@ function foodAtBasis(food: Food): Food {
  */
 function FoodThumb({ food }: { food: Pick<Food, "name" | "brand" | "category" | "imageUrl"> & { aliases?: string[] } }) {
   const [failed, setFailed] = useState(false);
-  if (food.imageUrl && isSafeImageUrl(food.imageUrl) && !failed) {
+  if (food.imageUrl && isAutoLoadedFoodImage(food.imageUrl) && !failed) {
     return <span className="food-thumb"><img src={food.imageUrl} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)} /></span>;
   }
   return <span className={`food-thumb icon ${foodIconKey(food)}`}><FoodIcon name={foodIconKey(food)} /></span>;
@@ -88,6 +88,7 @@ function blankFood(name = ""): Food {
 function isFoodDetailsValid(food: Food) {
   const brandIsValid = food.category === "Ingredient" || Boolean(food.brand.trim());
   return Boolean(brandIsValid && food.name.trim() && isQuantityValid(food.unit, food.amount))
+    && areFoodConversionsValid(food.unit, food.conversions)
     && [food.calories, food.protein, food.carbs, food.fat, food.fiber].every((value) => Number.isFinite(value) && value >= 0 && value <= 50_000);
 }
 
@@ -395,7 +396,7 @@ function TodayView({ clock, calories, macros, entries, quickFoods, weights, hasC
             <div className="section-title-row"><div><span className="eyebrow">{hasCardIqImport ? "From cardIQ" : "One tap"}</span><h2>Quick add</h2></div><button className="text-button" onClick={onLog}>See all</button></div>
             <div className="quick-grid">
               {quickFoods.slice(0, 4).map((food) => (
-                <button key={food.name} onClick={() => onAdd(food)}><span>{food.name}</span><b>＋</b></button>
+                <button key={food.id} onClick={() => onAdd(food)}><span>{food.name}</span><b>＋</b></button>
               ))}
             </div>
           </section>
@@ -593,7 +594,7 @@ function TrendsView({ history, targets }: { history: DaySummary[]; targets: type
   );
 }
 
-function PurchasesView({ onAdd, cardIqImport }: { onAdd: (food: Food) => void; cardIqImport: CardIqFoodImport | null }) {
+function PurchasesView({ onAdd, onCreateFromPurchase, cardIqImport }: { onAdd: (food: Food) => void; onCreateFromPurchase: (name: string) => void; cardIqImport: CardIqFoodImport | null }) {
   const [filter, setFilter] = useState<"All" | "Needs review">("All");
   const purchaseItems = (cardIqImport?.items ?? []).map((item) => {
     const food = item.matchedFoodId ? foods.find((candidate) => candidate.id === item.matchedFoodId) ?? null : null;
@@ -621,7 +622,7 @@ function PurchasesView({ onAdd, cardIqImport }: { onAdd: (food: Food) => void; c
         <div className="section-title-row"><div><span className="eyebrow">Personal catalogue</span><h2>Recently purchased foods</h2></div><div className="table-actions"><button className={`chip ${filter === "All" ? "active" : ""}`} onClick={() => setFilter("All")}>All</button><button className={`chip ${filter === "Needs review" ? "active" : ""}`} onClick={() => setFilter("Needs review")}>Needs review</button></div></div>
         <div className="purchase-table">
           <div className="purchase-row header"><span>Item</span><span>Store</span><span>Nutrition</span><span>Status</span><span /></div>
-          {shown.map((item) => <div className="purchase-row" key={`${item.store}-${item.name}`}><span className="purchase-name"><b>{item.name}</b><small>{item.orderCount} order{item.orderCount === 1 ? "" : "s"} · last {item.lastOrdered}</small></span><span><em>{item.store}</em></span><span className="purchase-nutrition">{item.cal}{item.food ? <small>{item.food.source.trust}</small> : null}</span><span><i className={item.match === "Matched" ? "matched" : "review"}>{item.food ? item.matchKind ?? item.match : "Needs label"}</i></span><span><button aria-label={item.food ? `Quick add ${item.name}` : `${item.name} needs nutrition review`} disabled={!item.food} onClick={() => { if (item.food) onAdd(item.food); }}>＋</button></span></div>)}
+          {shown.map((item) => <div className="purchase-row" key={`${item.store}-${item.name}`}><span className="purchase-name"><b>{item.name}</b><small>{item.orderCount} order{item.orderCount === 1 ? "" : "s"} · last {item.lastOrdered}</small></span><span><em>{item.store}</em></span><span className="purchase-nutrition">{item.cal}{item.food ? <small>{item.food.source.trust}</small> : null}</span><span><i className={item.match === "Matched" ? "matched" : "review"}>{item.food ? item.matchKind ?? item.match : "Needs label"}</i></span><span>{item.food ? <button aria-label={`Quick add ${item.name}`} onClick={() => onAdd(item.food)}>＋</button> : <button className="text-button" aria-label={`Add exact label details for ${item.name}`} onClick={() => onCreateFromPurchase(item.name)}>Add details</button>}</span></div>)}
           {shown.length === 0 ? <div className="empty-state"><strong>{cardIqImport ? "Nothing in this view." : "Your cardIQ food snapshot is not here yet."}</strong><span>{cardIqImport ? "Try the other filter." : "The importer keeps your personal purchase history on this Mac only."}</span></div> : null}
         </div>
       </section>
@@ -660,16 +661,24 @@ function RecipeCard({ recipe, onOpen, onPlan }: { recipe: Recipe; onOpen: (recip
  * can create and correct foods without going through Track. One editing surface,
  * two doors into it — a second form would be a second set of validation rules.
  */
-function PlanFoodEditor({ initial, profileId, onClose, onSave }: { initial: Food | null; profileId: string; onClose: () => void; onSave: (food: Food, isNew: boolean) => void }) {
-  const creating = initial === null;
+function PlanFoodEditor({ initial, initialName = "", copying = false, profileId, onClose, onSave }: { initial: Food | null; initialName?: string; copying?: boolean; profileId: string; onClose: () => void; onSave: (food: Food, isNew: boolean) => void }) {
+  const creating = initial === null || copying;
   // Editing a researched food forks a personal copy rather than rewriting the
   // catalogue entry, which is what forkFoodForEdit already guarantees for Track.
-  const [draft, setDraft] = useState<Food>(() => (initial ? forkFoodForEdit(initial, freshUnique()) : blankFood()));
+  const [draft, setDraft] = useState<Food>(() => {
+    if (!initial) return blankFood(initialName);
+    const forked = forkFoodForEdit(initial, freshUnique());
+    // A managed photo is mutable server data. A copy must start without it so
+    // replacing or deleting the copy can never alter the original thumbnail.
+    const imageUrl = foodPhotoKeyFromUrl(forked.imageUrl) ? undefined : forked.imageUrl;
+    const { imageUrl: _managedOrExternalImage, ...withoutImage } = forked;
+    return { ...withoutImage, name: copying ? `${forked.name} copy` : forked.name, ...(imageUrl ? { imageUrl } : {}) };
+  });
   return (
     <div className="dialog-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}>
       <section className="food-dialog plan-food-dialog" role="dialog" aria-modal="true" aria-labelledby="plan-food-editor-title">
         <header>
-          <div><span className="eyebrow">Plan · Items</span><h2 id="plan-food-editor-title">{creating ? "Add a Single Item" : "Edit Single Item"}</h2></div>
+          <div><span className="eyebrow">Plan · Items</span><h2 id="plan-food-editor-title">{copying ? "Copy Single Item" : creating ? "Add a Single Item" : "Edit Single Item"}</h2></div>
           <button className="close-button" onClick={onClose} aria-label={creating ? "Close new item" : "Close item editor"}>×</button>
         </header>
         <div className="plan-food-dialog-body quantity-editor dark-card">
@@ -690,13 +699,14 @@ function PlanFoodEditor({ initial, profileId, onClose, onSave }: { initial: Food
   );
 }
 
-function ItemsView({ planned, catalog, onPlan, onRemove, onCreate, onEdit, onDelete }: {
+function ItemsView({ planned, catalog, onPlan, onRemove, onCreate, onEdit, onCopy, onDelete }: {
   planned: PlannedEntry[];
   catalog: Food[];
   onPlan: (food: Food) => void;
   onRemove: (index: number) => void;
   onCreate: () => void;
   onEdit: (food: Food) => void;
+  onCopy: (food: Food) => void;
   onDelete: (food: Food) => void;
 }) {
   const [search, setSearch] = useState("");
@@ -706,7 +716,7 @@ function ItemsView({ planned, catalog, onPlan, onRemove, onCreate, onEdit, onDel
   // The live catalogue, not the frozen researched list: anything KP adds while
   // logging has to be here too, or Plan and Track disagree about what exists.
   const singleItems = catalog.filter((food) => food.category !== "Meal" && food.category !== "Composite");
-  const matched = singleItems.filter((food) => (filter === "All" || food.category === filter) && (!query || [food.name, food.brand, ...food.aliases].filter(Boolean).join(" ").toLowerCase().includes(query)));
+  const matched = singleItems.filter((food) => (filter === "All" || (filter === "Yours" ? isOwnedFood(food) : food.category === filter)) && (!query || [food.name, food.brand, ...food.aliases].filter(Boolean).join(" ").toLowerCase().includes(query)));
   const shown = sortByFullness ? [...matched].sort((a, b) => estimateSatiety(b) - estimateSatiety(a) || b.protein - a.protein) : matched;
   return (
     <>
@@ -715,7 +725,7 @@ function ItemsView({ planned, catalog, onPlan, onRemove, onCreate, onEdit, onDel
       <section className="item-search-hero surface-card">
         <div className="catalogue-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} aria-label="Search products and ingredients" placeholder="Search Nandini milk, chia, chicken, paneer…" /></div>
         <div className="filter-row" aria-label="Item filters">
-          {(["All", "Ordered", "Product", "Ingredient", "OrderedFood"] as const).map((item) => <button className={`chip ${filter === item ? "active" : ""}`} key={item} onClick={() => setFilter(item)} aria-pressed={filter === item}>{item === "OrderedFood" ? "Ready meals" : item}</button>)}
+          {(["All", "Yours", "Ordered", "Product", "Ingredient", "OrderedFood"] as const).map((item) => <button className={`chip ${filter === item ? "active" : ""}`} key={item} onClick={() => setFilter(item)} aria-pressed={filter === item}>{item === "OrderedFood" ? "Ready meals" : item}</button>)}
           <button className={`chip ${sortByFullness ? "active" : ""}`} onClick={() => setSortByFullness((value) => !value)} aria-pressed={sortByFullness}>Most filling first</button>
         </div>
       </section>
@@ -724,7 +734,7 @@ function ItemsView({ planned, catalog, onPlan, onRemove, onCreate, onEdit, onDel
         <div><span className="item-brand">{food.brand ?? food.category}</span><h2>{food.name}</h2><p>Per {food.amount} {food.unit}</p></div>
         <div className="item-nutrition"><strong>{Math.round(food.calories)}<small> kcal</small></strong><span>{food.protein}g <small>protein</small></span><span>{food.carbs}g <small>carbs</small></span><span>{food.fat}g <small>fat</small></span><span>{food.fiberDeclared === false ? "—" : `${food.fiber}g`} <small>{food.fiberDeclared === false ? "fibre not declared" : "fibre"}</small></span></div>
         <div className="fullness-line" title="Estimated from protein, fibre and energy density"><i className="fullness-track"><span style={{ width: `${estimateSatiety(food)}%` }} /></i><small>{satietyLabel(estimateSatiety(food))} · est. {estimateSatiety(food)}/100</small></div>
-        <div className="item-card-actions">{food.source.url ? <a href={food.source.url} target="_blank" rel="noreferrer">Source ↗</a> : <span className="personal-source">{food.source.label}</span>}<button className="text-button" onClick={() => onEdit(food)}>Edit</button>{isOwnedFood(food) ? <button className="text-button danger" onClick={() => onDelete(food)} aria-label={`Delete ${foodLabel(food)}`}>Delete</button> : null}<button className="button primary" onClick={() => onPlan(food)}>＋ Plan this</button></div>
+        <div className="item-card-actions">{food.source.url ? <a href={food.source.url} target="_blank" rel="noreferrer">Source ↗</a> : <span className="personal-source">{food.source.label}</span>}<button className="text-button" onClick={() => onEdit(food)}>Edit</button><button className="text-button" onClick={() => onCopy(food)}>Copy</button>{isOwnedFood(food) ? <button className="text-button danger" onClick={() => onDelete(food)} aria-label={`Delete ${foodLabel(food)}`}>Delete</button> : null}<button className="button primary" onClick={() => onPlan(food)}>＋ Plan this</button></div>
       </article>)}</div>
       {shown.length === 0 ? <div className="empty-state"><strong>No item matches yet.</strong><span>Try a broader name, or add the exact thing in your kitchen.</span><div className="empty-actions"><button className="button secondary" onClick={() => { setSearch(""); setFilter("All"); }}>Clear search</button><button className="button primary" onClick={onCreate}>＋ New item</button></div></div> : null}
       <div className="research-footnote"><span>Research base</span><a href={SOURCE_LINKS.ifct} target="_blank" rel="noreferrer">ICMR–NIN IFCT</a><a href={SOURCE_LINKS.usda} target="_blank" rel="noreferrer">USDA FoodData Central</a><a href={SOURCE_LINKS.fssai} target="_blank" rel="noreferrer">FSSAI labelling</a></div>
@@ -764,7 +774,7 @@ function TargetFilters({ target, onChange, onClear }: { target: Record<"maxCalor
   );
 }
 
-function MealsView({ onRecipe, planned, catalog, userMeals, onPlan, onPlanFood, onRemove, onCreateMeal, onEditMeal, onDeleteMeal }: {
+function MealsView({ onRecipe, planned, catalog, userMeals, onPlan, onPlanFood, onRemove, onCreateMeal, onEditMeal, onCopyMeal, onDeleteMeal }: {
   onRecipe: (recipe: Recipe) => void;
   planned: PlannedEntry[];
   catalog: Food[];
@@ -774,6 +784,7 @@ function MealsView({ onRecipe, planned, catalog, userMeals, onPlan, onPlanFood, 
   onRemove: (index: number) => void;
   onCreateMeal: () => void;
   onEditMeal: (meal: UserMeal) => void;
+  onCopyMeal: (meal: UserMeal) => void;
   onDeleteMeal: (meal: UserMeal) => void;
 }) {
   const [filter, setFilter] = useState("All");
@@ -819,7 +830,7 @@ function MealsView({ onRecipe, planned, catalog, userMeals, onPlan, onPlanFood, 
                 <div className="item-card-head"><span className="owned-tag">Yours</span><small>{meal.components.length} item{meal.components.length === 1 ? "" : "s"}</small></div>
                 <h3>{meal.name}</h3>
                 <div className="item-nutrition"><strong>{Math.round(food.calories)}<small> kcal</small></strong><span>{food.protein.toFixed(1)}g <small>protein</small></span><span>{food.carbs.toFixed(1)}g <small>carbs</small></span><span>{food.fat.toFixed(1)}g <small>fat</small></span></div>
-                <div className="item-card-actions"><button className="text-button" onClick={() => onEditMeal(meal)}>Edit</button><button className="text-button danger" onClick={() => onDeleteMeal(meal)} aria-label={`Delete the meal ${meal.name}`}>Delete</button><button className="button primary" onClick={() => onPlanFood(food)}>＋ Plan this</button></div>
+                <div className="item-card-actions"><button className="text-button" onClick={() => onEditMeal(meal)}>Edit</button><button className="text-button" onClick={() => onCopyMeal(meal)}>Copy</button><button className="text-button danger" onClick={() => onDeleteMeal(meal)} aria-label={`Delete the meal ${meal.name}`}>Delete</button><button className="button primary" onClick={() => onPlanFood(food)}>＋ Plan this</button></div>
               </article>
             ))}
             {preparedMeals.map((food) => (
@@ -862,7 +873,7 @@ function withComponentAmount(items: TrayItem[], key: string, amount: number): Tr
  * `children` is the add-an-item slot. Both construct through createUserMeal, so
  * the name, component-count and total bounds are enforced in exactly one place.
  */
-function MealComposer({ name, onNameChange, items, onItemsChange, editableAmounts = false, tone = "dark", headerLabel = "Your Meal", emptyHint, submitLabel, onSubmit, children }: {
+function MealComposer({ name, onNameChange, items, onItemsChange, editableAmounts = false, tone = "dark", headerLabel = "Your Meal", emptyHint, submitLabel, submitDisabled = false, onSubmit, children }: {
   name: string;
   onNameChange: (name: string) => void;
   items: TrayItem[];
@@ -872,6 +883,7 @@ function MealComposer({ name, onNameChange, items, onItemsChange, editableAmount
   headerLabel?: string;
   emptyHint: string;
   submitLabel: string;
+  submitDisabled?: boolean;
   onSubmit: () => void;
   children?: React.ReactNode;
 }) {
@@ -901,21 +913,22 @@ function MealComposer({ name, onNameChange, items, onItemsChange, editableAmount
       )}
       <div className="meal-total"><strong>{Math.round(totals.calories)} kcal</strong><span>{totals.protein.toFixed(1)}P · {totals.carbs.toFixed(1)}C · {totals.fat.toFixed(1)}F</span></div>
       {!nameValid && name.trim().length > 0 ? <p className="meal-composer-hint warn">Give the Meal a name of {MAX_MEAL_NAME_LENGTH} characters or fewer.</p> : null}
-      <button className="button lime full" disabled={items.length === 0 || !nameValid} onClick={onSubmit}>{submitLabel}</button>
+      <button className="button lime full" disabled={submitDisabled || items.length === 0 || !nameValid} onClick={onSubmit}>{submitLabel}</button>
     </div>
   );
 }
 
 /** Plan's door into MealComposer: saves a Meal for later without logging it. */
-function PlanMealBuilder({ initial, catalog, dayKey, onClose, onSave }: {
+function PlanMealBuilder({ initial, copying = false, catalog, dayKey, onClose, onSave }: {
   initial: UserMeal | null;
+  copying?: boolean;
   catalog: Food[];
   dayKey: string;
   onClose: () => void;
   onSave: (meal: UserMeal) => void;
 }) {
-  const creating = initial === null;
-  const [name, setName] = useState(initial?.name ?? "");
+  const creating = initial === null || copying;
+  const [name, setName] = useState(initial ? (copying ? `${initial.name.slice(0, Math.max(0, MAX_MEAL_NAME_LENGTH - 5))} copy` : initial.name) : "");
   const [items, setItems] = useState<TrayItem[]>(() => (initial ? initial.components.map((food, index) => ({ key: `saved-${index}-${food.id}`, food: { ...food } })) : []));
   const [search, setSearch] = useState("");
   const choices = search.trim() ? getShownSingleItems(catalog, "all", search).slice(0, 6) : [];
@@ -931,7 +944,7 @@ function PlanMealBuilder({ initial, catalog, dayKey, onClose, onSave }: {
     <div className="dialog-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}>
       <section className="food-dialog plan-meal-dialog" role="dialog" aria-modal="true" aria-labelledby="plan-meal-title">
         <header>
-          <div><span className="eyebrow">Plan · Meals</span><h2 id="plan-meal-title">{creating ? "Build a meal" : "Edit meal"}</h2></div>
+          <div><span className="eyebrow">Plan · Meals</span><h2 id="plan-meal-title">{copying ? "Copy meal" : creating ? "Build a meal" : "Edit meal"}</h2></div>
           <button className="close-button" onClick={onClose} aria-label="Close meal builder">×</button>
         </header>
         <div className="plan-meal-body">
@@ -942,7 +955,7 @@ function PlanMealBuilder({ initial, catalog, dayKey, onClose, onSave }: {
             onItemsChange={setItems}
             editableAmounts
             tone="light"
-            headerLabel={creating ? "New Meal" : "Editing Meal"}
+            headerLabel={copying ? "New copy" : creating ? "New Meal" : "Editing Meal"}
             emptyHint="Add the Single Items this Meal is made of. Each keeps its own snapshot, so correcting an item later never rewrites a Meal you already logged."
             submitLabel={creating ? "Save meal" : "Save changes"}
             onSubmit={save}
@@ -985,16 +998,34 @@ function getShownSingleItems(catalog: Food[], kind: "all" | SingleItemKind, sear
  * is no URL to paste for the packet in your hand. The camera comes first now;
  * the link stays for the desktop case of copying a product shot.
  *
- * The photo is uploaded immediately under its own key, so it survives even if
- * the food is renamed or its id changes on save, and is stored apart from meal
- * photos so the 30-day sweep never strips it.
+ * A picked photo is uploaded under a temporary key so the camera preview is
+ * immediate. The original remains untouched until the food itself is saved;
+ * cancel then removes only that temporary upload rather than changing a food
+ * the person decided not to edit.
  */
-function FoodPhotoField({ profileId, draft, setDraft }: { profileId: string; draft: Food; setDraft: React.Dispatch<React.SetStateAction<Food>> }) {
-  const [photoKey] = useState(() => foodPhotoKeyFromUrl(draft.imageUrl) ?? freshUnique());
+function FoodPhotoField({ profileId, draft, setDraft, shouldKeep, onBusyChange, onPendingPhotoChange }: { profileId: string; draft: Food; setDraft: React.Dispatch<React.SetStateAction<Food>>; shouldKeep: () => boolean; onBusyChange: (busy: boolean) => void; onPendingPhotoChange: (key: string | null) => void }) {
+  const [pendingPhotoKey, setPendingPhotoKey] = useState<string | null>(null);
+  const pendingPhotoKeyRef = useRef<string | null>(null);
+  const disposedRef = useRef(false);
   const [status, setStatus] = useState<"idle" | "uploading" | "saved" | "error">("idle");
   const [failureReason, setFailureReason] = useState("");
   const [linkOpen, setLinkOpen] = useState(false);
   const hasPhoto = Boolean(draft.imageUrl && isSafeImageUrl(draft.imageUrl));
+  const shouldKeepRef = useRef(shouldKeep);
+  const onBusyChangeRef = useRef(onBusyChange);
+  useEffect(() => {
+    shouldKeepRef.current = shouldKeep;
+    onBusyChangeRef.current = onBusyChange;
+  }, [onBusyChange, shouldKeep]);
+
+  useEffect(() => () => {
+    // If the editor closes while PUT is still in flight, its success arrives
+    // after the parent cleanup has run. Mark it disposed so the await below
+    // deletes that late temporary upload instead of stranding it forever.
+    disposedRef.current = true;
+    onBusyChangeRef.current(false);
+    if (pendingPhotoKeyRef.current && !shouldKeepRef.current()) void deleteFoodPhoto(profileId, pendingPhotoKeyRef.current);
+  }, [profileId]);
 
   const handlePick = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -1006,11 +1037,20 @@ function FoodPhotoField({ profileId, draft, setDraft }: { profileId: string; dra
       return;
     }
     setStatus("uploading");
+    onBusyChange(true);
+    const photoKey = pendingPhotoKeyRef.current ?? freshUnique();
     const result = await uploadFoodPhoto(profileId, photoKey, file);
+    if (disposedRef.current) {
+      if (result.ok) void deleteFoodPhoto(profileId, photoKey);
+      return;
+    }
+    onBusyChange(false);
     if (result.ok) {
-      // Cache-buster: the URL is unchanged when replacing a photo, so without it
-      // the browser keeps showing the old picture it already has.
+      // Cache-buster makes the just-uploaded preview win over a cached picture.
       setDraft((food) => ({ ...food, imageUrl: `${result.url}?v=${Date.now()}` }));
+      pendingPhotoKeyRef.current = photoKey;
+      setPendingPhotoKey(photoKey);
+      onPendingPhotoChange(photoKey);
       setFailureReason("");
       setStatus("saved");
     } else {
@@ -1020,7 +1060,23 @@ function FoodPhotoField({ profileId, draft, setDraft }: { profileId: string; dra
   };
 
   const handleRemove = async () => {
-    if (isFoodPhotoUrl(draft.imageUrl?.split("?")[0])) await deleteFoodPhoto(profileId, photoKey);
+    // Only a newly-uploaded preview can be removed immediately. An established
+    // photo stays safely in place until the surrounding food edit is saved.
+    if (pendingPhotoKeyRef.current) {
+      setStatus("uploading");
+      onBusyChange(true);
+      const removed = await deleteFoodPhoto(profileId, pendingPhotoKeyRef.current);
+      if (disposedRef.current) return;
+      onBusyChange(false);
+      if (!removed) {
+        setFailureReason("The Mac Mini could not remove it.");
+        setStatus("error");
+        return;
+      }
+    }
+    pendingPhotoKeyRef.current = null;
+    setPendingPhotoKey(null);
+    onPendingPhotoChange(null);
     setDraft((food) => ({ ...food, imageUrl: "" }));
     setStatus("idle");
     setFailureReason("");
@@ -1034,13 +1090,24 @@ function FoodPhotoField({ profileId, draft, setDraft }: { profileId: string; dra
         <div className="food-photo-actions">
           <label className="food-photo-button">
             {hasPhoto ? "Replace photo" : "📷 Take or choose a photo"}
-            <input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={handlePick} />
+            <input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={handlePick} disabled={status === "uploading"} />
           </label>
-          {hasPhoto ? <button type="button" className="text-button" onClick={handleRemove}>Remove</button> : null}
+          {hasPhoto ? <button type="button" className="text-button" onClick={handleRemove} disabled={status === "uploading"}>Remove</button> : null}
           <button type="button" className="text-button subtle" onClick={() => setLinkOpen((open) => !open)}>{linkOpen ? "Hide link field" : "or paste a link"}</button>
         </div>
       </div>
-      {linkOpen ? <input className="food-photo-link" value={draft.imageUrl ?? ""} onChange={(event) => { setDraft((food) => ({ ...food, imageUrl: event.target.value })); setStatus("idle"); }} placeholder="https:// link to a picture" /> : null}
+      {linkOpen ? <input className="food-photo-link" value={draft.imageUrl ?? ""} onChange={(event) => {
+        // A typed link replaces a staged camera image, so do not keep an
+        // unreachable temporary upload when the person changes their mind.
+        if (pendingPhotoKeyRef.current) {
+          void deleteFoodPhoto(profileId, pendingPhotoKeyRef.current);
+          pendingPhotoKeyRef.current = null;
+          setPendingPhotoKey(null);
+          onPendingPhotoChange(null);
+        }
+        setDraft((food) => ({ ...food, imageUrl: event.target.value }));
+        setStatus("idle");
+      }} placeholder="https:// link to a picture" /> : null}
       {status === "uploading" ? <small className="photo-attach-status" role="status">Saving photo…</small> : null}
       {status === "saved" ? <small className="photo-attach-status saved" role="status">✓ Photo saved to the Mac Mini</small> : null}
       {status === "error" ? <small className="photo-attach-status error" role="alert">Photo not saved — {failureReason} The item itself is unaffected.</small> : null}
@@ -1059,10 +1126,56 @@ function FoodDetailsEditor({ profileId, draft, setDraft, draftIsNew, saveToLibra
   onSave: () => void;
   submitLabel: string;
 }) {
+  const [initialFoodPhotoKey] = useState(() => foodPhotoKeyFromUrl(draft.imageUrl));
+  const pendingPhotoKeyRef = useRef<string | null>(null);
+  const savedPhotoEditRef = useRef(false);
+  const [photoBusy, setPhotoBusy] = useState(false);
   const kind = getSingleItemKind(draft);
   const brandLabel = kind === "ordered-food" ? "Restaurant / brand *" : "Brand *";
+  const nutritionUnits: NutritionUnit[] = ["g", "ml", "scoop", "pack", "piece", "serving"];
+  const conversions = draft.conversions ?? [];
+  const availableConversionUnits = nutritionUnits.filter((unit) => unit !== draft.unit && !conversions.some((conversion) => conversion.unit === unit));
+  const updateConversion = (index: number, change: Partial<NonNullable<Food["conversions"]>[number]>) => {
+    setDraft((food) => ({
+      ...food,
+      conversions: (food.conversions ?? []).map((conversion, conversionIndex) => conversionIndex === index ? { ...conversion, ...change } : conversion),
+    }));
+  };
+  const removeConversion = (index: number) => {
+    setDraft((food) => {
+      const next = (food.conversions ?? []).filter((_, conversionIndex) => conversionIndex !== index);
+      return { ...food, conversions: next.length ? next : undefined };
+    });
+  };
+  const addConversion = () => {
+    const unit = availableConversionUnits[0];
+    if (!unit || conversions.length >= MAX_FOOD_CONVERSIONS) return;
+    setDraft((food) => ({ ...food, conversions: [...(food.conversions ?? []), { unit, basisAmount: 1 }] }));
+  };
+  const changePendingPhoto = (key: string | null) => {
+    pendingPhotoKeyRef.current = key;
+  };
+  useEffect(() => () => {
+    // Backdrop and dialog-close actions unmount this editor without calling its
+    // visible Cancel button. They must get the same temporary-upload cleanup.
+    if (!savedPhotoEditRef.current && pendingPhotoKeyRef.current) void deleteFoodPhoto(profileId, pendingPhotoKeyRef.current);
+  }, [profileId]);
+  const cancelEdit = () => {
+    if (pendingPhotoKeyRef.current) void deleteFoodPhoto(profileId, pendingPhotoKeyRef.current);
+    pendingPhotoKeyRef.current = null;
+    onCancel();
+  };
+  const saveEdit = () => {
+    const finalPhotoKey = foodPhotoKeyFromUrl(draft.imageUrl);
+    savedPhotoEditRef.current = true;
+    onSave();
+    // Delete the old stored image only after the food record now points away
+    // from it. A failed cleanup can leave an unused file, but can never erase
+    // the photo the user still sees or prevent their food from being saved.
+    if (initialFoodPhotoKey && initialFoodPhotoKey !== finalPhotoKey) void deleteFoodPhoto(profileId, initialFoodPhotoKey);
+  };
   return <div className="food-details-editor">
-    <div className="details-heading"><div><span className="eyebrow bright">{draftIsNew ? "New Single Item" : "Single Item details"}</span><h3>{draftIsNew ? "Add it yourself" : "Edit anything"}</h3></div><button onClick={onCancel} aria-label="Cancel food details edit">×</button></div>
+    <div className="details-heading"><div><span className="eyebrow bright">{draftIsNew ? "New Single Item" : "Single Item details"}</span><h3>{draftIsNew ? "Add it yourself" : "Edit anything"}</h3></div><button onClick={cancelEdit} aria-label="Cancel food details edit">×</button></div>
     <label className="food-type-field"><span>Food type</span><select value={kind} onChange={(event) => setDraft((food) => ({ ...food, category: itemCategoryForKind(event.target.value as SingleItemKind), brand: event.target.value === "ingredient" ? "" : food.brand === "Generic" ? "" : food.brand }))}>{(["packaged", "ingredient", "ordered-food"] as SingleItemKind[]).map((value) => <option value={value} key={value}>{singleItemKindLabel(value)}</option>)}</select></label>
     <p>{kind === "ingredient" ? "Use this for a generic raw or cooked ingredient. No brand is needed." : kind === "ordered-food" ? "Use this only for a prepared meal ordered online, such as a specific Subway sandwich." : "Use this for a product with its own pack or nutrition label."}</p>
     <div className="identity-fields">
@@ -1075,18 +1188,28 @@ function FoodDetailsEditor({ profileId, draft, setDraft, draftIsNew, saveToLibra
       <label><span>Unit</span><select value={draft.unit} onChange={(event) => { const unit = event.target.value as Food["unit"]; setDraft((food) => ({ ...food, unit, conversions: food.conversions?.filter((conversion) => conversion.unit !== unit) })); }}>{["g", "ml", "scoop", "pack", "piece", "serving"].map((unit) => <option key={unit}>{unit}</option>)}</select></label>
     </div>
     <div className="conversion-fields">
-      <label><span>Also log by</span><select value={draft.conversions?.[0]?.unit ?? ""} onChange={(event) => { const unit = event.target.value as NutritionUnit | ""; setDraft((food) => ({ ...food, conversions: unit ? [{ unit, basisAmount: food.conversions?.[0]?.basisAmount ?? 1, label: food.conversions?.[0]?.label }] : undefined })); }}><option value="">No alternate unit</option>{(["g", "ml", "scoop", "pack", "piece", "serving"] as NutritionUnit[]).filter((unit) => unit !== draft.unit).map((unit) => <option key={unit}>{unit}</option>)}</select></label>
-      {draft.conversions?.[0] ? <><label><span>1 {draft.conversions[0].unit} equals</span><div><input type="number" min="0.01" max="5000" step="0.01" value={draft.conversions[0].basisAmount} onChange={(event) => setDraft((food) => ({ ...food, conversions: food.conversions?.map((conversion, index) => index === 0 ? { ...conversion, basisAmount: Number(event.target.value) } : conversion) }))} /><b>{draft.unit}</b></div></label><label><span>Friendly label</span><input value={draft.conversions[0].label ?? ""} onChange={(event) => setDraft((food) => ({ ...food, conversions: food.conversions?.map((conversion, index) => index === 0 ? { ...conversion, label: event.target.value } : conversion) }))} placeholder="e.g. 1 carton" /></label></> : null}
+      <div className="conversion-heading"><span>Alternate logging units <small>optional</small></span><small>Add every way you naturally measure this item.</small></div>
+      {conversions.map((conversion, index) => (
+        <div className="conversion-row" key={`${conversion.unit}-${index}`}>
+          <label><span>Log by</span><select value={conversion.unit} onChange={(event) => updateConversion(index, { unit: event.target.value as NutritionUnit })}>{nutritionUnits.filter((unit) => unit !== draft.unit && (unit === conversion.unit || !conversions.some((candidate, candidateIndex) => candidateIndex !== index && candidate.unit === unit))).map((unit) => <option key={unit}>{unit}</option>)}</select></label>
+          <label><span>1 {conversion.unit} equals</span><div><input type="number" min="0.01" max="5000" step="0.01" value={conversion.basisAmount} onChange={(event) => updateConversion(index, { basisAmount: Number(event.target.value) })} /><b>{draft.unit}</b></div></label>
+          <label><span>Friendly label</span><input maxLength={MAX_CONVERSION_LABEL_LENGTH} value={conversion.label ?? ""} onChange={(event) => updateConversion(index, { label: event.target.value })} placeholder="e.g. 1 carton" /></label>
+          <button type="button" className="conversion-remove" onClick={() => removeConversion(index)} aria-label={`Remove ${conversion.unit} alternate unit`}>Remove</button>
+        </div>
+      ))}
+      {availableConversionUnits.length > 0 && conversions.length < MAX_FOOD_CONVERSIONS ? <button type="button" className="conversion-add" onClick={addConversion}>＋ Add another unit</button> : null}
     </div>
     <div className="nutrition-fields">{(["calories", "protein", "carbs", "fat", "fiber"] as const).map((field) => <label key={field}><span>{field === "fiber" ? "Fibre" : field.charAt(0).toUpperCase() + field.slice(1)}</span><div><input type="number" min="0" max="50000" step="0.1" value={draft[field]} onChange={(event) => setDraft((food) => ({ ...food, [field]: Number(event.target.value) }))} /><b>{field === "calories" ? "kcal" : "g"}</b></div></label>)}</div>
     {draftIsNew ? <label className="save-choice"><input type="checkbox" checked={saveToLibrary} onChange={(event) => setSaveToLibrary(event.target.checked)} /><span><strong>Save to Single Items for next time</strong><small>{saveToLibrary ? "It will be waiting here tomorrow." : "This one is used today only."}</small></span></label> : null}
-    <FoodPhotoField profileId={profileId} draft={draft} setDraft={setDraft} />
-    <button className="button lime full" disabled={!isFoodDetailsValid(draft)} onClick={onSave}>{submitLabel}</button>
+    <FoodPhotoField profileId={profileId} draft={draft} setDraft={setDraft} shouldKeep={() => savedPhotoEditRef.current} onBusyChange={setPhotoBusy} onPendingPhotoChange={changePendingPhoto} />
+    <button className="button lime full" disabled={photoBusy || !isFoodDetailsValid(draft)} onClick={saveEdit}>{photoBusy ? "Saving photo…" : submitLabel}</button>
   </div>;
 }
 
-function MealEditor({ meal, onChange, onLog, buttonLabel }: { meal: UserMeal; onChange: (meal: UserMeal) => void; onLog: () => void; buttonLabel: string }) {
+function MealEditor({ meal, catalog, onChange, onLog, buttonLabel, disabled = false }: { meal: UserMeal; catalog: Food[]; onChange: (meal: UserMeal) => void; onLog: () => void; buttonLabel: string; disabled?: boolean }) {
   const totals = userMealTotals(meal);
+  const [search, setSearch] = useState("");
+  const choices = search.trim() ? getShownSingleItems(catalog, "all", search).slice(0, 6) : [];
   const updateAmount = (index: number, amount: number) => {
     const component = meal.components[index];
     if (!component) return;
@@ -1095,29 +1218,47 @@ function MealEditor({ meal, onChange, onLog, buttonLabel }: { meal: UserMeal; on
     onChange({ ...meal, components: meal.components.map((food, foodIndex) => foodIndex === index ? scaleNutritionForUnit(food, safeAmount, food.unit) : food) });
   };
   return <aside className="quantity-editor dark-card meal-editor">
-    <span className="eyebrow bright">Meal</span><h3>{meal.name}</h3><p>Adjustments here apply only to today’s diary entry.</p>
+    <span className="eyebrow bright">Meal</span>
+    <label className="meal-name-field"><span>Meal name for today</span><input value={meal.name} maxLength={MAX_MEAL_NAME_LENGTH} onChange={(event) => onChange({ ...meal, name: event.target.value })} /></label>
+    <p>Rename, resize, add, or remove anything here. Your reusable saved Meal stays unchanged.</p>
     <div className="meal-component-editor">{meal.components.map((component, index) => <div className="meal-component-row" key={`${component.id}-${index}`}><span><strong>{foodLabel(component)}</strong><small>{Math.round(component.calories)} kcal</small></span><label><input type="number" min="0.01" max={getQuantityLimit(component.unit)} step={component.unit === "g" || component.unit === "ml" ? 5 : component.unit === "piece" ? 1 : 0.25} value={component.amount} onChange={(event) => updateAmount(index, Number(event.target.value))} aria-label={`${component.name} amount`} /><b>{component.unit}</b></label><button onClick={() => onChange({ ...meal, components: meal.components.filter((_, componentIndex) => componentIndex !== index) })} aria-label={`Remove ${component.name} from this meal`}>×</button></div>)}</div>
+    {meal.components.length < MAX_MEAL_COMPONENTS ? <><div className="component-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Add an item for today…" aria-label="Search items to add to this one-off meal" /></div>{choices.length ? <div className="component-choices">{choices.map((food) => <button key={food.id} onClick={() => { onChange({ ...meal, components: [...meal.components, cloneNutritionItem(food)] }); setSearch(""); }}><span>{foodLabel(food)}</span><small>{Math.round(food.calories)} kcal / {food.amount} {food.unit}</small><b>＋</b></button>)}</div> : null}</> : <small className="meal-composer-hint">This Meal already has its maximum of {MAX_MEAL_COMPONENTS} items.</small>}
     <div className="meal-total"><strong>{Math.round(totals.calories)} kcal</strong><span>{totals.protein.toFixed(1)}P · {totals.carbs.toFixed(1)}C · {totals.fat.toFixed(1)}F</span></div>
-    <button className="button lime full" disabled={meal.components.length === 0} onClick={onLog}>{buttonLabel}</button>
+    {!isUserMealNameValid(meal.name) && meal.name.trim() ? <small className="meal-composer-hint warn">Give this Meal a name of {MAX_MEAL_NAME_LENGTH} characters or fewer.</small> : null}
+    <button className="button lime full" disabled={disabled || meal.components.length === 0 || !isUserMealNameValid(meal.name)} onClick={onLog}>{buttonLabel}</button>
   </aside>;
 }
 
 /**
  * A photo lives on the server the moment it is picked, keyed by `logId` — not
- * staged until the food is logged. That id is real either way (either the entry
- * already being edited, or one minted up front for a new one), so there is
- * nothing to reconcile later; a photo picked and then abandoned mid-dialog is
- * simply an orphaned upload the 30-day sweep clears on its own.
+ * staged until the food is logged. New-entry uploads are deleted on abandon,
+ * including when their request finishes after the dialog has already closed.
+ * Once the matching log commits, the same cleanup deliberately leaves it alone.
  */
-function PhotoAttachControl({ profileId, logId, initialMeta, onChange }: { profileId: string; logId: string | null; initialMeta: LogPhotoMeta | undefined; onChange: (meta: LogPhotoMeta | null) => void }) {
+function PhotoAttachControl({ profileId, logId, initialMeta, discardIfUncommitted, shouldKeep, onBusyChange, onChange }: { profileId: string; logId: string; initialMeta: LogPhotoMeta | undefined; discardIfUncommitted: boolean; shouldKeep: () => boolean; onBusyChange: (busy: boolean) => void; onChange: (meta: LogPhotoMeta | null) => void }) {
   // initialMeta only ever needs reading once: FoodDialog (this control's only caller)
   // is mounted fresh each time it opens, so there is no later prop change to sync from.
   const [meta, setMeta] = useState<LogPhotoMeta | undefined>(initialMeta);
   const [localPreview, setLocalPreview] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "uploading" | "error">("idle");
   const [failureReason, setFailureReason] = useState("");
+  const disposedRef = useRef(false);
+  const uploadedRef = useRef(Boolean(initialMeta));
+  const shouldKeepRef = useRef(shouldKeep);
+  const onBusyChangeRef = useRef(onBusyChange);
+  useEffect(() => {
+    shouldKeepRef.current = shouldKeep;
+    onBusyChangeRef.current = onBusyChange;
+  }, [onBusyChange, shouldKeep]);
   useEffect(() => () => { if (localPreview) URL.revokeObjectURL(localPreview); }, [localPreview]);
-  if (!logId) return null;
+  useEffect(() => {
+    disposedRef.current = false;
+    return () => {
+      disposedRef.current = true;
+      onBusyChangeRef.current(false);
+      if (discardIfUncommitted && uploadedRef.current && !shouldKeepRef.current()) void deleteLogPhoto(profileId, logId);
+    };
+  }, [discardIfUncommitted, logId, profileId]);
   const handlePick = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -1132,8 +1273,15 @@ function PhotoAttachControl({ profileId, logId, initialMeta, onChange }: { profi
       return URL.createObjectURL(file);
     });
     setStatus("uploading");
+    onBusyChange(true);
     const result = await uploadLogPhoto(profileId, logId, file);
+    if (disposedRef.current) {
+      if (result.ok && discardIfUncommitted && !shouldKeepRef.current()) void deleteLogPhoto(profileId, logId);
+      return;
+    }
+    onBusyChange(false);
     if (result.ok) {
+      uploadedRef.current = true;
       setStatus("idle");
       setFailureReason("");
       setMeta(result.meta);
@@ -1151,12 +1299,21 @@ function PhotoAttachControl({ profileId, logId, initialMeta, onChange }: { profi
   };
   const handleRemove = async () => {
     setStatus("uploading");
-    await deleteLogPhoto(profileId, logId);
+    onBusyChange(true);
+    const removed = await deleteLogPhoto(profileId, logId);
+    if (disposedRef.current) return;
+    onBusyChange(false);
+    if (!removed) {
+      setFailureReason("The Mac Mini could not remove it.");
+      setStatus("error");
+      return;
+    }
     setLocalPreview((previous) => {
       if (previous) URL.revokeObjectURL(previous);
       return null;
     });
     setMeta(undefined);
+    uploadedRef.current = false;
     setStatus("idle");
     onChange(null);
   };
@@ -1171,7 +1328,7 @@ function PhotoAttachControl({ profileId, logId, initialMeta, onChange }: { profi
       ) : (
         <label className="photo-attach-button">
           📷 Add a photo <small>optional — for your trainer</small>
-          <input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={handlePick} />
+          <input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={handlePick} disabled={status === "uploading"} />
         </label>
       )}
       {status === "error" ? <small className="photo-attach-status error" role="alert">Photo not saved — {failureReason} The food itself is unaffected; tap to try again.</small> : null}
@@ -1184,9 +1341,11 @@ function PhotoAttachControl({ profileId, logId, initialMeta, onChange }: { profi
 }
 
 function FoodDialog({ initialFood, initialMeal, editing, editingLogId, catalog, meals: mealOptions, dayKey, profileId, photoIndex, onClose, onAdd, onAddMeal, onSaveFood, onSaveMeal, onPhotoChange }: { initialFood: Food | null; initialMeal: UserMeal | null; editing: boolean; editingLogId: string | null; catalog: Food[]; meals: UserMeal[]; dayKey: string; profileId: string; photoIndex: PhotoIndex; onClose: () => void; onAdd: (food: Food, logId?: string) => void; onAddMeal: (meal: UserMeal, logId?: string) => void; onSaveFood: (food: Food) => void; onSaveMeal: (meal: UserMeal) => void; onPhotoChange: (logId: string, meta: LogPhotoMeta | null) => void }) {
-  /** Minted once, up front, so a photo can be attached before the entry is ever saved. */
-  const [pendingLogId] = useState(() => (editing ? null : freshUnique()));
+  /** A new id is minted after every add, so several foods logged in one open dialog never collapse into one synced row. */
+  const [pendingLogId, setPendingLogId] = useState(() => (editing ? null : freshUnique()));
   const activeLogId = editing ? editingLogId : pendingLogId;
+  const committedLogIdsRef = useRef(new Set<string>());
+  const [photoBusy, setPhotoBusy] = useState(false);
   const singleItems = catalog.filter((food) => food.category !== "Meal" && food.category !== "Composite");
   const initial = initialFood && initialFood.category !== "Meal" ? foodAtBasis(initialFood) : singleItems.find((food) => food.common) ?? singleItems[0];
   const [mode, setMode] = useState<"items" | "meals">(initialMeal ? "meals" : "items");
@@ -1236,6 +1395,17 @@ function FoodDialog({ initialFood, initialMeal, editing, editingLogId, catalog, 
     setDetailsOpen(true);
   };
   const nextUnique = freshUnique;
+  const commitActiveLogId = () => {
+    if (activeLogId) committedLogIdsRef.current.add(activeLogId);
+    return activeLogId ?? undefined;
+  };
+  const logSingleItem = (food: Food) => {
+    onAdd(food, commitActiveLogId());
+    if (!editing) setPendingLogId(freshUnique());
+  };
+  const logMeal = (meal: UserMeal) => {
+    onAddMeal(meal, commitActiveLogId());
+  };
   const startCreate = () => {
     const next = blankFood(search.trim());
     next.category = itemKind === "all" ? "Product" : itemCategoryForKind(itemKind);
@@ -1253,17 +1423,16 @@ function FoodDialog({ initialFood, initialMeal, editing, editingLogId, catalog, 
     if (draftIsNew) {
       const created = createCustomFood({ ...draft, imageUrl: image }, nextUnique());
       if (!created) return;
-      const withConversions: Food = { ...created, ...(draft.conversions?.length ? { conversions: draft.conversions } : {}) };
-      if (saveToLibrary) onSaveFood(withConversions);
-      setEditedFood(withConversions);
-      setSelectedId(withConversions.id);
-      setQuantity(withConversions.amount);
-      setLoggingUnit(withConversions.unit);
+      if (saveToLibrary) onSaveFood(created);
+      setEditedFood(created);
+      setSelectedId(created.id);
+      setQuantity(created.amount);
+      setLoggingUnit(created.unit);
       setDraftIsNew(false);
       setDetailsOpen(false);
-      const ready = scaleNutritionForUnit(withConversions, withConversions.amount, withConversions.unit);
+      const ready = scaleNutritionForUnit(created, created.amount, created.unit);
       if (buildingMeal) setMealLines((lines) => addToTray(lines, ready, freshTrayId()));
-      else onAdd(ready, activeLogId ?? undefined);
+      else logSingleItem(ready);
       return;
     }
 
@@ -1299,7 +1468,7 @@ function FoodDialog({ initialFood, initialMeal, editing, editingLogId, catalog, 
     const meal = createUserMeal(mealName, mealLines, nextUnique(), dayKey);
     if (!meal) return;
     onSaveMeal(meal);
-    onAddMeal(meal, activeLogId ?? undefined);
+    logMeal(meal);
     onClose();
   };
   const close = () => {
@@ -1315,7 +1484,7 @@ function FoodDialog({ initialFood, initialMeal, editing, editingLogId, catalog, 
         {mode === "items" || buildingMeal ? <div className="single-item-filters" aria-label="Single Item filters"><button className={itemKind === "all" ? "active" : ""} onClick={() => setItemKind("all")}>All</button>{(["packaged", "ingredient", "ordered-food"] as SingleItemKind[]).map((kind) => <button className={itemKind === kind ? "active" : ""} onClick={() => setItemKind(kind)} key={kind}>{singleItemKindLabel(kind)}</button>)}</div> : null}
         <div className="food-dialog-body">
           <div className="food-results">{mode === "meals" && !buildingMeal ? <>{editing ? null : <button className="create-food-row" onClick={() => { setBuildingMeal(true); setSearch(""); setMealName(""); setMealLines([]); }}><span className="food-thumb icon create" aria-hidden="true">＋</span><span><strong>Create a Meal</strong><small>Group one or more Single Items for quick logging</small></span></button>}{shownMeals.map((meal) => { const totals = userMealTotals(meal); return <button className={visibleMealDraft?.id === meal.id ? "selected" : ""} key={meal.id} onClick={() => setMealDraft(cloneUserMeal(meal))}><span className="food-thumb icon meal" aria-hidden="true"><FoodIcon name="meal" /></span><span><strong>{meal.name}</strong><small>{meal.components.length} item{meal.components.length === 1 ? "" : "s"}</small></span><span><b>{Math.round(totals.calories)}</b><small>kcal</small></span><i>→</i></button>; })}{shownMeals.length === 0 ? <div className="food-results-empty"><strong>No Meal found</strong><span>Create one from your Single Items.</span></div> : null}</> : <>{editing ? null : <button className="create-food-row" onClick={startCreate}><span className="food-thumb icon create" aria-hidden="true">＋</span><span><strong>{search.trim() ? `Add “${search.trim()}” as a new Single Item` : "Add a new Single Item"}</strong><small>Packaged Food, Open Ingredient, or Ordered Food</small></span></button>}{shownItems.map((food) => <button className={selected?.id === food.id ? "selected" : ""} key={food.id} onClick={() => chooseFood(food)}><FoodThumb food={food} /><span><strong>{foodLabel(food)}</strong><small>{singleItemKindLabel(getSingleItemKind(food))} · {food.amount} {food.unit}</small></span><span><b>{Math.round(food.calories)}</b><small>kcal</small></span><i>→</i></button>)}{shownItems.length === 0 ? <div className="food-results-empty"><strong>No match yet</strong><span>Add it as a new Single Item without leaving this flow.</span></div> : null}</>}</div>
-          {mode === "meals" && !buildingMeal ? (visibleMealDraft ? <MealEditor meal={visibleMealDraft} onChange={setMealDraft} onLog={() => { onAddMeal(visibleMealDraft, activeLogId ?? undefined); close(); }} buttonLabel={editing ? "Update today’s Meal" : "Log this Meal"} /> : <aside className="quantity-editor quantity-editor-empty dark-card"><span className="eyebrow bright">Meal</span><h3>{search.trim() ? "No Meal selected" : "Choose a Meal"}</h3><p>{search.trim() ? "Try a different Meal name or create a new one." : "Your saved Meals will appear here."}</p></aside>) : <aside className={`quantity-editor dark-card ${detailsOpen ? "details-mode" : ""} ${buildingMeal ? "meal-builder-mode" : ""}`}>
+          {mode === "meals" && !buildingMeal ? (visibleMealDraft ? <MealEditor meal={visibleMealDraft} catalog={catalog} onChange={setMealDraft} onLog={() => { logMeal(visibleMealDraft); close(); }} buttonLabel={editing ? "Update today’s Meal" : "Log this Meal"} disabled={photoBusy} /> : <aside className="quantity-editor quantity-editor-empty dark-card"><span className="eyebrow bright">Meal</span><h3>{search.trim() ? "No Meal selected" : "Choose a Meal"}</h3><p>{search.trim() ? "Try a different Meal name or create a new one." : "Your saved Meals will appear here."}</p></aside>) : <aside className={`quantity-editor dark-card ${detailsOpen ? "details-mode" : ""} ${buildingMeal ? "meal-builder-mode" : ""}`}>
             {detailsOpen ? <FoodDetailsEditor profileId={profileId} draft={draft} setDraft={setDraft} draftIsNew={draftIsNew} saveToLibrary={saveToLibrary} setSaveToLibrary={setSaveToLibrary} onCancel={() => { setDetailsOpen(false); setDraftIsNew(false); }} onSave={saveDetails} submitLabel={draftIsNew ? buildingMeal ? "Create & add to Meal" : "Create & log it" : "Save changes"} /> : selected && scaled ? <>
             <span className="eyebrow bright">Single Item</span><h3>{foodLabel(selected)}</h3><p>Choose weight, volume, or a natural unit. Nutrition stays on the same evidence-backed basis.</p>
             <label className="logging-unit-field"><span>Log by</span><select aria-label={`${selected.name} logging unit`} value={loggingUnit} onChange={(event) => { const unit = event.target.value as NutritionUnit; setLoggingUnit(unit); setQuantity(unit === (selected.basis?.unit ?? selected.unit) ? (selected.basis?.amount ?? selected.amount) : 1); }}>{getLoggingUnits(selected).map((unit) => <option value={unit} key={unit}>{unit === (selected.basis?.unit ?? selected.unit) ? unit : `${unit} · ${getLoggingUnitLabel(selected, unit)}`}</option>)}</select></label>
@@ -1324,12 +1493,12 @@ function FoodDialog({ initialFood, initialMeal, editing, editingLogId, catalog, 
             <div className="live-nutrition"><strong><b>{Math.round(scaled.calories)}</b><small>kcal</small></strong><span><b>{scaled.protein.toFixed(1)}g</b><small>protein</small></span><span><b>{scaled.carbs.toFixed(1)}g</b><small>carbs</small></span><span><b>{scaled.fat.toFixed(1)}g</b><small>fat</small></span><span><b>{scaled.fiberDeclared === false ? "—" : `${scaled.fiber.toFixed(1)}g`}</b><small>{scaled.fiberDeclared === false ? "fibre not declared" : "fibre"}</small></span></div>
             <button className="edit-food-button" onClick={openDetails}>✎ Edit name, serving & nutrition</button>
             {selected.source.url ? <a href={selected.source.url} target="_blank" rel="noreferrer">{selected.source.label} ↗</a> : <span className="personal-source">{selected.source.label}</span>}
-            <button className={`button ${buildingMeal ? "outline-light" : "lime"} full add-food-button`} disabled={!quantityValid} onClick={() => buildingMeal ? addMealLine() : onAdd(scaled, activeLogId ?? undefined)}>{buildingMeal ? `＋ Add ${quantity} ${loggingUnit} to Meal` : `${editing ? "Update" : "Add"} ${quantity} ${loggingUnit} · ${Math.round(scaled.calories)} kcal`}</button>
+            <button className={`button ${buildingMeal ? "outline-light" : "lime"} full add-food-button`} disabled={!quantityValid || (!buildingMeal && photoBusy)} onClick={() => buildingMeal ? addMealLine() : logSingleItem(scaled)}>{buildingMeal ? `＋ Add ${quantity} ${loggingUnit} to Meal` : `${editing ? "Update" : "Add"} ${quantity} ${loggingUnit} · ${Math.round(scaled.calories)} kcal`}</button>
             </> : <div className="quantity-editor-empty"><span className="eyebrow bright">Single Item</span><h3>{search.trim() ? "No item selected" : "Choose an item"}</h3><p>Use the add-new action when search has no match.</p></div>}
-            {buildingMeal && !detailsOpen ? <MealComposer name={mealName} onNameChange={setMealName} items={mealLines} onItemsChange={setMealLines} emptyHint="Add Single Items one by one. Nothing is logged until you save the Meal." submitLabel="Save & log Meal" onSubmit={saveBuiltMeal} /> : null}
+            {buildingMeal && !detailsOpen ? <MealComposer name={mealName} onNameChange={setMealName} items={mealLines} onItemsChange={setMealLines} emptyHint="Add Single Items one by one. Nothing is logged until you save the Meal." submitLabel="Save & log Meal" submitDisabled={photoBusy} onSubmit={saveBuiltMeal} /> : null}
           </aside>}
         </div>
-        {activeLogId && !detailsOpen && (selected || visibleMealDraft || buildingMeal) ? <div className="photo-attach-wrap dark-card"><PhotoAttachControl profileId={profileId} logId={activeLogId} initialMeta={photoIndex[activeLogId]} onChange={(meta) => onPhotoChange(activeLogId, meta)} /></div> : null}
+        {activeLogId && !detailsOpen && (selected || visibleMealDraft || buildingMeal) ? <div className="photo-attach-wrap dark-card"><PhotoAttachControl key={activeLogId} profileId={profileId} logId={activeLogId} initialMeta={photoIndex[activeLogId]} discardIfUncommitted={!editing} shouldKeep={() => committedLogIdsRef.current.has(activeLogId)} onBusyChange={setPhotoBusy} onChange={(meta) => onPhotoChange(activeLogId, meta)} /></div> : null}
         {editing ? null : <div className="dialog-footer"><button className="button secondary full" onClick={close}>Done</button></div>}
       </section>
     </div>
@@ -1358,11 +1527,10 @@ function RecipeDrawer({ recipe, onClose, onPlan }: { recipe: Recipe | null; onCl
 /**
  * Where KP's data lives and how to get it out.
  *
- * The diary is browser storage, which is scoped to the exact origin — so
- * http://localhost:4317 and any other port are separate diaries that never
- * merge, and clearing browser data ends both. Until the Mac Mini store lands,
- * an export file is the only thing that survives any of that, so this panel
- * says so plainly rather than implying the data is safe by default.
+ * The browser keeps a local working copy for resilience, while the Mac Mini is
+ * the shared durable copy once its write has succeeded. This panel must never
+ * describe those two layers as separate diaries: that would make a successful
+ * sync look like a lie and discourage the backup behaviour it is meant to aid.
  */
 function SettingsPanel({ state, dayKey, onClose, onImport, onClearAll, profiles, profileId, activeProfile, syncStatus, onSwitchProfile, onAddProfile, onRenameProfile, onRemoveProfile }: {
   state: SavedNutritionState;
@@ -1494,9 +1662,10 @@ function SettingsPanel({ state, dayKey, onClose, onImport, onClearAll, profiles,
           <section className="settings-block settings-truth">
             <h3>Where this is stored</h3>
             <p>
-              In this browser only, under this exact address. A different browser, a different
-              Mac, or a different port is a different diary — they do not sync. Clearing browser
-              data removes it. A downloaded backup is the only copy that survives any of that.
+              This browser keeps a local working copy under this exact address. When the status
+              above says it is saved on the Mac Mini, it is also stored there and shared between
+              connected devices. Clearing browser data removes this browser copy; a downloaded
+              backup remains a useful independent safety copy.
             </p>
           </section>
         </div>
@@ -1570,9 +1739,9 @@ function NourishApp() {
   const [recipe, setRecipe] = useState<Recipe | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   /** Non-null while Plan’s food editor is open; `initial` null means creating. */
-  const [planFoodEditor, setPlanFoodEditor] = useState<{ initial: Food | null } | null>(null);
+  const [planFoodEditor, setPlanFoodEditor] = useState<{ initial: Food | null; initialName?: string; copying?: boolean } | null>(null);
   /** Non-null while Plan’s meal builder is open; `initial` null means creating. */
-  const [planMealBuilder, setPlanMealBuilder] = useState<{ initial: UserMeal | null } | null>(null);
+  const [planMealBuilder, setPlanMealBuilder] = useState<{ initial: UserMeal | null; copying?: boolean } | null>(null);
   const [toast, setToast] = useState("");
   const toastTimer = useRef<number | null>(null);
   const [storageLoaded, setStorageLoaded] = useState(false);
@@ -1796,6 +1965,23 @@ function NourishApp() {
   const entries = restoreDayEntries(saved, clock.dayKey, foodCatalog);
   const extras = entries.map((entry) => entry.food);
   const undoRef = useRef<PendingUndo | null>(null);
+  const foodPhotoCleanupTimers = useRef(new Map<string, number>());
+  const logPhotoCleanupTimers = useRef(new Map<string, number>());
+  const scheduleLogPhotoCleanup = (logId: string) => {
+    const prior = logPhotoCleanupTimers.current.get(logId);
+    if (prior !== undefined) window.clearTimeout(prior);
+    const timer = window.setTimeout(() => {
+      logPhotoCleanupTimers.current.delete(logId);
+      void deleteLogPhoto(profileId, logId).then((removed) => { if (removed) updatePhotoIndex(logId, null); });
+    }, 10_000);
+    logPhotoCleanupTimers.current.set(logId, timer);
+  };
+  const cancelLogPhotoCleanup = (logId: string | undefined) => {
+    if (!logId) return;
+    const timer = logPhotoCleanupTimers.current.get(logId);
+    if (timer !== undefined) window.clearTimeout(timer);
+    logPhotoCleanupTimers.current.delete(logId);
+  };
   const planned = restorePlanEntries(saved, foodCatalog);
   const totals = sumLoggedNutrition(extras, { calories: 0, protein: 0, carbs: 0, fat: 0 });
   const calories = totals.calories;
@@ -1826,7 +2012,7 @@ function NourishApp() {
    * logging shows up in Plan.
    */
   const savePlanFood = (draft: Food, isNew: boolean) => {
-    const food = isNew ? createCustomFood({ ...draft, category: draft.category, imageUrl: draft.imageUrl }, freshUnique()) : draft;
+    const food = isNew ? createCustomFood({ ...draft, category: draft.category, imageUrl: draft.imageUrl, conversions: draft.conversions }, freshUnique()) : draft;
     if (!food) {
       notify("That item needs a name, a serving size, and non-negative macros");
       return;
@@ -1905,6 +2091,7 @@ function NourishApp() {
     if (!entry) return;
     undoRef.current = { kind: "log", dayKey, entry, index: logIndex };
     setSaved((current) => withDayLogs(current, dayKey, logsForDay(current, dayKey).filter((_, index) => index !== logIndex)));
+    if (entry.logId) scheduleLogPhotoCleanup(entry.logId);
     notify(`${label} removed · tap Undo to put it back`, 10_000);
   };
   const deleteLoggedFood = (index: number) => {
@@ -1918,18 +2105,49 @@ function NourishApp() {
     if (!outcome.removed) return;
     undoRef.current = { kind: "record", record: outcome.removed };
     setSaved(outcome.state);
+    if (outcome.removed.kind === "customFood") {
+      const photoKey = foodPhotoKeyFromUrl(outcome.removed.food.imageUrl);
+      if (photoKey) {
+        const prior = foodPhotoCleanupTimers.current.get(photoKey);
+        if (prior !== undefined) window.clearTimeout(prior);
+        const timer = window.setTimeout(() => {
+          foodPhotoCleanupTimers.current.delete(photoKey);
+          void deleteFoodPhoto(profileId, photoKey);
+        }, 10_000);
+        foodPhotoCleanupTimers.current.set(photoKey, timer);
+      }
+    }
+    if (outcome.removed.kind === "day") {
+      for (const entry of outcome.removed.day.logs) if (entry.logId) scheduleLogPhotoCleanup(entry.logId);
+    }
     notify(`${label} deleted · tap Undo to put it back`, 10_000);
   };
   const undoDelete = () => {
     const pending = undoRef.current;
     if (!pending) return;
     if (pending.kind === "log") {
+      cancelLogPhotoCleanup(pending.entry.logId);
       setSaved((current) => withDayLogs(current, pending.dayKey, (() => {
         const logs = [...logsForDay(current, pending.dayKey)];
         logs.splice(Math.min(pending.index, logs.length), 0, pending.entry);
         return logs;
       })()));
     } else {
+      if (!canRestoreRecord(saved, pending.record)) {
+        notify("Undo is ready, but your saved items are full. Make room, then tap Undo — nothing was removed to make space.", 10_000);
+        return;
+      }
+      if (pending.record.kind === "customFood") {
+        const photoKey = foodPhotoKeyFromUrl(pending.record.food.imageUrl);
+        const timer = photoKey ? foodPhotoCleanupTimers.current.get(photoKey) : undefined;
+        if (photoKey && timer !== undefined) {
+          window.clearTimeout(timer);
+          foodPhotoCleanupTimers.current.delete(photoKey);
+        }
+      }
+      if (pending.record.kind === "day") {
+        for (const entry of pending.record.day.logs) cancelLogPhotoCleanup(entry.logId);
+      }
       setSaved((current) => restoreRecord(current, pending.record));
     }
     undoRef.current = null;
@@ -2025,10 +2243,10 @@ function NourishApp() {
       if (trackView === "today") return <TodayView clock={clock} calories={calories} macros={macros} entries={entries} quickFoods={quickFoods} weights={saved.weights} hasCardIqImport={cardIqImport !== null} targets={targets} targetsAreDefaults={targetsAreDefaults} history={history} profileId={profileId} photoIndex={photoIndex} onLog={() => openFoodLogger()} onAdd={(food) => openFoodLogger(food)} onEdit={(index) => openFoodLogger(entries[index]?.food ?? null, index, entries[index]?.meal ?? null)} onDelete={deleteLoggedFood} onSaveWeight={saveWeight} onDeleteWeight={(date) => deleteRecord("weight", date, `The ${date} weigh-in`)} onOpenMeals={() => { setArea("plan"); setPlanView("meals"); window.scrollTo({ top: 0, behavior: "smooth" }); }} onSaveTargets={saveTargets} />;
       if (trackView === "history") return <HistoryView history={history} clock={clock} targets={targets} entriesFor={(dayKey) => restoreDayEntries(saved, dayKey, foodCatalog)} profileId={profileId} photoIndex={photoIndex} onDeleteEntry={deleteLoggedEntry} onDeleteDay={(dayKey) => deleteRecord("day", dayKey, `${dayKey}`)} />;
       if (trackView === "trends") return <TrendsView history={history} targets={targets} />;
-      return <PurchasesView cardIqImport={cardIqImport} onAdd={(food) => openFoodLogger(food)} />;
+      return <PurchasesView cardIqImport={cardIqImport} onAdd={(food) => openFoodLogger(food)} onCreateFromPurchase={(name) => setPlanFoodEditor({ initial: null, initialName: name })} />;
     }
-    if (planView === "items") return <ItemsView planned={planned} catalog={foodCatalog} onPlan={addItemToPlan} onRemove={removeFromPlan} onCreate={() => setPlanFoodEditor({ initial: null })} onEdit={(food) => setPlanFoodEditor({ initial: food })} onDelete={(food) => deleteRecord("customFood", food.id, foodLabel(food))} />;
-    return <MealsView onRecipe={setRecipe} planned={planned} catalog={foodCatalog} userMeals={saved.userMeals} onPlan={addMealToPlan} onPlanFood={addItemToPlan} onRemove={removeFromPlan} onCreateMeal={() => setPlanMealBuilder({ initial: null })} onEditMeal={(meal) => setPlanMealBuilder({ initial: meal })} onDeleteMeal={(meal) => deleteRecord("userMeal", meal.id, meal.name)} />;
+    if (planView === "items") return <ItemsView planned={planned} catalog={foodCatalog} onPlan={addItemToPlan} onRemove={removeFromPlan} onCreate={() => setPlanFoodEditor({ initial: null })} onEdit={(food) => setPlanFoodEditor({ initial: food })} onCopy={(food) => setPlanFoodEditor({ initial: food, copying: true })} onDelete={(food) => deleteRecord("customFood", food.id, foodLabel(food))} />;
+    return <MealsView onRecipe={setRecipe} planned={planned} catalog={foodCatalog} userMeals={saved.userMeals} onPlan={addMealToPlan} onPlanFood={addItemToPlan} onRemove={removeFromPlan} onCreateMeal={() => setPlanMealBuilder({ initial: null })} onEditMeal={(meal) => setPlanMealBuilder({ initial: meal })} onCopyMeal={(meal) => setPlanMealBuilder({ initial: meal, copying: true })} onDeleteMeal={(meal) => deleteRecord("userMeal", meal.id, meal.name)} />;
   };
 
   return (
@@ -2049,8 +2267,8 @@ function NourishApp() {
       {foodDialog ? <FoodDialog initialFood={foodDialogSelection} initialMeal={foodDialogMealSelection} editing={editingFoodIndex !== null} editingLogId={editingFoodIndex !== null ? entries[editingFoodIndex]?.logId ?? null : null} catalog={foodCatalog} meals={logMeals} dayKey={clock.dayKey} profileId={profileId} photoIndex={photoIndex} onClose={() => { setFoodDialog(false); setFoodDialogSelection(null); setFoodDialogMealSelection(null); setEditingFoodIndex(null); }} onAdd={addFood} onAddMeal={addMeal} onSaveFood={saveCustomFood} onSaveMeal={saveUserMeal} onPhotoChange={updatePhotoIndex} /> : null}
       <RecipeDrawer recipe={recipe} onClose={() => setRecipe(null)} onPlan={addMealToPlan} />
       {settingsOpen ? <SettingsPanel state={saved} dayKey={clock.dayKey} onClose={() => setSettingsOpen(false)} onImport={importBackup} onClearAll={clearEverything} profiles={profiles} profileId={profileId} activeProfile={activeProfile} syncStatus={syncStatus} onSwitchProfile={switchProfile} onAddProfile={addProfile} onRenameProfile={renameActiveProfile} onRemoveProfile={removeProfile} /> : null}
-      {planFoodEditor ? <PlanFoodEditor initial={planFoodEditor.initial} profileId={profileId} onClose={() => setPlanFoodEditor(null)} onSave={savePlanFood} /> : null}
-      {planMealBuilder ? <PlanMealBuilder initial={planMealBuilder.initial} catalog={foodCatalog} dayKey={clock.dayKey} onClose={() => setPlanMealBuilder(null)} onSave={(meal) => { saveUserMeal(meal); setPlanMealBuilder(null); }} /> : null}
+      {planFoodEditor ? <PlanFoodEditor initial={planFoodEditor.initial} initialName={planFoodEditor.initialName} copying={planFoodEditor.copying} profileId={profileId} onClose={() => setPlanFoodEditor(null)} onSave={savePlanFood} /> : null}
+      {planMealBuilder ? <PlanMealBuilder initial={planMealBuilder.initial} copying={planMealBuilder.copying} catalog={foodCatalog} dayKey={clock.dayKey} onClose={() => setPlanMealBuilder(null)} onSave={(meal) => { saveUserMeal(meal); setPlanMealBuilder(null); }} /> : null}
       <div className={`toast ${toast ? "visible" : ""}`} role="status" aria-live="polite"><i>✓</i><span>{toast}</span>{toast.includes("tap Undo") ? <button className="toast-undo" onClick={undoDelete}>Undo</button> : null}</div>
     </div>
   );

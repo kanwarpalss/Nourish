@@ -1,4 +1,5 @@
 import { MAX_MEAL_COMPONENTS, MAX_NUTRITION_VALUE, MAX_USER_MEALS, userMealTotals, type UserMeal } from "./logging-session";
+import { isFoodPhotoUrl } from "./log-photos";
 import type { NutritionItem } from "./nutrition-data";
 import { isQuantityValid } from "./prototype-logic";
 
@@ -16,7 +17,7 @@ export const NUTRITION_BACKUP_STORAGE_KEY = "nourish.nutrition.backup";
  * does not recognise destroys data written by a newer one — which is exactly how
  * "my entries vanished after an update" happens.
  */
-export const KNOWN_STATE_KEYS = ["schemaVersion", "days", "planned", "targets", "customFoods", "userMeals", "weights", "removed"] as const;
+export const KNOWN_STATE_KEYS = ["schemaVersion", "days", "planned", "targets", "customFoods", "userMeals", "weights", "removed", "removalDecisions"] as const;
 
 /**
  * How many days of diary are kept. Thirteen months so a full year of trends always has a
@@ -111,29 +112,42 @@ export type RemovedRecords = {
   userMeals: string[];
   days: string[];
   weights: string[];
+  logs: string[];
 };
 
 /** The collections a record can be deleted from, and what identifies a record in each. */
 export type RemovableKind = "customFood" | "userMeal" | "weight" | "day";
+type RemovalKind = RemovableKind | "log";
+
+/**
+ * The latest deliberate decision for a record. A plain tombstone can say only
+ * "deleted"; it cannot represent a later Undo when another device still has
+ * the earlier deletion. The timestamp makes delete and restore commutative
+ * across sync: whichever decision happened last wins.
+ */
+export type RemovalDecision = { removed: boolean; at: number };
+export type RemovalDecisions = Record<keyof RemovedRecords, Record<string, RemovalDecision>>;
 
 /**
  * A deleted record, complete enough to put back exactly as it was. Returned by
  * `removeRecord` so the caller can offer Undo without re-reading storage.
  */
 export type RemovedRecord =
-  | { kind: "customFood"; food: NutritionItem }
+  | { kind: "customFood"; food: NutritionItem; planned: Array<{ entry: SavedPlanEntry; index: number }> }
   | { kind: "userMeal"; meal: UserMeal }
   | { kind: "weight"; entry: WeightEntry }
   | { kind: "day"; day: SavedDay };
 
-const REMOVED_KEYS: Record<RemovableKind, keyof RemovedRecords> = {
+const REMOVED_KEYS: Record<RemovalKind, keyof RemovedRecords> = {
   customFood: "customFoods",
   userMeal: "userMeals",
   weight: "weights",
   day: "days",
+  log: "logs",
 };
 
-export const emptyRemovedRecords = (): RemovedRecords => ({ customFoods: [], userMeals: [], days: [], weights: [] });
+export const emptyRemovedRecords = (): RemovedRecords => ({ customFoods: [], userMeals: [], days: [], weights: [], logs: [] });
+export const emptyRemovalDecisions = (): RemovalDecisions => ({ customFoods: {}, userMeals: {}, days: {}, weights: {}, logs: {} });
 
 /**
  * Schema 2 keeps every day rather than only the current one.
@@ -155,6 +169,8 @@ export type PersistedNutritionState = {
   weights: WeightEntry[];
   /** Ids KP deleted on purpose, so a restore cannot bring them back. */
   removed: RemovedRecords;
+  /** Durable delete/restore ordering, so Undo also survives a cross-device sync. */
+  removalDecisions: RemovalDecisions;
   /**
    * Fields found in storage that this build does not know about, preserved
    * verbatim and written back, so an older build cannot silently delete data a
@@ -174,7 +190,7 @@ export type SavedNutritionState = PersistedNutritionState & {
 
 const DAY_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
-export const emptyNutritionState = (): SavedNutritionState => ({ schemaVersion: 2, days: [], planned: [], targets: null, customFoods: [], userMeals: [], weights: [], removed: emptyRemovedRecords(), rejected: 0 });
+export const emptyNutritionState = (): SavedNutritionState => ({ schemaVersion: 2, days: [], planned: [], targets: null, customFoods: [], userMeals: [], weights: [], removed: emptyRemovedRecords(), removalDecisions: emptyRemovalDecisions(), rejected: 0 });
 
 const units = new Set<NutritionItem["unit"]>(["g", "ml", "scoop", "pack", "piece", "serving"]);
 const categories = new Set<NutritionItem["category"]>(["Ordered", "Product", "Ingredient", "OrderedFood", "Meal", "Composite"]);
@@ -246,11 +262,10 @@ function parseFood(value: unknown): NutritionItem | null {
  */
 export function isSafeImageUrl(value: unknown): value is string {
   if (typeof value !== "string" || value.length > 2000) return false;
-  // A photo KP took of his own food is stored on the diary database and
-  // referenced by this same-origin path. It has no scheme or host, so it must
-  // be allowed explicitly — `new URL()` below would reject it. Anchored to the
-  // API prefix and free of "..", so it can only ever point back at the diary.
-  if (value.startsWith("/api/nourish/")) return !value.includes("..");
+  // A photo KP took of his own food has no scheme or host, so `new URL()` below
+  // would reject it. Allow only the exact diary route which owns food photos;
+  // a broad API prefix would let unrelated same-origin endpoints become images.
+  if (isFoodPhotoUrl(value)) return true;
   try {
     const url = new URL(value);
     return url.protocol === "https:" || url.protocol === "http:";
@@ -408,7 +423,53 @@ function parseRemovedRecords(value: unknown): RemovedRecords {
     userMeals: parseRemovedIds(candidate.userMeals, isId),
     days: parseRemovedIds(candidate.days, isDateKey),
     weights: parseRemovedIds(candidate.weights, isDateKey),
+    logs: parseRemovedIds(candidate.logs, isId),
   };
+}
+
+function emptyRemovalDecisionEntries(): Record<string, RemovalDecision> {
+  return {};
+}
+
+function parseRemovalDecisionEntries(value: unknown, isValidId: (id: string) => boolean): Record<string, RemovalDecision> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return emptyRemovalDecisionEntries();
+  const parsed = Object.entries(value).flatMap(([id, candidate]) => {
+    if (!isValidId(id) || !candidate || typeof candidate !== "object") return [];
+    const decision = candidate as { removed?: unknown; at?: unknown };
+    if (typeof decision.removed !== "boolean" || !Number.isSafeInteger(decision.at) || decision.at < 0) return [];
+    return [[id, { removed: decision.removed, at: decision.at }] as const];
+  });
+  return Object.fromEntries(parsed.sort((left, right) => left[1].at - right[1].at).slice(-MAX_REMOVED_IDS));
+}
+
+function parseRemovalDecisions(value: unknown): RemovalDecisions {
+  const candidate = value && typeof value === "object" && !Array.isArray(value) ? value as Partial<RemovalDecisions> : {};
+  const isId = (id: string) => id.length > 0 && id.length <= 200;
+  return {
+    customFoods: parseRemovalDecisionEntries(candidate.customFoods, isId),
+    userMeals: parseRemovalDecisionEntries(candidate.userMeals, isId),
+    days: parseRemovalDecisionEntries(candidate.days, isDateKey),
+    weights: parseRemovalDecisionEntries(candidate.weights, isDateKey),
+    logs: parseRemovalDecisionEntries(candidate.logs, isId),
+  };
+}
+
+function withLegacyRemovalDecisions(removed: RemovedRecords, decisions: RemovalDecisions): RemovalDecisions {
+  const result: RemovalDecisions = { ...decisions, customFoods: { ...decisions.customFoods }, userMeals: { ...decisions.userMeals }, days: { ...decisions.days }, weights: { ...decisions.weights }, logs: { ...decisions.logs } };
+  for (const kind of Object.keys(REMOVED_KEYS) as RemovalKind[]) {
+    const key = REMOVED_KEYS[kind];
+    for (const id of removed[key]) result[key][id] ??= { removed: true, at: 0 };
+  }
+  return result;
+}
+
+function removedFromDecisions(decisions: RemovalDecisions): RemovedRecords {
+  const result = emptyRemovedRecords();
+  for (const kind of Object.keys(REMOVED_KEYS) as RemovalKind[]) {
+    const key = REMOVED_KEYS[kind];
+    result[key] = Object.entries(decisions[key]).filter(([, decision]) => decision.removed).map(([id]) => id).slice(-MAX_REMOVED_IDS);
+  }
+  return result;
 }
 
 /** Newest first, one entry per day, capped. Empty days are dropped so they cannot masquerade as fasted days. */
@@ -439,7 +500,7 @@ export function parseSavedNutritionState(raw: string | null): SavedNutritionStat
   try {
     const parsed: unknown = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return emptyNutritionState();
-    const value = parsed as { schemaVersion?: unknown; days?: unknown; dayKey?: unknown; logs?: unknown; planned?: unknown; targets?: unknown; customFoods?: unknown; userMeals?: unknown; weights?: unknown; removed?: unknown };
+    const value = parsed as { schemaVersion?: unknown; days?: unknown; dayKey?: unknown; logs?: unknown; planned?: unknown; targets?: unknown; customFoods?: unknown; userMeals?: unknown; weights?: unknown; removed?: unknown; removalDecisions?: unknown };
     // Anything this build does not recognise rides along untouched. `dayKey` and
     // `logs` are schema-1 fields consumed by the migration below, and `rejected`
     // describes a load, so none of those are carried.
@@ -469,7 +530,9 @@ export function parseSavedNutritionState(raw: string | null): SavedNutritionStat
       weightByDate.set(candidate.date, { date: candidate.date, kg: Math.round((candidate.kg as number) * 10) / 10 });
     }
     const weights = [...weightByDate.values()].sort((left, right) => left.date.localeCompare(right.date));
-    const removed = parseRemovedRecords(value.removed);
+    const legacyRemoved = parseRemovedRecords(value.removed);
+    const removalDecisions = withLegacyRemovalDecisions(legacyRemoved, parseRemovalDecisions(value.removalDecisions));
+    const removed = removedFromDecisions(removalDecisions);
     // Duplicate ids collapse legitimately, so custom foods and meals are counted
     // against the parsed list rather than the deduplicated one.
     const droppedSoFar = countDropped(value.planned, planned.length)
@@ -490,6 +553,7 @@ export function parseSavedNutritionState(raw: string | null): SavedNutritionStat
         userMeals,
         weights,
         removed,
+        removalDecisions,
         ...(carried ? { carried } : {}),
         rejected: droppedSoFar + countDropped(value.logs, logs.length),
       };
@@ -516,6 +580,7 @@ export function parseSavedNutritionState(raw: string | null): SavedNutritionStat
       userMeals,
       weights,
       removed,
+      removalDecisions,
       ...(carried ? { carried } : {}),
       rejected: droppedSoFar + countDropped(value.days, days.length) + Math.max(0, storedLogs - keptLogs),
     };
@@ -526,10 +591,10 @@ export function parseSavedNutritionState(raw: string | null): SavedNutritionStat
 
 export function stringifySavedNutritionState(state: PersistedNutritionState) {
   // `rejected` describes a load, not the diary, so the write type excludes it.
-  const { schemaVersion, days, planned, targets, customFoods, userMeals, weights, removed, carried } = state;
+  const { schemaVersion, days, planned, targets, customFoods, userMeals, weights, removed, removalDecisions, carried } = state;
   // Unknown fields go down first so this build's own keys always win, but nothing
   // a newer build wrote is dropped on the way through.
-  return JSON.stringify({ ...(carried ?? {}), schemaVersion, days, planned, targets, customFoods, userMeals, weights, removed });
+  return JSON.stringify({ ...(carried ?? {}), schemaVersion, days, planned, targets, customFoods, userMeals, weights, removed, removalDecisions });
 }
 
 export function logsForDay(state: SavedNutritionState, dayKey: string): SavedLogEntry[] {
@@ -542,30 +607,56 @@ export function logsForDay(state: SavedNutritionState, dayKey: string): SavedLog
  */
 export function withDayLogs(state: SavedNutritionState, dayKey: string, logs: SavedLogEntry[]): SavedNutritionState {
   if (!isDateKey(dayKey) || dayKey > currentBangaloreDayKey()) return state;
+  const previousLogs = logsForDay(state, dayKey);
+  const nextLogIds = new Set(logs.flatMap((log) => log.logId ? [log.logId] : []));
   const others = state.days.filter((day) => day.dayKey !== dayKey);
-  return {
+  let next = {
     ...state,
     days: normaliseDays(logs.length > 0 ? [{ dayKey, logs }, ...others] : others),
-    // Logging on a day KP had deleted un-deletes it. Leaving the tombstone would
-    // quietly block that day from ever being restored from a backup again.
-    ...(logs.length > 0 ? { removed: withoutTombstone(state.removed, "day", dayKey) } : {}),
   };
+  // A diary-entry deletion needs its own durable decision. Otherwise sync's
+  // log-id union faithfully brings the removed entry back from another device.
+  for (const log of previousLogs) {
+    if (log.logId && !nextLogIds.has(log.logId)) next = withRemovalDecision(next, "log", log.logId, true);
+  }
+  // Undo (or deliberately reusing a previously removed snapshot) is also an
+  // ordered decision, so an older remote delete cannot win on the next sync.
+  for (const log of logs) {
+    if (log.logId && state.removalDecisions.logs?.[log.logId]?.removed) next = withRemovalDecision(next, "log", log.logId, false);
+  }
+  // Logging on a day KP had deleted is a deliberate restore. Keep that later
+  // decision, otherwise a device holding the earlier deletion would erase it.
+  return logs.length > 0 ? withRemovalDecision(next, "day", dayKey, false) : next;
 }
 
-function withTombstone(removed: RemovedRecords, kind: RemovableKind, id: string): RemovedRecords {
-  const key = REMOVED_KEYS[kind];
-  return { ...removed, [key]: [...removed[key].filter((existing) => existing !== id), id].slice(-MAX_REMOVED_IDS) };
+function nextDecisionTime(state: SavedNutritionState, kind: RemovalKind, id: string) {
+  const previous = state.removalDecisions[REMOVED_KEYS[kind]][id]?.at ?? 0;
+  return Math.max(Date.now(), previous + 1);
 }
 
-function withoutTombstone(removed: RemovedRecords, kind: RemovableKind, id: string): RemovedRecords {
+function withRemovalDecision(state: SavedNutritionState, kind: RemovalKind, id: string, removed: boolean): SavedNutritionState {
   const key = REMOVED_KEYS[kind];
-  if (!removed[key].includes(id)) return removed;
-  return { ...removed, [key]: removed[key].filter((existing) => existing !== id) };
+  const decisions = {
+    ...state.removalDecisions,
+    [key]: { ...state.removalDecisions[key], [id]: { removed, at: nextDecisionTime(state, kind, id) } },
+  } as RemovalDecisions;
+  const limited = {
+    ...decisions,
+    [key]: Object.fromEntries(Object.entries(decisions[key]).sort((left, right) => left[1].at - right[1].at).slice(-MAX_REMOVED_IDS)),
+  } as RemovalDecisions;
+  return { ...state, removalDecisions: limited, removed: removedFromDecisions(limited) };
 }
 
 /** True when KP deleted this record here, so a restore must not put it back. */
-export function isRemoved(removed: RemovedRecords, kind: RemovableKind, id: string) {
+export function isRemoved(removed: RemovedRecords, kind: RemovalKind, id: string) {
   return removed[REMOVED_KEYS[kind]].includes(id);
+}
+
+/** Undo must never evict an unrelated item just because a list is full. */
+export function canRestoreRecord(state: SavedNutritionState, record: RemovedRecord) {
+  if (record.kind === "customFood") return state.customFoods.some((food) => food.id === record.food.id) || state.customFoods.length < MAX_CUSTOM_FOODS;
+  if (record.kind === "userMeal") return state.userMeals.some((meal) => meal.id === record.meal.id) || state.userMeals.length < MAX_USER_MEALS;
+  return true;
 }
 
 /**
@@ -577,54 +668,52 @@ export function isRemoved(removed: RemovedRecords, kind: RemovableKind, id: stri
  * a null, so a double tap cannot tombstone something it did not remove.
  */
 export function removeRecord(state: SavedNutritionState, kind: RemovableKind, id: string): { state: SavedNutritionState; removed: RemovedRecord | null } {
-  const tombstoned = () => withTombstone(state.removed, kind, id);
   if (kind === "customFood") {
     const food = state.customFoods.find((candidate) => candidate.id === id);
     if (!food) return { state, removed: null };
+    const planned = state.planned.flatMap((entry, index) => entry.kind === "food" && entry.id === id ? [{ entry, index }] : []);
     return {
-      state: {
+      state: withRemovalDecision({
         ...state,
         customFoods: state.customFoods.filter((candidate) => candidate.id !== id),
         // A plan entry pointing at a food that no longer exists is already invisible,
         // but leaving it stored means the draft silently repopulates if the id ever
         // comes back. Deleting the food deletes the plan line that named it.
         planned: state.planned.filter((entry) => !(entry.kind === "food" && entry.id === id)),
-        removed: tombstoned(),
-      },
-      removed: { kind, food },
+      }, kind, id, true),
+      removed: { kind, food, planned },
     };
   }
   if (kind === "userMeal") {
     const meal = state.userMeals.find((candidate) => candidate.id === id);
     if (!meal) return { state, removed: null };
-    return { state: { ...state, userMeals: state.userMeals.filter((candidate) => candidate.id !== id), removed: tombstoned() }, removed: { kind, meal } };
+    return { state: withRemovalDecision({ ...state, userMeals: state.userMeals.filter((candidate) => candidate.id !== id) }, kind, id, true), removed: { kind, meal } };
   }
   if (kind === "weight") {
     const entry = state.weights.find((candidate) => candidate.date === id);
     if (!entry) return { state, removed: null };
-    return { state: { ...state, weights: state.weights.filter((candidate) => candidate.date !== id), removed: tombstoned() }, removed: { kind, entry } };
+    return { state: withRemovalDecision({ ...state, weights: state.weights.filter((candidate) => candidate.date !== id) }, kind, id, true), removed: { kind, entry } };
   }
   const day = state.days.find((candidate) => candidate.dayKey === id);
   if (!day) return { state, removed: null };
-  return { state: { ...state, days: state.days.filter((candidate) => candidate.dayKey !== id), removed: tombstoned() }, removed: { kind, day } };
+  return { state: withRemovalDecision({ ...state, days: state.days.filter((candidate) => candidate.dayKey !== id) }, kind, id, true), removed: { kind, day } };
 }
 
 /** Put a deleted record back exactly as it was, and forget that it was ever deleted. */
 export function restoreRecord(state: SavedNutritionState, record: RemovedRecord): SavedNutritionState {
+  if (!canRestoreRecord(state, record)) return state;
   if (record.kind === "customFood") {
-    const removed = withoutTombstone(state.removed, "customFood", record.food.id);
-    return { ...state, customFoods: [...state.customFoods.filter((food) => food.id !== record.food.id), record.food].slice(-MAX_CUSTOM_FOODS), removed };
+    const planned = [...state.planned];
+    for (const { entry, index } of record.planned) planned.splice(Math.min(index, planned.length), 0, entry);
+    return withRemovalDecision({ ...state, customFoods: [...state.customFoods.filter((food) => food.id !== record.food.id), record.food], planned }, "customFood", record.food.id, false);
   }
   if (record.kind === "userMeal") {
-    const removed = withoutTombstone(state.removed, "userMeal", record.meal.id);
-    return { ...state, userMeals: [...state.userMeals.filter((meal) => meal.id !== record.meal.id), record.meal].slice(-MAX_USER_MEALS), removed };
+    return withRemovalDecision({ ...state, userMeals: [...state.userMeals.filter((meal) => meal.id !== record.meal.id), record.meal] }, "userMeal", record.meal.id, false);
   }
   if (record.kind === "weight") {
-    const removed = withoutTombstone(state.removed, "weight", record.entry.date);
-    return { ...state, weights: upsertWeightEntry(state.weights, record.entry), removed };
+    return withRemovalDecision({ ...state, weights: upsertWeightEntry(state.weights, record.entry) }, "weight", record.entry.date, false);
   }
-  const removed = withoutTombstone(state.removed, "day", record.day.dayKey);
-  return { ...state, days: normaliseDays([record.day, ...state.days.filter((day) => day.dayKey !== record.day.dayKey)]), removed };
+  return withRemovalDecision({ ...state, days: normaliseDays([record.day, ...state.days.filter((day) => day.dayKey !== record.day.dayKey)]) }, "day", record.day.dayKey, false);
 }
 
 /**
@@ -675,7 +764,12 @@ function mergeCollection<T>(current: T[], restored: T[], key: (item: T) => strin
  * no room; exceeding a cap here would only make the next reload discard data.
  */
 export function mergeNutritionBackup(current: SavedNutritionState, restored: SavedNutritionState): { state: SavedNutritionState; added: BackupMergeCounts; collisions: BackupMergeCounts; skippedAsDeleted: BackupMergeCounts; skippedAtCapacity: BackupMergeCounts } {
-  const days = mergeCollection(current.days, restored.days, (day) => day.dayKey, MAX_STORED_DAYS, (id) => isRemoved(current.removed, "day", id));
+  const restoredDays = restored.days.flatMap((day) => {
+    const logs = day.logs.filter((log) => !log.logId || !isRemoved(current.removed, "log", log.logId));
+    return logs.length > 0 ? [{ ...day, logs }] : [];
+  });
+  const daysSuppressedByLogDeletes = restored.days.length - restoredDays.length;
+  const days = mergeCollection(current.days, restoredDays, (day) => day.dayKey, MAX_STORED_DAYS, (id) => isRemoved(current.removed, "day", id));
   const customFoods = mergeCollection(current.customFoods, restored.customFoods, (food) => food.id, MAX_CUSTOM_FOODS, (id) => isRemoved(current.removed, "customFood", id));
   const userMeals = mergeCollection(current.userMeals, restored.userMeals, (meal) => meal.id, MAX_USER_MEALS, (id) => isRemoved(current.removed, "userMeal", id));
   const weights = mergeCollection(current.weights, restored.weights, (entry) => entry.date, MAX_WEIGHT_ENTRIES, (id) => isRemoved(current.removed, "weight", id));
@@ -692,11 +786,12 @@ export function mergeNutritionBackup(current: SavedNutritionState, restored: Sav
       // tombstones would let a backup delete records that are here now, which is
       // exactly what "restore never removes anything" exists to prevent.
       removed: current.removed,
+      removalDecisions: current.removalDecisions,
       carried: { ...(restored.carried ?? {}), ...(current.carried ?? {}) },
     },
     added: { days: days.additions.length, customFoods: customFoods.additions.length, userMeals: userMeals.additions.length, weights: weights.additions.length, targets },
     collisions: { days: days.collisions, customFoods: customFoods.collisions, userMeals: userMeals.collisions, weights: weights.collisions, targets: current.targets !== null && restored.targets !== null ? 1 : 0 },
-    skippedAsDeleted: { days: days.skippedAsDeleted, customFoods: customFoods.skippedAsDeleted, userMeals: userMeals.skippedAsDeleted, weights: weights.skippedAsDeleted, targets: 0 },
+    skippedAsDeleted: { days: days.skippedAsDeleted + daysSuppressedByLogDeletes, customFoods: customFoods.skippedAsDeleted, userMeals: userMeals.skippedAsDeleted, weights: weights.skippedAsDeleted, targets: 0 },
     skippedAtCapacity: { days: days.skippedAtCapacity, customFoods: customFoods.skippedAtCapacity, userMeals: userMeals.skippedAtCapacity, weights: weights.skippedAtCapacity, targets: 0 },
   };
 }
@@ -728,8 +823,25 @@ export function withLogIds(state: SavedNutritionState, makeId: () => string): Sa
   return changed ? { ...state, days } : state;
 }
 
-function unionIds(left: string[], right: string[]) {
-  return [...new Set([...right, ...left])].slice(-MAX_REMOVED_IDS);
+function mergeRemovalDecisionEntries(left: Record<string, RemovalDecision>, right: Record<string, RemovalDecision>) {
+  const merged: Record<string, RemovalDecision> = { ...right };
+  for (const [id, decision] of Object.entries(left)) {
+    const other = merged[id];
+    // A tie is extraordinarily rare (two taps in the same millisecond). Keeping
+    // deletion in that tie is the safe side: it cannot silently resurrect data.
+    if (!other || decision.at > other.at || (decision.at === other.at && decision.removed && !other.removed)) merged[id] = decision;
+  }
+  return Object.fromEntries(Object.entries(merged).sort((a, b) => a[1].at - b[1].at).slice(-MAX_REMOVED_IDS));
+}
+
+function mergeRemovalDecisions(local: RemovalDecisions, remote: RemovalDecisions): RemovalDecisions {
+  return {
+    customFoods: mergeRemovalDecisionEntries(local.customFoods, remote.customFoods),
+    userMeals: mergeRemovalDecisionEntries(local.userMeals, remote.userMeals),
+    days: mergeRemovalDecisionEntries(local.days, remote.days),
+    weights: mergeRemovalDecisionEntries(local.weights, remote.weights),
+    logs: mergeRemovalDecisionEntries(local.logs, remote.logs),
+  };
 }
 
 function unionRecords<T>(local: T[], remote: T[], key: (item: T) => string, deleted: Set<string>) {
@@ -755,33 +867,40 @@ function unionRecords<T>(local: T[], remote: T[], key: (item: T) => string, dele
  * answer than a stale one.
  */
 export function mergeSyncedStates(local: SavedNutritionState, remote: SavedNutritionState): SavedNutritionState {
-  const removed: RemovedRecords = {
-    customFoods: unionIds(local.removed.customFoods, remote.removed.customFoods),
-    userMeals: unionIds(local.removed.userMeals, remote.removed.userMeals),
-    days: unionIds(local.removed.days, remote.removed.days),
-    weights: unionIds(local.removed.weights, remote.removed.weights),
-  };
+  const removalDecisions = mergeRemovalDecisions(
+    withLegacyRemovalDecisions(local.removed, local.removalDecisions),
+    withLegacyRemovalDecisions(remote.removed, remote.removalDecisions),
+  );
+  const removed = removedFromDecisions(removalDecisions);
   const deleted = {
     customFoods: new Set(removed.customFoods),
     userMeals: new Set(removed.userMeals),
     days: new Set(removed.days),
     weights: new Set(removed.weights),
+    logs: new Set(removed.logs),
   };
 
   const remoteDays = new Map(remote.days.map((day) => [day.dayKey, day]));
   const mergedDays = local.days.map((day) => {
     const other = remoteDays.get(day.dayKey);
-    if (!other) return day;
+    if (!other) return { ...day, logs: day.logs.filter((log) => !log.logId || !deleted.logs.has(log.logId)) };
     remoteDays.delete(day.dayKey);
-    const identified = [...day.logs, ...other.logs].every((log) => Boolean(log.logId));
-    if (!identified) return day.logs.length >= other.logs.length ? day : other;
-    const mine = new Set(day.logs.map((log) => log.logId));
-    return { ...day, logs: [...day.logs, ...other.logs.filter((log) => !mine.has(log.logId))] };
+    const localLogs = day.logs.filter((log) => !log.logId || !deleted.logs.has(log.logId));
+    const remoteLogs = other.logs.filter((log) => !log.logId || !deleted.logs.has(log.logId));
+    const identified = [...localLogs, ...remoteLogs].every((log) => Boolean(log.logId));
+    if (!identified) return localLogs.length >= remoteLogs.length ? { ...day, logs: localLogs } : { ...other, logs: remoteLogs };
+    const mine = new Set(localLogs.map((log) => log.logId));
+    return { ...day, logs: [...localLogs, ...remoteLogs.filter((log) => !mine.has(log.logId))] };
   });
+
+  const remainingRemoteDays = [...remoteDays.values()].map((day) => ({
+    ...day,
+    logs: day.logs.filter((log) => !log.logId || !deleted.logs.has(log.logId)),
+  }));
 
   return {
     ...local,
-    days: normaliseDays([...mergedDays, ...remoteDays.values()].filter((day) => !deleted.days.has(day.dayKey))),
+    days: normaliseDays([...mergedDays, ...remainingRemoteDays].filter((day) => !deleted.days.has(day.dayKey))),
     customFoods: unionRecords(local.customFoods, remote.customFoods, (food) => food.id, deleted.customFoods).slice(0, MAX_CUSTOM_FOODS),
     userMeals: unionRecords(local.userMeals, remote.userMeals, (meal) => meal.id, deleted.userMeals).slice(-MAX_USER_MEALS),
     weights: unionRecords(local.weights, remote.weights, (entry) => entry.date, deleted.weights)
@@ -791,6 +910,7 @@ export function mergeSyncedStates(local: SavedNutritionState, remote: SavedNutri
     planned: local.planned,
     targets: local.targets ?? remote.targets,
     removed,
+    removalDecisions,
     carried: { ...(remote.carried ?? {}), ...(local.carried ?? {}) },
   };
 }

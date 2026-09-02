@@ -5,6 +5,7 @@ import {
   isRemoved,
   mergeSyncedStates,
   removeRecord,
+  withDayLogs,
   withLogIds,
   type SavedNutritionState,
 } from "../app/local-nutrition-state";
@@ -35,6 +36,38 @@ test("food logged on two devices on the same day survives the merge", () => {
   const merged = mergeSyncedStates(phone, laptop);
 
   assert.deepEqual(merged.days[0].logs.map((log) => log.logId), ["breakfast", "lunch", "dinner"], "every meal survives, and the local order is kept");
+});
+
+test("a deleted diary entry stays deleted when another device still has it", () => {
+  const before = stateWith({ days: [{ dayKey: "2026-08-14", logs: [entry("breakfast"), entry("lunch")] }] });
+  const phone = withDayLogs(before, "2026-08-14", [entry("lunch")]);
+  const laptop = before;
+
+  const merged = mergeSyncedStates(phone, laptop);
+
+  assert.deepEqual(merged.days[0]?.logs.map((log) => log.logId), ["lunch"], "sync must not resurrect a log deliberately removed elsewhere");
+  assert.equal(isRemoved(merged.removed, "log", "breakfast"), true, "the log-level deletion must travel with the diary");
+});
+
+test("Undo of a diary entry beats the older synced deletion", () => {
+  const before = stateWith({ days: [{ dayKey: "2026-08-14", logs: [entry("breakfast"), entry("lunch")] }] });
+  const deleted = withDayLogs(before, "2026-08-14", [entry("lunch")]);
+  const undone = withDayLogs(deleted, "2026-08-14", [entry("breakfast"), entry("lunch")]);
+
+  const merged = mergeSyncedStates(undone, deleted);
+
+  assert.deepEqual(merged.days[0]?.logs.map((log) => log.logId), ["breakfast", "lunch"]);
+  assert.equal(isRemoved(merged.removed, "log", "breakfast"), false, "a deliberate later Undo must survive the next sync");
+});
+
+test("deleting the last log keeps the day empty across devices", () => {
+  const before = stateWith({ days: [{ dayKey: "2026-08-14", logs: [entry("only-log")] }] });
+  const emptied = withDayLogs(before, "2026-08-14", []);
+
+  const merged = mergeSyncedStates(emptied, before);
+
+  assert.deepEqual(merged.days, [], "an older device must not recreate a day whose only entry was removed");
+  assert.equal(isRemoved(merged.removed, "log", "only-log"), true);
 });
 
 test("a deletion made on one device reaches the other", () => {

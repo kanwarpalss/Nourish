@@ -273,6 +273,9 @@ Amazon’s export does not reliably identify the Now channel by itself, so that 
 | 2026-08-21 | An uncertain or mismatched food image falls back to a category icon; source edits target the parsed TypeScript object and preserve existing photos by default | Fill every card from free-text image search or use regex to patch source records | The earlier automation crossed object boundaries and produced believable but wrong food photos; structured, object-local edits and explicit replacement are required |
 | 2026-08-21 | Backup import reserves all current-data capacity first and reports additions, collisions, and overflow separately | Merge, sort, and slice the combined data to each storage cap | A supposedly additive import must never evict a current diary day, food, Meal, or weight record, including after save-and-reload normalisation |
 | 2026-08-21 | Ambiguous, duplicate, or conflicting products are removed or kept unresolved | Retain a generic record and attach the closest label/photo | Generic zero cola, duplicate Kinley, conflicting Epigamia Turbo, and collapsed monk-fruit formulations could silently misstate exact health data |
+| 2026-09-02 | Delete/Undo is an ordered record decision, not only a tombstone | Merge the union of deleted ids forever | A newer restore must beat an older sync delete, while legacy deletion records still migrate safely |
+| 2026-09-02 | An unresolved purchase opens a blank personal-item draft prefilled only with its exact purchased name | Disable it forever, or prefill plausible nutrition | A missing label must never become guessed macros, but it must not be a dead end for someone who has the pack in hand |
+| 2026-09-02 | Copying a food or Meal always creates a new independent draft and never shares a managed food photo | Reuse the original identity or photo | Edits to a copy must not rewrite the original or let deletion of one item silently remove another item’s image |
 
 ## §6 Current State
 
@@ -292,7 +295,7 @@ Diary days, targets, custom foods, reusable Meals, weights, Plan selections, imm
 
 The 2026-08-21 full-repository lead review passed the production build, lint, dependency audit, and all 115 automated checks, including failure injection. New boundary tests prove that photo edits cannot cross object boundaries and that a full backup import cannot evict current data. The same new tests were run against the previous code and failed there. No deployment, service restart, commit, staging, or push was performed in this audit.
 
-### §6.1 Session state — 2026-08-30 (READ THIS FIRST if you are picking up)
+### §6.1 Historical session state — 2026-08-30
 
 **Shipped, live, and verified**
 
@@ -340,17 +343,39 @@ are green, but see the explicit unverified list at the end — do not describe t
    - `isSafeImageUrl` now also accepts same-origin `/api/nourish/…` paths, since these
      photos have no scheme or host. Traversal and `//host` forms still rejected.
 
+**Resumption note — 2026-08-30 (working tree only; not committed, pushed, or deployed)**
+
+The requested product/PM/UX audit was completed against a disposable SQLite database at
+`http://100.89.12.6:4317`, including a phone-sized 390 px viewport and an insecure HTTP
+context. Track → Log Food opened, a new custom item was logged, survived reload, and its
+food photo persisted into the editor. Plan → Items and Meals, History, Trends, Purchases,
+Settings, mobile navigation, and the honest empty states were each walked. No horizontal
+overflow occurred at 390 px.
+
+That audit produced four working-tree corrections:
+
+1. Quick Add uses stable food ids rather than duplicate display names as React keys.
+2. Food-photo URLs now retain their storage key through cache-busting, reject malformed or
+   non-food routes without crashing, and are the only relative API image path accepted.
+3. Food-photo replacement/removal is staged with the food edit: Cancel and backdrop-close
+   remove only a temporary upload, while Save retires the old image after changing the food.
+4. Settings no longer contradict a confirmed Mac Mini sync by calling every browser a
+   separate unsynchronised diary.
+
+The complete suite now has **198 checks** (49 HTTP/render/layout + 149 TypeScript), all
+passed this turn; lint also passed. The temporary server used only the disposable database;
+no user diary, live service, commit, push, or deployment was touched.
+
 **Explicitly NOT verified — pick up here**
 
-- `FoodPhotoField` has **never been exercised in a browser.** The session was stopped at
-  exactly that step. Everything else in the list was driven live at
-  `http://100.89.12.6:4318` (a genuinely insecure context, `isSecureContext === false`,
-  `randomUUID === undefined`): Log Food opens, an item logs and persists to SQLite, and the
-  log-photo success *and* offline-failure paths both behave correctly.
+- `FoodPhotoField` was exercised through successful upload, persistence, and reload before
+  its Cancel-safe staging refinement. The refined cancel/backdrop cleanup is regression-
+  covered and built, but still needs one final browser interaction test.
 - `AppErrorBoundary` has not been triggered in a browser.
-- The flow audit KP asked for is **barely started.** Only the Track → Log food path was
-  walked. Plan, Meals, History, Trends, Purchases, Settings, backup/restore, weight, and
-  profile switching were not examined at all.
+- Backup restore requires a specific file-upload approval; full reset and delete controls
+  require action-time deletion approval. They were intentionally not activated against any
+  diary. Profile creation/switching and a completed Meal creation also remain to be walked
+  manually, although their underlying flows are covered by the full suite.
 
 **Findings raised but not yet acted on**
 
@@ -365,22 +390,225 @@ are green, but see the explicit unverified list at the end — do not describe t
   deliberate open item, but it has not been re-examined against an actual multi-person use
   case, which is now the stated goal.
 
+**Historical continuation handoff — 2026-08-30 (superseded below)**
+
+KP asked for the “ultimate” flexible experience: people must be able to add, modify,
+copy, remove and undo foods, meals and photos without data loss or forced paths. The PM/UX
+audit found that the earlier UI was broadly capable, but several destructive and creation
+boundaries were not yet safe enough to call complete.
+
+**Confirmed audit findings**
+
+1. Deleting a personal food removed all matching Plan lines, but Undo restored only the
+   food — silently losing the Plan choices.
+2. Sync represented deletion as an unordered tombstone. A later Undo on device A could be
+   overruled by the older tombstone still present on device B.
+3. At the 500-food or 200-saved-Meal cap, delete → create another item → Undo could append
+   then slice the collection, silently evicting an unrelated older item.
+4. An unresolved cardIQ purchase said “Needs label” but was disabled, with no direct,
+   pre-filled route to create the exact product from the purchased name. It must never guess
+   nutrition, but it must give the user a way forward.
+5. Plan’s custom-food creation discarded an alternate logging-unit conversion even though
+   Track preserved it.
+6. Copy controls for foods and saved Meals, a personal-items filter, and adding a component
+   to a one-off Meal edit are still to be built. A copied managed food photo must not be
+   shared with the original; copy with no managed photo unless a genuine independent copy is
+   implemented.
+7. Food-photo upload has further lifecycle boundaries to cover: cancel while an upload is
+   still in flight, replace then cancel, and eventual safe cleanup after an un-Undone delete.
+
+**Partial implementation currently in the working tree — NOT tested, committed, pushed,
+or deployed**
+
+- `app/local-nutrition-state.ts` now has an in-progress `removalDecisions` model recording
+  the latest `{ removed, at }` decision per record. It is intended to let a later Undo win
+  over an earlier synced deletion while retaining legacy `removed` arrays for migration.
+  `removeRecord()` now captures each removed custom-food Plan entry and its index;
+  `restoreRecord()` restores them and refuses a capacity restore rather than slicing an
+  unrelated item. `canRestoreRecord()` was added for the UI to explain a full-list Undo.
+- `app/logging-session.ts` now permits `CustomFoodDraft.conversions` and
+  `createCustomFood()` deep-copies that conversion, so Plan and Track can preserve the same
+  alternate-unit setup.
+- `tests/removal.test.ts` has new regression cases for Plan restoration, delete/Undo sync
+  ordering, and capacity-safe Undo. These were written but have **not** completed a test run.
+- The full `npm test` command was started after these edits but deliberately interrupted by
+  KP after about six seconds. There is no current green-build evidence for this partial work.
+
+**Next agent: required order**
+
+1. Run the build/type suite immediately and repair the in-progress deletion-decision model
+   before treating it as safe. Preserve compatibility with older saved bytes and the rule
+   that backup restore is additive while sync carries deliberate deletes/restores.
+2. Wire `canRestoreRecord()` into the Undo toast: when storage is full, keep Undo available
+   and say that nothing was restored until the user makes room; never evict a record.
+3. Add the unresolved-Purchase “Add details” path, pre-filled only with the bought name and
+   no invented nutrition; save it into personal Items and make it immediately loggable.
+4. Add independent Copy flows for foods and saved Meals, a Mine/Yours filter, and
+   add-component controls for one-off Meal edits. New identities and deep snapshots are
+   mandatory; copied managed photos must be omitted rather than shared.
+5. Extend regression coverage for conversions, duplicate identity/snapshots, uploaded-photo
+   ownership and cancellation, then run `npm test`, `npm run lint`, and a disposable
+   insecure-Tailscale browser walk. Do not touch the live service or diary.
+6. Update this `SPEC.md` again as the final file action only after that work is complete.
+
+### §6.1 Current session state — 2026-09-02 (READ THIS FIRST if you are picking up)
+
+**Full Control UX/data-safety pass is active in the working tree — not committed, pushed, or deployed.**
+
+The pass covers the lifecycle of personal foods, reusable Meals, Plan entries and food
+photos: create from a purchase, edit, copy, delete, Undo, sync and capacity limits. It used
+a disposable SQLite database only; neither the household diary nor the Mac Mini service was
+changed.
+
+1. **Delete and Undo preserve intent and context.** Each delete or restore has an ordered
+   `{ removed, at }` decision, so a newer Undo survives an older delete arriving from another
+   device. Older saved deletion arrays still migrate safely. Removing a personal food records
+   all affected Plan entries; Undo returns them to their original positions. If a food or
+   Meal list is full, Undo remains available but restores nothing until space is made—no
+   unrelated record is evicted.
+2. **Purchase rows now give a safe next step.** A “Needs label” purchase has **Add details**,
+   opening a personal Single Item prefilled with the exact purchased name and zero nutrition.
+   The person supplies the pack facts; Nourish never invents plausible macros.
+3. **Creation and copying retain control.** Alternate logging-unit conversions survive Plan
+   creation. Personal foods and reusable Meals have independent Copy flows, personal items
+   are filterable, and copied managed food photos are omitted rather than shared. A one-off
+   Meal can search saved items and add components without changing its reusable template.
+4. **Food-photo lifecycle is safer.** Closing a dialog while a new upload is in flight cleans
+   up the finished temporary photo. Replace and Remove are disabled while the photo is saving,
+   preventing conflicting operations.
+
+**Evidence this turn**
+
+- `npm test` completed with **202 passing checks** (49 JS/render/service and 153 TypeScript),
+  including new regressions for Plan restoration, ordered sync Undo, capacity-safe Undo and
+  conversion snapshot independence.
+- `npm run lint` completed cleanly.
+- A browser walk against `http://100.89.12.6:4317` used the disposable database over real
+  insecure HTTP. Purchases showed **Add details**; it opened a blank-macro draft with the
+  exact purchase title. The personal-item Copy draft appeared with a new label, and the
+  one-off Meal logger exposed saved-item search and add controls. No browser console errors
+  occurred. No upload, save, delete, restore, or real diary action was performed.
+
+**Remaining deliberate scope, not a release blocker**
+
+- A browser cannot select a local photo or trigger destructive restore/reset controls without
+  action-time approval. Server and source regressions cover photo cleanup; a future manual
+  acceptance pass may exercise the physical file-picker path against a disposable database.
+- Catalogue thumbnail requests still fetch from `bbassets.com` while rendering. This violates
+  the local-first goal and can leave a blank image if a request hangs; keep the drawn icon
+  until decode or cache approved exact images locally in a separate change.
+- Profiles separate diary data but do not lock them; anyone on the tailnet can select a
+  household profile. Revisit only if the household wants privacy boundaries between people.
+
+**Checkpoint A — 2026-09-02, functional audit complete; implementation next**
+
+KP explicitly parked authentication/security work. The renewed functional audit found two
+release-blocking silent failures beyond the earlier pass:
+
+1. Individual diary entries have stable `logId` values but no delete/restore decisions.
+   Sync therefore resurrects a removed entry when another device still holds it, including
+   when the removed entry was the last one on that day.
+2. Keeping Log Food open for a multi-item plate reuses one pending `logId` for every food
+   added during that session. The next reload can repair duplicate ids, but a sync before
+   then can collapse entries and every attached photo points at the same identity.
+
+The next implementation checkpoint must add ordered log-level deletion decisions and rotate
+the pending log/photo identity after each successful add. It will also complete multiple
+alternate logging units, renameable one-off Meals, abandoned log-photo cleanup, and an
+offline-safe thumbnail experience before end-to-end testing.
+
+**Checkpoint B — 2026-09-02, functional implementation complete; browser validation next**
+
+The release-blocking failures from Checkpoint A are now repaired in the working tree:
+
+1. **Deleting a diary entry is an ordered, syncable decision.** Log ids now participate in
+   the same delete/restore clock as foods, Meals, days and weights. An older device or backup
+   cannot resurrect an individually removed log, including the final entry of a day; Undo is
+   a newer restore decision and wins correctly.
+2. **Repeat logging is independently addressable.** Every successful add rotates to a fresh
+   pending log/photo id while the logger remains open. Several foods can therefore be logged
+   in one pass without sync collapsing them or assigning one photo identity to every row.
+3. **Photo lifecycle follows user intent.** New log photos are removed if their unfinished
+   entry is abandoned, including late upload completion. Food and log save actions wait for
+   an active upload; a failed photo removal leaves the photo and shows the failure. A saved
+   food photo now survives editor unmount, while deleted food/log photos are removed after
+   the 10-second Undo window and retained if Undo is used.
+4. **Foods and one-off Meals expose their real flexibility.** A food may define up to five
+   distinct alternate units with independent labels and basis amounts; invalid, duplicate or
+   circular units cannot be saved. A one-off Meal can be renamed as well as resized, extended
+   and reduced without changing its reusable template. Meal components are deep snapshots,
+   including aliases, provenance, bases and conversions.
+5. **Catalogue startup is local-first.** Cards auto-load only bundled images and photos stored
+   by Nourish. Third-party retailer hotlinks no longer create dozens of render-time network
+   requests; the drawn food icon is the offline-safe fallback.
+
+Implementation evidence so far: the full `npm test` command completed with **209 passing
+checks** (49 JavaScript/render/service and 160 TypeScript). Purpose-built tests were also run
+against the pre-change committed code and failed exactly as required: it resurrected a
+deleted log, accepted ambiguous duplicate alternate units, and shared nested Meal snapshot
+data. Lint, browser walkthrough and the final cold review remain for Checkpoint C. No live
+service, household diary, commit, push or deployment action has occurred.
+
+**Checkpoint C — 2026-09-02, browser validation; a release-blocking dead control found and fixed**
+
+Checkpoint B's claims were re-verified rather than trusted: `npm test` reproduced **209
+passing checks** and `npm run lint` passed. The browser walk then ran against a disposable
+SQLite database on an isolated preview port, never port 4317, the live service, or the
+household diary.
+
+1. **Undo was completely unclickable — found and fixed here.** `.toast` is
+   `pointer-events: none` so the toast never blocks the page beneath it, but that value is
+   inherited, and `.toast-undo` never opted back in. Hit-testing the rendered button
+   (`document.elementFromPoint` at its own centre) returned `SECTION.timeline-panel` — the
+   panel *behind* the toast. Every tap fell straight through: the button was drawn,
+   announced to the accessibility tree, and dead. Because one shared toast carries Undo for
+   entries, foods, Meals, weigh-ins and whole days, **the entire delete/restore model built
+   in Checkpoints A and B was unreachable from the UI.** Scripted `element.click()` calls
+   succeeded throughout, which is exactly why source-level and DOM-level checks all passed.
+   Fixed by giving `.toast-undo` `pointer-events: auto` and a real 44px target; verified by
+   a genuine mouse click at the button's coordinates returning "Put back" and restoring the
+   entry, at 1280px and at 375px, with no horizontal overflow. This is the same bug class as
+   `fd65693` (buttons dead on tap) — see §7.
+2. **Repeat logging keeps separate identities.** Two foods logged without closing the logger
+   produced two distinct `logId` values, confirmed from the diary API, not just from state.
+3. **Startup is genuinely local-first.** Opening the logger issued **zero third-party
+   requests** — every request was same-origin. The previous behaviour was 51 hotlinks to
+   `bbassets.com`. Verified from the browser's own network log.
+4. **Delete and Undo behave correctly end-to-end**, including totals recalculating and the
+   entry returning to its original position.
+
+Regression coverage was added *before* the fix and observed failing against the unfixed
+stylesheet, per TEST-01. `npm test` (209 checks) and `npm run lint` are green with the fix.
+No commit, push, release, deployment, live-service or household-diary action was performed
+during this checkpoint.
+
+**Still open after Checkpoint C**
+
+- The final cold review has not been done.
+- Backup restore, full reset, profile creation/switching and the physical photo file-picker
+  still require action-time approval and remain manually unexercised.
+
 ## §7 Known Issues and deferred scope
 
 | Item | State | Resolution point |
 |---|---|---|
 | Permanent product name | Open | Confirm during design review |
+| Undo toast button was dead on tap | **Fixed 2026-09-02** | `.toast` is `pointer-events: none` and `.toast-undo` inherited it, so every Undo in the app fell through to the panel behind. Fixed with `pointer-events: auto` and a 44px target; asserted in `tests/rendered-html.test.mjs`. Second instance of this bug class after `fd65693` — **any new control drawn inside a click-through overlay must be hit-tested, not just rendered.** |
+| Restore decisions share the 1000-slot deletion budget | Open, accepted | `removalDecisions` stores `removed: false` restores alongside real tombstones under one `MAX_REMOVED_IDS` cap, so heavy delete/Undo churn evicts the oldest decisions sooner than tombstones alone would. Bounded and safe; revisit only if the cap is ever approached. |
+| Delete/restore ordering trusts the wall clock | Open, accepted | `{ removed, at }` is last-writer-wins on `Date.now()`, so a device with a badly wrong clock wins permanently, and a future-dated `at` from another device is accepted on parse. Standard trade-off for this sync model; documented rather than solved. |
 | Exact calorie/macro target and personal dietary constraints | Sample and clearly labelled | Onboarding design before persistence |
 | Nandini and Epigamia seed entries rely on current label mirrors | Needs exact-pack confirmation | Reconcile barcode/variant and pack photo during cardIQ import before promotion |
 | 175 food purchase rows are deliberately not auto-linked | Open, enumerated | Exact Brand + Item + Variant/form + pack evidence was accepted for 18 titles. The complete unresolved list is generated in `data/UNMATCHED_CARDIQ_FOODS.md`; label photos, barcodes, or exact retailer IDs are the safe next input. |
 | Food photos cover 54 of 123 foods; 69 use drawn icons | Open, deliberately | Add a photo only after exact brand/product/variant/pack or raw/cooked form is visually confirmed. Unsafe automatic retailer/free-text sourcing stays retired. |
-| Catalogue thumbnails are fetched from `bbassets.com` while rendering | **Open, found 2026-08-30** | Contradicts the local-first rule that bans network at render time. 51 lazy image requests open with the logger; a hanging request never fires `error`, so the icon fallback never runs and the row shows a blank box. Cache the images locally, or show the drawn icon until the photo actually decodes. |
+| Browser file-picker acceptance for food-photo cancel/backdrop cleanup | Deferred safely | Uploading a local file requires action-time approval. Source and server regressions cover the cleanup; perform one manual disposable-database acceptance pass before a release that changes this area again. |
+| Full Control UX/data-safety pass | **Implementation complete; final validation in progress 2026-09-02** | Checkpoints A–B record the audit and repairs. Complete lint, a disposable-database browser walk, and the final cold review in Checkpoint C before release. |
+| Catalogue thumbnails are fetched from `bbassets.com` while rendering | **Resolved in working tree 2026-09-02; browser validation pending** | Catalogue cards now auto-load only bundled or Nourish-managed photos and otherwise use the drawn icon. Third-party retailer URLs remain useful as source metadata but do not run at render time. |
 | Any render error blanks the entire app | **Fixed 2026-08-30, unverified in browser** | `AppErrorBoundary` now catches it and offers a reload. Its absence is what turned the `randomUUID` bug into a total outage. Needs a live trigger to confirm. |
 | Main UI module and stylesheet are oversized | Architectural debt, worsening | `app/page.tsx` is now ~1,700 lines and `app/globals.css` ~1,000. Split by Plan/Track/product-area ownership before the next broad UI feature so one change does not require editing the whole screen. |
 | Legacy meal and schema compatibility paths have no deletion date | Architectural debt | Measure whether old schema-1/single-meal data still exists, document a sunset condition, then remove the compatibility branch only after a migration/backup checkpoint. |
 | Local canonical database | **Done 2026-08-23** | SQLite via `node:sqlite`, per-profile documents, 50-version server-side history, optimistic concurrency. Encrypted off-machine backup and a restore drill are still outstanding. |
 | ~~Nourish's release/serve path is broken by a `cloudflare:workers` import~~ | **Not a real bug — corrected 2026-08-24** | Wrongly logged 2026-08-23: assumed (from `db/index.ts` containing `import { env } from "cloudflare:workers"`, and pattern-matching Watch Book's real bug in the same starter template) that `npm run serve` would crash, without testing it, and deployed the Mac Mini via a `pm2 run dev` workaround instead. It doesn't crash: `db/index.ts` is dead scaffolding from the vinext starter template — nothing in the real app imports it (only the unused `examples/d1/` template folder does), and `.openai/hosting.json` has `"d1": null, "r2": null`. Confirmed by actually running `npm run release` locally on the Mac that already had `com.kanwar.nourish` installed (2026-08-14) — it worked cleanly. Corrected same day: removed the Mac Mini's `pm2` workaround, installed `ops/com.kanwar.nourish.plist` there via `launchctl bootstrap`, ran `npm run release` for real. Live and verified at `http://100.81.29.11:4317`. |
-| No authentication on the diary API | Open, by design for now | Tailnet membership is the only boundary; anyone on it can open any profile. A PIN was offered and not requested. |
+| No authentication on the diary API | **Parked by KP, 2026-09-02** | Tailnet membership remains the boundary. Do not let this expand or block the current functional-completeness pass. |
 | Watch Book has no assigned port | Open | 4400 proposed in the architecture doc; nothing depends on it yet. |
 | Fullness score is an estimate, not a measurement | By design, labelled "est." | Revisit if a measured satiety source with real Indian coverage becomes available |
 | `basis` field on `NutritionItem` is declared but never populated | Open | SPEC §4.1 wants label calories kept alongside a 4/4/9 comparison; the field exists but nothing writes it |

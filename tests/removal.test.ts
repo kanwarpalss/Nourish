@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  MAX_CUSTOM_FOODS,
   MAX_REMOVED_IDS,
+  canRestoreRecord,
   clearAllUserData,
   emptyNutritionState,
   exportNutritionState,
   isRemoved,
+  mergeSyncedStates,
   mergeNutritionBackup,
   parseExportedNutritionState,
   parseSavedNutritionState,
@@ -71,6 +74,20 @@ test("a backup taken before a deletion must not resurrect what was deleted", () 
   assert.equal(merged.skippedAsDeleted.userMeals + merged.skippedAsDeleted.customFoods + merged.skippedAsDeleted.weights + merged.skippedAsDeleted.days, 4, "and KP is told four records were held back rather than it happening in silence");
 });
 
+test("a backup cannot resurrect an individually deleted diary entry", () => {
+  const day = { dayKey: "2026-08-14", logs: [{ logId: "deleted-breakfast", foodId: seedFood.id, amount: 100 }] };
+  const before = stateWith({ days: [day] });
+  const backup = parseExportedNutritionState(exportNutritionState(before, "2026-08-14T00:00:00.000Z"));
+  assert.ok(backup);
+  const live = withDayLogs(before, day.dayKey, []);
+
+  const merged = mergeNutritionBackup(live, backup);
+
+  assert.deepEqual(merged.state.days, [], "restore is additive, but a known-deleted log is not an addition");
+  assert.equal(isRemoved(merged.state.removed, "log", "deleted-breakfast"), true);
+  assert.equal(merged.skippedAsDeleted.days, 1, "the restore report must reveal that deleted content was held back");
+});
+
 test("restoring a backup still never removes anything that is here now", () => {
   // The inverse guard. A backup that knows about deletions must not apply them
   // to live data — that would let a stale file undo today's work.
@@ -91,6 +108,49 @@ test("deleting a food you created also clears it out of the plan draft", () => {
   const { state } = removeRecord(before, "customFood", myFood.id);
 
   assert.deepEqual(state.planned, [{ id: seedFood.id, kind: "food" }], "the plan line naming the deleted food goes with it, and nothing else does");
+});
+
+test("Undo restores every planned copy of a deleted food in its original positions", () => {
+  const before = stateWith({
+    customFoods: [myFood],
+    planned: [
+      { id: seedFood.id, kind: "food" },
+      { id: myFood.id, kind: "food" },
+      { id: seedFood.id, kind: "food" },
+      { id: myFood.id, kind: "food" },
+    ],
+  });
+  const deleted = removeRecord(before, "customFood", myFood.id);
+  assert.ok(deleted.removed);
+
+  const undone = restoreRecord(deleted.state, deleted.removed);
+
+  assert.deepEqual(undone.planned, before.planned, "Undo must restore every Plan consequence, not only the catalogue item");
+});
+
+test("Undo beats an older synced deletion decision", () => {
+  const before = stateWith({ customFoods: [myFood] });
+  const deletedOnPhone = removeRecord(before, "customFood", myFood.id).state;
+  const deletedOnLaptop = removeRecord(before, "customFood", myFood.id);
+  assert.ok(deletedOnLaptop.removed);
+  const undoneOnLaptop = restoreRecord(deletedOnLaptop.state, deletedOnLaptop.removed);
+
+  const merged = mergeSyncedStates(undoneOnLaptop, deletedOnPhone);
+
+  assert.deepEqual(merged.customFoods, [myFood], "a later Undo must not be silently erased by an earlier synced deletion");
+  assert.equal(isRemoved(merged.removed, "customFood", myFood.id), false, "the restored decision is carried to every device");
+});
+
+test("Undo at the item limit refuses to evict an unrelated food", () => {
+  const deleted = removeRecord(stateWith({ customFoods: [myFood] }), "customFood", myFood.id);
+  assert.ok(deleted.removed);
+  const full = {
+    ...deleted.state,
+    customFoods: Array.from({ length: MAX_CUSTOM_FOODS }, (_, index) => ({ ...myFood, id: `custom-new-${index}` })),
+  };
+
+  assert.equal(canRestoreRecord(full, deleted.removed), false, "the caller can keep Undo available and explain why it cannot fit yet");
+  assert.deepEqual(restoreRecord(full, deleted.removed), full, "restoring must never slice away somebody else's item");
 });
 
 test("deleting one day leaves every other day untouched", () => {

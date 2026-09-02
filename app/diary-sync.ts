@@ -1,4 +1,7 @@
 import { mergeSyncedStates, parseSavedNutritionState, stringifySavedNutritionState, type SavedNutritionState } from "./local-nutrition-state";
+import { DIARY_API_BASE } from "./diary-api";
+
+export { DIARY_API_BASE } from "./diary-api";
 
 /**
  * Talking to the diary database on the Mac Mini.
@@ -11,7 +14,6 @@ import { mergeSyncedStates, parseSavedNutritionState, stringifySavedNutritionSta
  * to local storage.
  */
 
-export const DIARY_API_BASE = "/api/nourish";
 export const DEFAULT_PROFILE_ID = "kp";
 
 export type DiaryProfile = { id: string; name: string; createdAt: string };
