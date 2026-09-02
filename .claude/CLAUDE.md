@@ -11,11 +11,11 @@ Local-only, single user, no cloud backend.
 
 ## Invariants (break these → break the project)
 
-1. **Port 4317 only.** `scripts/require-nourish-port.mjs` must never gain a
-   fallback port. If 4317 is occupied the app must exit with a plain-English
-   error. Since 2026-08-23 the process on 4317 is `server/front-door.mjs`, which
+1. **Port 3902 only.** `scripts/require-nourish-port.mjs` must never gain a
+   fallback port. If 3902 is occupied the app must exit with a plain-English
+   error. Since 2026-08-23 the process on 3902 is `server/front-door.mjs`, which
    answers `/api/nourish/*` from SQLite and reverse-proxies the rest to vinext on
-   loopback 4316. 4316 is internal and must never be exposed.
+   loopback 3903. 3903 is internal and must never be exposed.
 2. **Package-label calories are authoritative for packaged foods.** A 4/4/9
    calculation may be displayed alongside for comparison but must NEVER
    overwrite a label value.
@@ -94,7 +94,7 @@ Local-only, single user, no cloud backend.
 | `app/local-nutrition-state.ts` | The diary schema (schemaVersion 2, multi-day), custom foods, immutable log snapshots, and weight history. Getting this wrong is how the diary got silently deleted every midnight before 2026-08-10. |
 | `app/day-history.ts` | Turns stored days into History/Trends totals. Overrides, composites and plain foods all resolve through `resolveLoggedFood()` here. |
 | `data/NUTRITION_SOURCES.md` | Evidence register. Every macro must trace back to an entry here, including why a value was rejected. |
-| `scripts/require-nourish-port.mjs` | The 4317 guard. Do not soften. |
+| `scripts/require-nourish-port.mjs` | The 3902 guard. Do not soften. |
 | `ops/com.kanwar.nourish.plist` | launchd service definition for the Mac Mini. |
 
 ## Deployment
@@ -104,7 +104,7 @@ assumes pm2; this project is the exception. Private network only, no public
 ingress. See SPEC §10.
 
 ```bash
-npm run build && npm run start   # port 4317
+npm run build && npm run start   # port 3902
 npm run health                   # plain-English status
 ```
 

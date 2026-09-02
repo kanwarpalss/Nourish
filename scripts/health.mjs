@@ -14,7 +14,7 @@
 
 import { pathToFileURL } from "node:url";
 
-const DEFAULT_BASE_URL = "http://127.0.0.1:4317";
+const DEFAULT_BASE_URL = "http://127.0.0.1:3902";
 const REQUEST_TIMEOUT_MS = 5000;
 
 /** Matches the hashed build assets Nourish serves, e.g. /assets/index-DPuT0EBM.js */
@@ -65,7 +65,7 @@ async function inspectAsset(baseUrl, assetPath) {
  * Check a running Nourish. Resolves to a report; never throws for an unhealthy
  * app, only for programming errors.
  *
- * @param {string} baseUrl origin to check, e.g. "http://127.0.0.1:4317"
+ * @param {string} baseUrl origin to check, e.g. "http://127.0.0.1:3902"
  * @returns {Promise<{healthy: boolean, problems: string[], assetsChecked: number}>}
  */
 export async function checkNourishHealth(baseUrl = DEFAULT_BASE_URL) {
@@ -136,7 +136,7 @@ async function main() {
 
   if (report.healthy) {
     console.log(
-      `Nourish is healthy — its page and all ${report.assetsChecked} of its code files load correctly at http://localhost:4317`,
+      `Nourish is healthy — its page and all ${report.assetsChecked} of its code files load correctly at http://localhost:3902`,
     );
     return;
   }

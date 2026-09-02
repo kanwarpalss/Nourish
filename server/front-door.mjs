@@ -15,7 +15,7 @@ import { createServer, request as httpRequest } from "node:http";
 import { openDiaryStore } from "./diary-store.mjs";
 import { createDiaryHandler, ensureFirstProfile, schedulePhotoSweep, API_PREFIX } from "./diary-service.mjs";
 
-export async function startFrontDoor({ port = 4317, host = "0.0.0.0", appOrigin, databasePath } = {}) {
+export async function startFrontDoor({ port = 3902, host = "0.0.0.0", appOrigin, databasePath } = {}) {
   const store = openDiaryStore(databasePath);
   ensureFirstProfile(store);
   schedulePhotoSweep(store);

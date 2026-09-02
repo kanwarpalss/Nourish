@@ -1,6 +1,6 @@
 import { createServer } from "node:net";
 
-const port = 4317;
+const port = 3902;
 
 try {
   await new Promise((resolve, reject) => {

@@ -1289,7 +1289,7 @@ function RecipeDrawer({ recipe, onClose, onPlan }: { recipe: Recipe | null; onCl
  * Where KP's data lives and how to get it out.
  *
  * The diary is browser storage, which is scoped to the exact origin — so
- * http://localhost:4317 and any other port are separate diaries that never
+ * http://localhost:3902 and any other port are separate diaries that never
  * merge, and clearing browser data ends both. Until the Mac Mini store lands,
  * an export file is the only thing that survives any of that, so this panel
  * says so plainly rather than implying the data is safe by default.
