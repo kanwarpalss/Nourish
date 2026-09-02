@@ -577,8 +577,13 @@ household diary.
 4. **Delete and Undo behave correctly end-to-end**, including totals recalculating and the
    entry returning to its original position.
 
-Regression coverage was added *before* the fix and observed failing against the unfixed
-stylesheet, per TEST-01. `npm test` (209 checks) and `npm run lint` are green with the fix.
+A structural guard was added rather than only a fix: `tests/rendered-html.test.mjs` now
+enumerates every `pointer-events: none` rule in `app/globals.css` against a reviewed
+allowlist, so introducing a new click-through overlay fails the suite until its author
+decides whether anything inside it is interactive and hit-tests it. Both failure injections
+pass — a new click-through rule, and removing the Undo opt-in again — so the gate detects its
+own failure (TEST-12). Regression coverage was added *before* the fix and observed failing
+against the unfixed stylesheet, per TEST-01. `npm test` (209 checks) and `npm run lint` are green with the fix.
 No commit, push, release, deployment, live-service or household-diary action was performed
 during this checkpoint.
 

@@ -131,6 +131,26 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
    * phone. Found 2026-09-02 by hit-testing the rendered button.
    */
   assert.match(css, /\.toast \{[^}]*pointer-events: none;/, "the toast itself must stay click-through");
+
+  /**
+   * The guard against a second dead control rather than a second fix.
+   *
+   * `pointer-events: none` is the mechanism that made Undo unclickable, and it is
+   * invisible to markup checks, accessibility snapshots and scripted clicks alike.
+   * So every click-through rule in the stylesheet has to be declared here on
+   * purpose. Adding a new one fails this test until its author decides whether
+   * anything inside it is interactive — and if so, hit-tests it in a browser
+   * (`document.elementFromPoint(centre) === theControl`) rather than trusting that
+   * it rendered. Decorative pseudo-elements are listed because they hold nothing
+   * clickable; a real element listed here must name the control that opts back in.
+   */
+  const clickThrough = [...css.matchAll(/([^{}]+)\{[^}]*pointer-events:\s*none/g)].map(([, selector]) => selector.trim().split(/\s*\n\s*/).pop());
+  assert.deepEqual(
+    clickThrough.sort(),
+    [".energy-card::after", ".toast"],
+    "a new click-through rule appeared: decide whether anything inside it is interactive, hit-test it in a browser, then add it here",
+  );
+  // `.toast` is the one that holds a control, so that control must opt back in.
   assert.match(css, /\.toast-undo \{[^}]*pointer-events: auto;/, "the Undo button must opt back into clicks or it is dead on tap");
   assert.match(css, /\.toast-undo \{[^}]*min-height: 44px;/, "Undo needs a 44px tap target on a phone");
 

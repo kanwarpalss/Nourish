@@ -82,6 +82,13 @@ Local-only, single user, no cloud backend.
     nothing logged is removed, so importing a stale backup can never undo today's work.
 15. **Any control the desktop sidebar hosts must also be reachable on mobile**, which hides
     that sidebar. Backup/restore shipped unreachable on a phone once; tap targets are 44px.
+    **Reachable means hit-tested, not rendered.** A control inside anything click-through
+    (`pointer-events: none`), stacked, or fixed must be proven with
+    `document.elementFromPoint(centre) === theControl` in a real browser — scripted
+    `element.click()` skips hit-testing entirely and passes on a dead button. This shipped
+    twice: `fd65693` (dead on real phones) and `4706a1c` (every Undo in the app fell through
+    the toast to the panel behind). `tests/rendered-html.test.mjs` enumerates every
+    click-through rule against a reviewed allowlist so a new overlay fails the suite.
 
 ## Critical files (read before modifying)
 
