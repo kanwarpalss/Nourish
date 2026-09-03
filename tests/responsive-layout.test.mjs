@@ -19,7 +19,7 @@ import test from "node:test";
 
 const stripComments = (css) => css.replace(/\/\*[\s\S]*?\*\//g, "");
 
-/** Flattens the stylesheet to { selector, maxWidth, decls }, keeping source order. */
+/** Flattens the stylesheet to { selector, minWidth, maxWidth, decls }, keeping source order. */
 function parseCss(css) {
   const rules = [];
   let index = 0;
@@ -35,10 +35,16 @@ function parseCss(css) {
         else if (css[cursor] === "}") depth -= 1;
         cursor += 1;
       }
-      const width = prelude.match(/max-width:\s*(\d+)px/);
-      const maxWidth = width ? Number(width[1]) : Infinity;
+      const maximum = prelude.match(/max-width:\s*(\d+)px/);
+      const minimum = prelude.match(/min-width:\s*(\d+)px/);
+      const maxWidth = maximum ? Number(maximum[1]) : Infinity;
+      const minWidth = minimum ? Number(minimum[1]) : 0;
       for (const rule of parseCss(css.slice(open + 1, cursor - 1))) {
-        rules.push({ ...rule, maxWidth: Math.min(maxWidth, rule.maxWidth) });
+        rules.push({
+          ...rule,
+          minWidth: Math.max(minWidth, rule.minWidth),
+          maxWidth: Math.min(maxWidth, rule.maxWidth),
+        });
       }
       index = cursor;
       continue;
@@ -49,7 +55,9 @@ function parseCss(css) {
       const colon = part.indexOf(":");
       if (colon > 0) decls[part.slice(0, colon).trim()] = part.slice(colon + 1).trim();
     }
-    for (const selector of prelude.split(",")) rules.push({ selector: selector.trim(), maxWidth: Infinity, decls });
+    for (const selector of prelude.split(",")) {
+      rules.push({ selector: selector.trim(), minWidth: 0, maxWidth: Infinity, decls });
+    }
     index = close + 1;
   }
   return rules;
@@ -59,7 +67,7 @@ function parseCss(css) {
 function declaration(rules, selector, property, viewport) {
   let winner;
   for (const rule of rules) {
-    if (rule.selector !== selector || viewport > rule.maxWidth) continue;
+    if (rule.selector !== selector || viewport < rule.minWidth || viewport > rule.maxWidth) continue;
     if (rule.decls[property] !== undefined) winner = rule.decls[property];
   }
   return winner;
@@ -193,4 +201,108 @@ test("the widest arrangement still returns on a large screen", async () => {
   assert.equal(today.columns, 3, "Today should be three columns at 1440px");
   assert.equal(history.columns, 2, "History should be two columns at 1440px");
   assert.equal(minimumGridWidth(declaration(rules, ".today-layout", "grid-template-columns", 1280), "22px", 1280).columns, 2, "and two columns at 1280px");
+});
+
+test("mobile navigation, creation and correction controls keep 44px touch targets", async () => {
+  const rules = await loadRules();
+  const heightSelectors = [
+    ".mobile-subnav button",
+    ".close-button",
+    ".logging-mode-switch button",
+    ".single-item-filters button",
+    ".logging-unit-field select",
+    ".edit-food-button",
+    ".weight-add-button",
+    ".filter-row .chip",
+    ".segmented button",
+    ".recipe-title",
+    ".item-card-actions a",
+    ".research-footnote a",
+    ".target-fields input",
+    ".details-heading button",
+    ".food-type-field select",
+    ".identity-fields input",
+    ".serving-fields input",
+    ".serving-fields select",
+    ".conversion-fields input",
+    ".conversion-fields select",
+    ".conversion-fields label > div",
+    ".nutrition-fields label > div",
+    ".nutrition-fields input",
+    ".conversion-add",
+    ".override-fields input",
+    ".meal-name-field input",
+    ".weight-form input",
+    ".weight-form .button",
+    ".plan-summary-items button",
+    ".meal-composer-lines > div > button",
+    ".meal-composer-lines label",
+    ".meal-composer-lines label input",
+    ".conversion-remove",
+    ".meal-expand-button",
+    ".weight-trend-toggle",
+    ".food-photo-link",
+    ".component-control > button",
+    ".component-control input",
+  ];
+  const failures = [375, 414].flatMap((viewport) =>
+    heightSelectors
+      .filter((selector) => declaration(rules, selector, "min-height", viewport) !== "44px !important")
+      .map((selector) => `${selector} at ${viewport}px`),
+  );
+  assert.deepEqual(failures, [], `these mobile controls lost their 44px tap height: ${failures.join(", ")}`);
+
+  const squareSelectors = [
+    ".text-button",
+    ".close-button",
+    ".single-item-filters button",
+    ".filter-row .chip",
+    ".table-actions .chip",
+    ".details-heading button",
+    ".quantity-control > button",
+    ".entry-buttons button",
+    ".item-card-actions a",
+    ".plan-summary-items button",
+    ".meal-composer-lines > div > button",
+    ".conversion-remove",
+    ".component-control > button",
+  ];
+  const narrow = [375, 414].flatMap((viewport) =>
+    squareSelectors
+      .filter((selector) => declaration(rules, selector, "min-width", viewport) !== "44px !important")
+      .map((selector) => `${selector} at ${viewport}px`),
+  );
+  assert.deepEqual(narrow, [], `these compact mobile controls lost their 44px tap width: ${narrow.join(", ")}`);
+  assert.equal(
+    declaration(rules, ".quantity-control", "grid-template-columns", 375),
+    "44px minmax(0, 1fr) 44px",
+    "quantity steppers must reserve the full tap width rather than overlap the input",
+  );
+  assert.equal(declaration(rules, ".logged-meal-components span", "min-width", 375), "0");
+  assert.equal(declaration(rules, ".logged-meal-components span", "overflow-wrap", 375), "anywhere");
+  assert.equal(declaration(rules, ".meal-entry", "grid-template-columns", 375), "minmax(0, 1fr) auto");
+  assert.equal(declaration(rules, ".meal-meta strong", "overflow-wrap", 375), "anywhere");
+  assert.equal(declaration(rules, ".food-results", "min-width", 375), "0");
+  assert.equal(declaration(rules, ".food-results > button", "grid-template-columns", 375), "auto minmax(0, 1fr) auto auto");
+  assert.equal(declaration(rules, ".quantity-editor", "min-width", 375), "0");
+  assert.equal(declaration(rules, ".quantity-editor h3", "overflow-wrap", 375), "anywhere");
+  assert.equal(declaration(rules, ".create-food-row", "grid-template-columns", 375), "auto minmax(0, 1fr)");
+});
+
+test("failure injection: a later feature rule can shrink a reviewed touch target", () => {
+  const broken = parseCss(stripComments(`
+    @media (max-width: 700px) { .close-button { min-height: 44px; } }
+    .close-button { min-height: 38px; }
+  `));
+  assert.equal(declaration(broken, ".close-button", "min-height", 375), "38px");
+  assert.notEqual(declaration(broken, ".close-button", "min-height", 375), "44px");
+});
+
+test("failure injection: media-query lower bounds distinguish 375px and 414px phones", () => {
+  const ranged = parseCss(stripComments(`
+    @media (max-width: 700px) { .close-button { min-height: 44px; } }
+    @media (min-width: 400px) and (max-width: 700px) { .close-button { min-height: 32px; } }
+  `));
+  assert.equal(declaration(ranged, ".close-button", "min-height", 375), "44px");
+  assert.equal(declaration(ranged, ".close-button", "min-height", 414), "32px");
 });

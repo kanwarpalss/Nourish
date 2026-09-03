@@ -115,6 +115,13 @@ test("the diary survives the service restarting", async () => {
   });
 });
 
+test("closing the diary store twice is harmless during coordinated shutdown", async () => {
+  await withService(async ({ store }) => {
+    store.close();
+    assert.doesNotThrow(() => store.close(), "a parent and its child may both finish shutdown cleanup");
+  });
+});
+
 test("every save is recoverable, so deleting everything is not final", async () => {
   await withService(async ({ call }) => {
     await call("PUT", "/diary/kp", { baseRevision: 0, state: diary("2026-08-22", ["a", "b", "c"]) });

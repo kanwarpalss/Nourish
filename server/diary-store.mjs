@@ -146,6 +146,8 @@ export function openDiaryStore(databasePath = defaultDatabasePath()) {
 
   const now = () => new Date().toISOString();
 
+  let closed = false;
+
   return {
     path: databasePath,
 
@@ -334,6 +336,8 @@ export function openDiaryStore(databasePath = defaultDatabasePath()) {
     },
 
     close() {
+      if (closed) return;
+      closed = true;
       db.close();
     },
   };

@@ -24,19 +24,29 @@ const child = spawn(path.join(repoRoot, "node_modules", ".bin", "vinext"), ["dev
   env: { ...process.env, WRANGLER_LOG_PATH: path.join(repoRoot, ".wrangler", "wrangler.log") },
 });
 
-const shutdown = (signal) => {
-  child.kill(signal);
+let shutdownSignal = null;
+let serviceClosed = false;
+
+const closeService = () => {
+  if (serviceClosed) return;
+  serviceClosed = true;
   service.server.closeAllConnections();
   service.server.close();
   service.store.close();
 };
 
+const shutdown = (signal) => {
+  if (shutdownSignal) return;
+  shutdownSignal = signal;
+  child.kill(signal);
+  closeService();
+};
+
 for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => shutdown(signal));
 
 child.on("exit", (code, signal) => {
-  service.server.closeAllConnections();
-  service.server.close();
-  service.store.close();
-  if (signal) process.kill(process.pid, signal);
-  else process.exit(code ?? 0);
+  closeService();
+  if (shutdownSignal === "SIGINT") process.exit(130);
+  if (shutdownSignal === "SIGTERM") process.exit(143);
+  process.exit(code ?? (signal ? 1 : 0));
 });
