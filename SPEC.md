@@ -3,10 +3,12 @@
 > **Canonical product and repository name:** Nourish.
 >
 > **Status:** Always-on local-first application on the Mac Mini. Full Control food,
-> Meal, photo, Plan, diary, delete/Undo and sync flows are released at `ec4d3ed`;
+> Meal, photo, Plan, diary, delete/Undo and sync flows are released. Per-person calorie
+> and macro targets, the visible weight trend, honest persistence status and retry-safe
+> Mini sync are released at runtime commit `eb98c55`;
 > the production address is `http://100.81.29.11:3902`. The researched catalogue
 > contains 123 foods and 18 exact purchase-title matches. Authentication remains
-> explicitly parked; exact targets, unresolved product labels and encrypted off-machine
+> explicitly parked; unresolved product labels and encrypted off-machine
 > backup/restore are the principal product inputs still outstanding.
 
 ## §1 Product promise
@@ -80,7 +82,13 @@ The current research build demonstrates:
 - Reusable Meals containing one or more Single Items. Logging produces one expandable diary row; component quantity edits affect that diary entry only.
 - A zero-result search can open a blank new-item form without depending on an existing selection. The modal owns scrolling while the background page is locked.
 - Real History and Trends derived from the multi-day diary; missing days remain gaps rather than zero intake.
-- Dated body-weight logging with same-day correction, safe bounds, and an optional trend chart.
+- Dated body-weight logging with same-day correction, safe bounds, and a visible-by-default
+  trend chart once two or more weigh-ins exist. The chart reports its date range and low/high
+  values without requiring colour perception.
+- Per-person calorie, protein, carbohydrate and fat targets that can be opened directly from
+  Today, changed or reset at any time, and reconciled independently across devices.
+- A persistent status banner that distinguishes “saved on the Mac Mini” from browser-only,
+  saving, retrying and failed states; an unconfirmed write remains dirty and retries.
 - Purchase catalogue with exact-match/review state. Unresolved items are visible but cannot inherit similar-product nutrition.
 
 ## §4 Functional requirements
@@ -659,6 +667,47 @@ then walked read-only at 375 px and 414 px across every primary Plan/Track area,
 Settings: no horizontal overflow, undersized visible control, console warning or console
 error was observed. Household data was not changed for this final inspection.
 
+**Checkpoint F — 2026-09-03, personal targets, weight trend and persistence proof complete**
+
+The remaining demo-target and persistence ambiguity has been removed at runtime commit
+`eb98c55`:
+
+1. **Targets belong to the selected person and are fully editable.** Today exposes both
+   **Change target** and **Adjust targets** entry points. The editor names the selected
+   profile and accepts calorie, protein, carbohydrate and fat values independently up to a
+   defensive 50,000 limit. An unset profile still sees clearly labelled placeholder values;
+   saving creates that person's real targets rather than rewriting a shared demo constant.
+2. **A later target decision wins across devices.** Targets carry their own `updatedAt`
+   value and sync chooses the newer edit rather than whichever browser happens to push last.
+   Local edit times are monotonic even if the device clock moves backwards. Legacy saved
+   targets remain readable and keep the prior local-first tie rule.
+3. **Weight history is visual without hiding the source data.** The trend opens by default
+   when there are at least two weigh-ins, with a scaled area/line, points, grid, date range,
+   low/high labels and the exact dated values still listed below. A single weigh-in keeps the
+   honest one-point empty state rather than implying a trend.
+4. **Persistence is visible and retry-safe.** A status banner always states whether the
+   active profile is saved on the Mini, currently saving, browser-only or needs retry. A
+   failed/unconfirmed push is never marked complete, remains dirty and retries every ten
+   seconds while the app is open.
+
+The complete suite now has **217 passing checks** (55 JavaScript/render/service and 162
+TypeScript), with clean lint and diff checks. New target/parser/merge/restart/UI tests fail
+against the preceding implementation. A disposable database browser pass changed targets,
+recorded two weigh-ins, rendered the chart, reloaded, restarted the entire service and
+returned the same canonical state hash. At 390 px the audit found the fixed mobile Log Food
+button covering **Save targets**; the logger action is now hidden while the target editor is
+open, and the regression asserts that ownership rule.
+
+The production release used only `npm run release`, creating frozen snapshot
+`releases/2026-09-03T10-17-08-043Z`. Before and after release, KP's server document remained
+at revision 38 with SHA-256
+`6adfb4d2f4564f6118c5d7327b43056a03ebe642b8f2f706725cd80aeed5c1b3`: one diary day,
+zero weigh-ins and no saved personal target were preserved exactly. The read-only production
+browser ran at the real insecure Tailscale origin, showed the 44 px Change target control and
+the “Saved on the Mac Mini for KP” status at 390 px, had no horizontal overflow and emitted
+no console messages. The page and all six referenced assets returned 200; port 4317 remained
+closed. No household diary value was changed during acceptance.
+
 ## §7 Known Issues and deferred scope
 
 | Item | State | Resolution point |
@@ -667,12 +716,12 @@ error was observed. Household data was not changed for this final inspection.
 | Undo toast button was dead on tap | **Fixed 2026-09-02** | `.toast` is `pointer-events: none` and `.toast-undo` inherited it, so every Undo in the app fell through to the panel behind. Fixed with `pointer-events: auto` and a 44px target; asserted in `tests/rendered-html.test.mjs`. Second instance of this bug class after `fd65693` — **any new control drawn inside a click-through overlay must be hit-tested, not just rendered.** |
 | Restore decisions share the 1000-slot deletion budget | Open, accepted | `removalDecisions` stores `removed: false` restores alongside real tombstones under one `MAX_REMOVED_IDS` cap, so heavy delete/Undo churn evicts the oldest decisions sooner than tombstones alone would. Bounded and safe; revisit only if the cap is ever approached. |
 | Delete/restore ordering trusts the wall clock | Open, accepted | `{ removed, at }` is last-writer-wins on `Date.now()`, so a device with a badly wrong clock wins permanently, and a future-dated `at` from another device is accepted on parse. Standard trade-off for this sync model; documented rather than solved. |
-| Exact calorie/macro target and personal dietary constraints | Sample and clearly labelled | Onboarding design before persistence |
+| Exact calorie/macro target and personal dietary constraints | **Editable and persisted per person; constraints still open** | Calorie, protein, carbohydrate and fat targets are user-controlled and sync independently. Medical/allergy constraints remain separate reviewed scope. |
 | Nandini and Epigamia seed entries rely on current label mirrors | Needs exact-pack confirmation | Reconcile barcode/variant and pack photo during cardIQ import before promotion |
 | 175 food purchase rows are deliberately not auto-linked | Open, enumerated | Exact Brand + Item + Variant/form + pack evidence was accepted for 18 titles. The complete unresolved list is generated in `data/UNMATCHED_CARDIQ_FOODS.md`; label photos, barcodes, or exact retailer IDs are the safe next input. |
 | Food photos cover 54 of 123 foods; 69 use drawn icons | Open, deliberately | Add a photo only after exact brand/product/variant/pack or raw/cooked form is visually confirmed. Unsafe automatic retailer/free-text sourcing stays retired. |
 | Browser file-picker acceptance for food-photo cancel/backdrop cleanup | Deferred safely | Uploading a local file requires action-time approval. Source and server regressions cover the cleanup; perform one manual disposable-database acceptance pass before a release that changes this area again. |
-| Full Control UX/data-safety pass | **Released 2026-09-03** | Checkpoints A–E record the audit, repairs, adversarial tests and browser passes. Commit `ec4d3ed` has 214 passing checks and is the Mac Mini release. |
+| Full Control UX/data-safety pass | **Released 2026-09-03** | Checkpoints A–F record the audit, repairs, adversarial tests and browser passes. Runtime commit `eb98c55` has 217 passing checks and is the Mac Mini release. |
 | Catalogue thumbnails are fetched from `bbassets.com` while rendering | **Resolved and browser-checked 2026-09-02** | Catalogue cards auto-load only bundled or Nourish-managed photos and otherwise use the drawn icon. Opening the logger on insecure HTTP produced zero third-party image requests. |
 | Any render error blanks the entire app | **Fixed 2026-08-30, unverified in browser** | `AppErrorBoundary` now catches it and offers a reload. Its absence is what turned the `randomUUID` bug into a total outage. Needs a live trigger to confirm. |
 | Main UI module and stylesheet are oversized | Architectural debt, worsening | `app/page.tsx` is 2,275 lines and `app/globals.css` is 1,144. Split by Plan/Track/product-area ownership before the next broad UI feature so one change does not require editing the whole screen. |
@@ -791,26 +840,31 @@ the next broad UI feature. The diary API has no authentication by design.
 
 ### Current handoff
 
-Nourish's Full Control scope is released on the Mac Mini at runtime commit `ec4d3ed`.
+Nourish's Full Control scope is released on the Mac Mini at runtime commit `eb98c55`.
 The app supports Packaged Food, Open Ingredient, Ordered Food and reusable Meal creation;
 multiple independent units; quantity and macro editing; one-off Meal rename/add/remove;
 personal filtering and independent Copy; purchase-to-item completion without guessed macros;
 food and log photos; Plan assembly; immutable diary snapshots; History corrections; weight
 editing; deletion with working Undo; additive restore; and sync that carries newer delete or
-restore intent. Capacity limits refuse unsafe changes rather than evicting unrelated data.
+restore intent. Each profile also owns editable calorie/macro targets, a weight trend and an
+honest Mini/browser persistence state. Capacity limits refuse unsafe changes rather than
+evicting unrelated data.
 
-The final suite has **214 passing checks** (54 JavaScript/render/service, 160 TypeScript),
+The final suite has **217 passing checks** (55 JavaScript/render/service, 162 TypeScript),
 with clean lint and diff checks. Production browser geometry is clean at 375 px and 414 px
-across every primary Plan/Track surface, Log Food and Settings. The Mac Mini serves frozen
-snapshot `2026-09-03T04-35-13-901Z` through launchd on port 3902; the external health check
-loads the page and all six referenced code assets. The final browser inspection was read-only.
+across every primary Plan/Track surface, Log Food and Settings, and the final target check at
+390 px has no horizontal overflow. The Mac Mini serves frozen snapshot
+`2026-09-03T10-17-08-043Z` through launchd on port 3902; the external health check loads the
+page and all six referenced code assets. The final browser inspection was read-only, and the
+profile state fingerprint matched exactly before and after release.
 
 Worth doing next, in order:
 
 1. **Resolve purchases only from exact evidence.** Work down `data/UNMATCHED_CARDIQ_FOODS.md` with physical pack photos, barcodes, or exact retailer pages. Never restore category/reference auto-matching just to shrink the queue.
-2. **Split the large UI ownership boundaries.** Extract Plan, Track, logger, and their styles before another broad UI feature; preserve behaviour with the current 214-check suite and mobile geometry checks.
+2. **Split the large UI ownership boundaries.** Extract Plan, Track, logger, and their styles before another broad UI feature; preserve behaviour with the current 217-check suite and mobile geometry checks.
 3. **Complete off-machine backup hardening.** SQLite persistence and 50-version local history exist; add encrypted off-machine snapshots and perform a real restore drill.
-4. **Set personal targets.** Today remains labelled Placeholder until KP supplies calorie/macro targets.
+4. **Enter each person's preferred targets.** The controls and storage are ready; a profile
+   remains honestly labelled Placeholder only until that person chooses their own numbers.
 
 Authentication/security remains explicitly parked by KP. cardIQ stays connected only through
 the documented narrow import contract, without payment or address data.
@@ -868,13 +922,15 @@ app stayed healthy.
 
 **Operational state at 2026-08-21:** the source tree passed 115 automated checks, lint, the production build, and a production dependency audit with zero known vulnerabilities. This lead review did not deploy, restart, or inspect the live `com.kanwar.nourish` service, so the 2026-08-14 live-service observation remains the latest deployment evidence.
 
-**Operational state at 2026-09-03:** runtime commit `ec4d3ed` is published as frozen
-snapshot `releases/2026-09-03T04-35-13-901Z`. `com.kanwar.nourish` is listening on
+**Operational state at 2026-09-03:** runtime commit `eb98c55` is published as frozen
+snapshot `releases/2026-09-03T10-17-08-043Z`. `com.kanwar.nourish` is listening on
 `*:3902`; vinext remains internal on 3903, and retired port 4317 has no listener. The
 MacBook-to-Mini health command loaded the page and all six referenced code assets from
-`http://100.81.29.11:3902`. The complete 214-check suite and lint passed before release,
-and the production UI was inspected read-only at 375 px and 414 px with no horizontal
-overflow, undersized visible control or console warning/error.
+`http://100.81.29.11:3902`. The complete 217-check suite and lint passed before release.
+The production UI was inspected read-only in its real insecure HTTP context at 390 px:
+no horizontal overflow or console output, and Change target remained a visible 44 px
+control. KP's full server-state fingerprint and revision matched before and after the
+release, proving the frozen app update did not rewrite or reset the household diary.
 
 Runbook: update the clean Mac Mini checkout with `git pull --ff-only`, then run
 `npm run release`. A Git push alone does not change the running snapshot. Terminal commands
