@@ -8,7 +8,7 @@ import { addToTray, areFoodConversionsValid, cloneNutritionItem, cloneUserMeal, 
 import { defaultCompositeItems, findComponentFood } from "./composite-foods";
 import { createProfile, deleteProfile as deleteRemoteProfile, describeSyncStatus, fetchProfiles, pullDiary, pushDiary, renameProfile, DEFAULT_PROFILE_ID, type DiaryProfile, type SyncStatus } from "./diary-sync";
 import { deleteFoodPhoto, deleteLogPhoto, foodPhotoKeyFromUrl, isAutoLoadedFoodImage, isSupportedPhotoFile, photoUrl, uploadFoodPhoto, uploadLogPhoto, type LogPhotoMeta } from "./log-photos";
-import { canRestoreRecord, clearAllUserData, emptyNutritionState, exportNutritionState, nutritionStorageKeys, withLogIds, getWeightTrendPoints, isSafeImageUrl, logsForDay, MAX_STORED_DAYS, MAX_TARGET_VALUE, mergeNutritionBackup, nextTargetEditTime, parseExportedNutritionState, parseSavedNutritionState, readStoredNutritionRaw, removeRecord, restoreRecord, upsertWeightEntry, withDayLogs, wouldDropOldestDay, writeStoredNutritionState, type RemovableKind, type RemovedRecord, type SavedLogEntry, type SavedNutritionState, type SavedTargets, type WeightEntry } from "./local-nutrition-state";
+import { canRestoreRecord, clearAllUserData, emptyNutritionState, exportNutritionState, nutritionStorageKeys, withLogIds, isSafeImageUrl, logsForDay, MAX_STORED_DAYS, MAX_TARGET_VALUE, mergeNutritionBackup, nextTargetEditTime, parseExportedNutritionState, parseSavedNutritionState, readStoredNutritionRaw, removeRecord, restoreRecord, upsertWeightEntry, withDayLogs, wouldDropOldestDay, writeStoredNutritionState, type RemovableKind, type RemovedRecord, type SavedLogEntry, type SavedNutritionState, type SavedTargets, type WeightEntry } from "./local-nutrition-state";
 import { DEFAULT_TARGETS, loggableMeals, resolveLoggedFood, summariseHistory, summariseTrend, type DaySummary } from "./day-history";
 import { estimateSatiety, getBangaloreClock, getBasisAmountForLogging, getEnergyRunway, getLoggingUnitLabel, getLoggingUnits, getQuantityLimit, hasNutritionTarget, isQuantityValid, matchesNutritionTarget, matchesRecipe, satietyLabel, scaleNutrition, scaleNutritionForUnit, sumLoggedNutrition, sumNutritionDetails, type DashboardClock, type NutritionTarget } from "./prototype-logic";
 import { meals, nutritionItems, SOURCE_LINKS, type Meal, type NutritionItem, type NutritionUnit } from "./nutrition-data";
@@ -262,36 +262,63 @@ function TargetEditor({ profileName, targets, isDefault, onSave, onCancel }: { p
 }
 
 /**
- * How wide the trend chart needs to be so no two point labels can ever touch.
- * Point x-position is proportional to elapsed days, and `getWeightTrendPoints`
- * dedupes to one entry per date, so the smallest possible gap between any two
- * points is exactly one day of width. Sizing the chart by day-span rather than
- * by entry count is what makes that gap provably >= PX_PER_DAY regardless of
- * how many entries pile up — a fixed-width chart with more points would just
- * make the "72.5" labels run into each other, which is the overlap KP is
- * asking to have eliminated everywhere, not just fixed once.
+ * Time-proportional spacing (the first cut of this chart) wasted huge width on
+ * a handful of entries that merely happened to be calendar-spread — 5 weigh-ins
+ * across 23 days forced a 966px scrolling chart for almost no reason, which is
+ * exactly the "sticky, fixed scrollable" complaint KP raised. Points are now
+ * spaced evenly by index instead: gap between any two adjacent points is
+ * exactly `width / (pointCount - 1)`, so as long as the chart is at least
+ * `(pointCount - 1) * PX_PER_POINT` wide, no two "72.5"-style labels can ever
+ * touch — provable regardless of how the entries are spread in time, and
+ * driven by how many points there are, not by how far apart they happen to
+ * fall. The trade-off, same as most consumer weight trackers (Apple Health,
+ * MyFitnessPal): the x-axis reads as "entry order", not literal calendar time,
+ * so a two-day gap and a two-month gap between weigh-ins render the same
+ * width apart. For a personal weight trend that is the right trade — the
+ * shape and the exact numbers are what matter, not pixel-accurate spacing.
  */
-const WEIGHT_CHART_PX_PER_DAY = 42;
-// A defensive ceiling only — guards a corrupted date far in the past from
-// producing a multi-million-pixel SVG. Nowhere near what real logging needs.
-const WEIGHT_CHART_MAX_WIDTH = 50_000;
+const WEIGHT_CHART_PX_PER_POINT = 42;
+// However few points there are, the chart still fills a normal dialog's width
+// rather than rendering small and stranded on the left.
+const WEIGHT_CHART_MIN_WIDTH = 600;
 const WEIGHT_CHART_HEIGHT = 140;
 
-function weightChartWidth(entries: WeightEntry[]) {
-  if (entries.length < 2) return 300;
-  const first = Date.parse(`${entries[0].date}T00:00:00.000Z`);
-  const last = Date.parse(`${entries.at(-1)?.date}T00:00:00.000Z`);
-  const days = Math.max(1, Math.round((last - first) / 86_400_000));
-  return Math.min(WEIGHT_CHART_MAX_WIDTH, Math.max(300, days * WEIGHT_CHART_PX_PER_DAY));
+/** Filters scope the chart only — the full entry list below always shows everything. */
+const WEIGHT_CHART_RANGES = [
+  { label: "1W", days: 7 },
+  { label: "1M", days: 30 },
+  { label: "6M", days: 182 },
+  { label: "1Y", days: 365 },
+  { label: "All", days: null },
+] as const;
+type WeightChartRangeLabel = (typeof WEIGHT_CHART_RANGES)[number]["label"];
+
+function weightEntriesInRange(entries: WeightEntry[], days: number | null) {
+  if (days === null || entries.length === 0) return entries;
+  const cutoff = Date.parse(`${entries.at(-1)?.date}T00:00:00.000Z`) - days * 86_400_000;
+  return entries.filter((entry) => Date.parse(`${entry.date}T00:00:00.000Z`) >= cutoff);
+}
+
+function weightChartLayout(entries: WeightEntry[], height: number) {
+  const width = Math.max(WEIGHT_CHART_MIN_WIDTH, (entries.length - 1) * WEIGHT_CHART_PX_PER_POINT);
+  const kgValues = entries.map((entry) => entry.kg);
+  const minimum = Math.min(...kgValues);
+  const maximum = Math.max(...kgValues);
+  const points = entries.map((entry, index) => ({
+    ...entry,
+    x: entries.length === 1 ? width / 2 : Math.round((index / (entries.length - 1)) * width * 100) / 100,
+    y: maximum === minimum ? height / 2 : Math.round((height - ((entry.kg - minimum) / (maximum - minimum)) * height) * 100) / 100,
+  }));
+  return { width, points, minimum, maximum };
 }
 
 /** The full trend chart, opened "as needed" rather than living inline — see WeightCard. */
 function WeightTrendDialog({ entries, onDelete, onClose }: { entries: WeightEntry[]; onDelete: (date: string) => void; onClose: () => void }) {
-  const width = weightChartWidth(entries);
+  const [range, setRange] = useState<WeightChartRangeLabel>("1M");
+  const rangeDays = WEIGHT_CHART_RANGES.find((option) => option.label === range)?.days ?? null;
+  const inRange = weightEntriesInRange(entries, rangeDays);
   const height = WEIGHT_CHART_HEIGHT;
-  const points = getWeightTrendPoints(entries, width, height);
-  const minimum = Math.min(...entries.map((entry) => entry.kg));
-  const maximum = Math.max(...entries.map((entry) => entry.kg));
+  const { width, points, minimum, maximum } = weightChartLayout(inRange, height);
   const linePoints = points.map((point) => `${point.x},${point.y}`).join(" ");
   const areaPoints = points.length > 1 ? `0,${height} ${linePoints} ${width},${height}` : "";
   useEffect(() => {
@@ -306,26 +333,37 @@ function WeightTrendDialog({ entries, onDelete, onClose }: { entries: WeightEntr
           <button className="close-button" onClick={onClose} aria-label="Close weight trend">×</button>
         </header>
         <div className="weight-trend-body">
-          <div className="weight-chart-head"><span>{minimum.toFixed(1)} kg low</span><strong>{entries.length} {entries.length === 1 ? "entry" : "entries"}</strong><span>{maximum.toFixed(1)} kg high</span></div>
-          <div className="weight-chart-scroll">
-            <svg className="weight-chart" viewBox={`-26 -24 ${width + 52} ${height + 48}`} width={width} height={height} role="img" aria-label={`Weight trend across ${entries.length} entries, every point labelled with its exact weight`}>
-              <defs><linearGradient id="weight-area" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#7aa13b" stopOpacity="0.3" /><stop offset="100%" stopColor="#7aa13b" stopOpacity="0.02" /></linearGradient></defs>
-              <line className="weight-chart-grid" x1="0" x2={width} y1="0" y2="0" />
-              <line className="weight-chart-grid" x1="0" x2={width} y1={height / 2} y2={height / 2} />
-              <line className="weight-chart-grid" x1="0" x2={width} y1={height} y2={height} />
-              {areaPoints ? <polygon className="weight-chart-area" points={areaPoints} /> : null}
-              <polyline points={linePoints} />
-              {points.map((point) => (
-                <g key={point.date}>
-                  <circle cx={point.x} cy={point.y} r="4" />
-                  <text className="weight-chart-label" x={point.x} y={point.y - 12} textAnchor="middle">{point.kg.toFixed(1)}</text>
-                  <title>{point.date}: {point.kg.toFixed(1)} kg</title>
-                </g>
-              ))}
-            </svg>
+          <div className="weight-chart-controls">
+            <span className="eyebrow">{entries.length} weigh-in{entries.length === 1 ? "" : "s"} recorded</span>
+            <div className="segmented">{WEIGHT_CHART_RANGES.map((option) => <button key={option.label} className={range === option.label ? "active" : ""} onClick={() => setRange(option.label)}>{option.label}</button>)}</div>
           </div>
-          <div className="weight-chart-axis"><span>{entries[0].date}</span><span>{entries.at(-1)?.date}</span></div>
-          {/* Every weigh-in is listed, because a typo you cannot delete bends the whole trend line. */}
+          {inRange.length === 0 ? (
+            <p className="weight-empty">No weigh-ins in the last {range}. Try a wider range.</p>
+          ) : (
+            <>
+              <div className="weight-chart-head"><span>{minimum.toFixed(1)} kg low</span><strong>{inRange.length} {inRange.length === 1 ? "entry" : "entries"} shown</strong><span>{maximum.toFixed(1)} kg high</span></div>
+              <div className="weight-chart-scroll">
+                <svg className="weight-chart" viewBox={`-26 -24 ${width + 52} ${height + 48}`} width={width} height={height} role="img" aria-label={`Weight trend across ${inRange.length} entries, every point labelled with its exact weight`}>
+                  <defs><linearGradient id="weight-area" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#7aa13b" stopOpacity="0.3" /><stop offset="100%" stopColor="#7aa13b" stopOpacity="0.02" /></linearGradient></defs>
+                  <line className="weight-chart-grid" x1="0" x2={width} y1="0" y2="0" />
+                  <line className="weight-chart-grid" x1="0" x2={width} y1={height / 2} y2={height / 2} />
+                  <line className="weight-chart-grid" x1="0" x2={width} y1={height} y2={height} />
+                  {areaPoints ? <polygon className="weight-chart-area" points={areaPoints} /> : null}
+                  <polyline points={linePoints} />
+                  {points.map((point) => (
+                    <g key={point.date}>
+                      <circle cx={point.x} cy={point.y} r="4" />
+                      <text className="weight-chart-label" x={point.x} y={point.y - 12} textAnchor="middle">{point.kg.toFixed(1)}</text>
+                      <title>{point.date}: {point.kg.toFixed(1)} kg</title>
+                    </g>
+                  ))}
+                </svg>
+              </div>
+              <div className="weight-chart-axis"><span>{inRange[0].date}</span><span>{inRange.at(-1)?.date}</span></div>
+            </>
+          )}
+          {/* Every weigh-in is listed, regardless of the chart's range filter, because a typo
+              you cannot delete bends the whole trend line. */}
           <ul className="weight-entry-list">{[...entries].reverse().map((entry) => <li key={entry.date}><span>{entry.date}</span><strong>{entry.kg.toFixed(1)} kg</strong><button onClick={() => onDelete(entry.date)} aria-label={`Delete the ${entry.kg.toFixed(1)} kg weigh-in from ${entry.date}`}>×</button></li>)}</ul>
         </div>
       </section>

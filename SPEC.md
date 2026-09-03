@@ -4,16 +4,18 @@
 >
 > **Status:** Always-on local-first application on the Mac Mini. Full Control food,
 > Meal, photo, Plan, diary, delete/Undo and sync flows are released. Per-person calorie
-> and macro targets, the visible weight trend, honest persistence status and retry-safe
-> Mini sync are released at runtime commit `eb98c55`;
+> and macro targets, an auto-refreshing cardIQ purchase snapshot, a redesigned weight
+> card (no delta, dialog-based trend, every point labelled), no "Energy rhythm", honest
+> persistence status and retry-safe Mini sync are released at runtime commit `0ecd42e`;
 > the production address is `http://100.81.29.11:3902`. The researched catalogue
 > contains 123 foods and 18 exact purchase-title matches. Authentication remains
 > explicitly parked; unresolved product labels and encrypted off-machine
 > backup/restore are the principal product inputs still outstanding.
 >
-> **Working tree, not yet released:** the cardIQ importer's release-time refresh, a
-> redesigned weight card (no delta, dialog-based trend with per-point value labels), the
-> "Energy rhythm" removal, and a fixed mobile button collision — see §6.1.
+> **Working tree, not yet released:** the weight trend chart's point layout was replaced
+> the same day after a real-world complaint about the released version — see the §6.1
+> addendum. Live Mac Mini still serves the superseded (but not buggy) time-proportional
+> layout until `npm run release` runs there again.
 
 ## §1 Product promise
 
@@ -712,11 +714,18 @@ the “Saved on the Mac Mini for KP” status at 390 px, had no horizontal overf
 no console messages. The page and all six referenced assets returned 200; port 4317 remained
 closed. No household diary value was changed during acceptance.
 
-### §6.1 Session state — 2026-09-03, four feedback fixes (committed, not yet released)
+### §6.1 Session state — 2026-09-03, four feedback fixes
 
-KP reported four problems after using the release above. All four are fixed in the working
-tree; **none have been deployed to the Mac Mini yet** — that needs `npm run release` run
-there, which was deliberately not done without confirmation.
+KP reported four problems after using the release above. All four were fixed, and this
+was released to the Mac Mini as commit `0ecd42e` via a real `npm run release` run there
+(the full suite was also run on the Mini itself first: 218 checks green). Verified against
+the live service, not just the release script's own report: `/cardiq-food-import.json`
+now returns 200 with real data (Purchases showed "Synced 2026-09-03" with genuine
+Instamart/Amazon/BigBasket counts), the live CSS carries `.weight-chart-label` and
+`.mini-bars` is fully absent, and the real weight dialog — opened against KP's actual 5
+weigh-ins — showed no delta and no overlapping labels. Nothing in the household diary was
+changed during verification. **Item 3's original design (below) was superseded the same
+day — see the addendum after item 4.**
 
 1. **The cardIQ importer itself was never broken.** `node --import tsx scripts/import-cardiq-food.ts`
    ran cleanly on demand and produced a correct snapshot (291 products from 153 orders). The
@@ -777,6 +786,35 @@ including the new `release-cardiq` and weight/overlap regressions). `npm run lin
 All browser verification ran against a disposable SQLite database on an isolated preview
 port; port 3902, the live service and the household diary were never touched.
 
+#### Addendum, same day — item 3's chart layout replaced after a real-world complaint
+
+Once live, the actual reported bug surfaced: 5 real, sparse weigh-ins spread across 23
+calendar days forced a 966px scrolling chart, because the first design spaced points
+proportionally to elapsed *time*, not to how many points there were. KP: "a sticky, fixed
+scrollable piece of crap" — accurate. Also requested: basic date-range filters (1W/1M/6M/1Y).
+
+Replaced the layout rather than patching around it. `weightChartLayout()` now spaces points
+evenly by index — gap between any two adjacent points is exactly `width / (pointCount - 1)`
+— so chart width is driven by how many points are in view, not by how far apart they happen
+to fall in time. The same real 5-entry scenario now renders at 628px with **zero scroll**.
+This is the same convention most consumer weight trackers use (Apple Health, MyFitnessPal):
+the x-axis reads as entry order, not literal calendar time — the right trade for a personal
+weight trend, where the shape and the exact numbers matter more than pixel-accurate spacing.
+
+A `WEIGHT_CHART_RANGES` filter (1W / 1M / 6M / 1Y / All, `.segmented` — the same control
+Trends already uses, default 1M) now scopes the chart; the full entry list below it always
+shows every weigh-in regardless of the chart's filter, unaffected. `getWeightTrendPoints` in
+`local-nutrition-state.ts` is untouched — it stays a tested, generic time-series-to-SVG-points
+utility, just no longer this dialog's caller.
+
+Stress-tested with 365 daily entries (the densest realistic case) across every range:
+**zero pixel overlaps at 1W, 1M, 6M, 1Y and All**, measured, not eyeballed. 1W (8 points)
+needed no scroll; 6M/1Y (183/365 points) legitimately still scroll — an honest trade-off now
+under KP's control via the filter, not the forced default experience. `npm test`: 218 checks
+(the updated `rendered-html.test.mjs` assertions fail against the pre-change page, TEST-01).
+`npm run lint` clean. **Not yet deployed** — commit only; the Mac Mini still serves the
+time-proportional layout until `npm run release` runs there again.
+
 ## §7 Known Issues and deferred scope
 
 | Item | State | Resolution point |
@@ -789,7 +827,8 @@ port; port 3902, the live service and the household diary were never touched.
 | Nandini and Epigamia seed entries rely on current label mirrors | Needs exact-pack confirmation | Reconcile barcode/variant and pack photo during cardIQ import before promotion |
 | 175 food purchase rows are deliberately not auto-linked | Open, enumerated | Exact Brand + Item + Variant/form + pack evidence was accepted for 18 titles. The complete unresolved list is generated in `data/UNMATCHED_CARDIQ_FOODS.md`; label photos, barcodes, or exact retailer IDs are the safe next input. |
 | cardIQ importer 404'd on the live service | **Fixed 2026-09-03, code-complete, not yet deployed** | The importer itself worked; nobody had ever run it on the Mac Mini, and its gitignored output was therefore never in any release. `npm run release` now refreshes the snapshot itself before building; a failure warns instead of blocking the release. Confirmed the Mac Mini has cardIQ credentials, so a real `npm run release` there closes this — that release action was deliberately not taken without KP's go-ahead. |
-| Weight card showed a last-vs-previous delta and its full trend/entry list inline | **Fixed 2026-09-03** | The delta is removed. The chart and full history now open from "View trend chart" into a dialog, so the home-page card stays a fixed size regardless of entry count. Every point is labelled with its exact kg; chart width scales with the date range so labels cannot collide as history grows — proved with 38 seeded entries, zero pixel overlaps measured in the browser. |
+| Weight card showed a last-vs-previous delta and its full trend/entry list inline | **Fixed 2026-09-03** | The delta is removed. The chart and full history now open from "View trend chart" into a dialog, so the home-page card stays a fixed size regardless of entry count. Every point is labelled with its exact kg. |
+| Weight chart forced a scroll even for a handful of sparse entries | **Fixed 2026-09-03, same-day addendum, not yet deployed** | 5 real entries spread across 23 days forced a 966px scrolling chart, because width was proportional to elapsed time rather than point count — "a sticky, fixed scrollable piece of crap" per KP. Points are now spaced evenly by index instead, and a 1W/1M/6M/1Y/All range filter (`.segmented`, same control Trends uses) scopes the chart. Zero pixel overlaps at every range, stress-tested with 365 daily entries. |
 | "Energy rhythm" duplicated the diary timeline with overlapping day-letter labels | **Removed 2026-09-03** | Its absolutely-positioned labels had no reserved space and bled into whatever sat beneath — the concrete example KP flagged. Removed outright. A full-app rendered-bounding-box audit followed and found no other overlap, except one unrelated pre-existing bug below. |
 | Energy card's in-card "+ Log food" collided with the floating mobile one | **Fixed 2026-09-03** | Both buttons call the identical `openFoodLogger()` action and landed in the same bottom-right corner on a phone — found by the overlap audit above, not by the original report. The redundant in-card button is hidden on mobile rather than repositioned. |
 | Food photos cover 54 of 123 foods; 69 use drawn icons | Open, deliberately | Add a photo only after exact brand/product/variant/pack or raw/cooked form is visually confirmed. Unsafe automatic retailer/free-text sourcing stays retired. |

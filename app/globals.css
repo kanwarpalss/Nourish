@@ -701,12 +701,18 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
    card stays a fixed size no matter how many weigh-ins pile up. */
 .weight-trend-dialog { width: min(680px, 100%); }
 .weight-trend-body { display: grid; gap: 4px; padding: 4px 26px 26px; }
+/* The 1W/1M/6M/1Y/All range filter — same idiom as Trends' own segmented control, so
+   picking a shorter window is how the chart stays comfortably sized instead of forcing
+   a scroll for every view by default. */
+.weight-chart-controls { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 4px; }
 .weight-chart-head, .weight-chart-axis { display: flex; justify-content: space-between; gap: 10px; color: #526158; font-size: 10px; }
 .weight-chart-head strong { color: var(--forest); }
-/* The chart's own width (px, set on the <svg> element) is proportional to the date
-   range so no two point labels can ever collide — see weightChartWidth() in page.tsx.
-   That means it is very often wider than this wrapper, hence the horizontal scroll:
-   dense history scrolls instead of squeezing labels into each other. */
+/* The chart's own width (px, set on the <svg> element) is proportional to how many
+   points are in the selected range, not to how far apart they fall in time — see
+   weightChartLayout() in page.tsx. A short or sparse range fills this wrapper's width
+   without scrolling; the scroll is the fallback for whichever range is dense enough to
+   need it, which the range filter now puts under KP's control instead of forcing by
+   default. */
 .weight-chart-scroll { overflow-x: auto; overscroll-behavior-x: contain; border-radius: 12px; background: linear-gradient(180deg, rgb(255 255 255 / 0.62), rgb(238 242 232 / 0.72)); }
 .weight-chart { display: block; height: 188px; margin: 7px 0 3px; overflow: visible; }
 .weight-chart polyline { fill: none; stroke: var(--forest); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }

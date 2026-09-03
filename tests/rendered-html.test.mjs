@@ -200,12 +200,21 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
   assert.doesNotMatch(page, /Hide trend/, "the old inline toggle wording must not return");
   assert.match(page, /function WeightTrendDialog/, "the full trend chart must live in its own dialog, not inline in the home-page card");
   // KP could not tell which dot was which weight from a hover-only tooltip; every point
-  // now carries a visible number, and the chart's own width is what keeps them from
-  // overlapping as more entries accumulate (see weightChartWidth).
+  // now carries a visible number.
   assert.match(page, /className="weight-chart-label"/, "every point must show its exact value, not rely on a hover tooltip");
-  assert.match(page, /function weightChartWidth/);
-  assert.match(page, /Math\.max\(1, Math\.round\(\(last - first\) \/ 86_400_000\)\)/, "chart width must scale with the date range so labels cannot collide regardless of entry count");
-  assert.match(page, /aria-label=\{`Weight trend across \$\{entries\.length\} entries, every point labelled with its exact weight`\}/, "the chart must remain available to screen readers");
+  // First cut spaced points by elapsed calendar days, which forced a scrolling chart even
+  // for a handful of widely-spread entries — "sticky, fixed scrollable" per KP. Points are
+  // now spaced evenly by index, so width scales with how many points are in the selected
+  // range, not with how far apart they happen to fall in time.
+  assert.match(page, /function weightChartLayout/);
+  assert.match(page, /Math\.max\(WEIGHT_CHART_MIN_WIDTH, \(entries\.length - 1\) \* WEIGHT_CHART_PX_PER_POINT\)/, "chart width must scale with point count so labels cannot collide regardless of how they are spread in time");
+  assert.doesNotMatch(page, /function weightChartWidth\b/, "the old day-span width formula must not return");
+  // A 1W/1M/6M/1Y/All range filter is how the chart stays a sane size by default instead
+  // of always rendering the full, possibly very wide, history.
+  assert.match(page, /WEIGHT_CHART_RANGES/);
+  assert.match(page, /"1W".*"1M".*"6M".*"1Y".*"All"/s, "the requested range presets must all be offered");
+  assert.match(page, /function weightEntriesInRange/);
+  assert.match(page, /aria-label=\{`Weight trend across \$\{inRange\.length\} entries, every point labelled with its exact weight`\}/, "the chart must remain available to screen readers");
   // The last-vs-previous delta read as noise, not signal, and KP asked for it gone.
   assert.doesNotMatch(page, /\$\{change > 0 \? "\+" : ""\}\$\{change\.toFixed\(1\)\} kg/, "the useless weight-delta text must not return");
   // "Energy rhythm" duplicated the diary timeline in a smaller, harder-to-read form, and
