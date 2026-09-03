@@ -1,8 +1,13 @@
-# Health — Product Specification
+# Nourish — Product Specification
 
-> **Working product name:** Nourish. The repository and canonical project name remain **Health** until KP approves a permanent name.
+> **Canonical product and repository name:** Nourish.
 >
-> **Status:** Functional browser-local prototype with a read-only cardIQ food snapshot. The researched catalogue contains 123 foods, 18 exact purchase-title matches, explicit provenance, and conservative icon fallbacks where an exact photo is unproven. Track has a real multi-day diary, editable targets, history/trends, weight monitoring, and non-destructive backup import. A backed-up local database is still pending.
+> **Status:** Always-on local-first application on the Mac Mini. Full Control food,
+> Meal, photo, Plan, diary, delete/Undo and sync flows are released at `ec4d3ed`;
+> the production address is `http://100.81.29.11:3902`. The researched catalogue
+> contains 123 foods and 18 exact purchase-title matches. Authentication remains
+> explicitly parked; exact targets, unresolved product labels and encrypted off-machine
+> backup/restore are the principal product inputs still outstanding.
 
 ## §1 Product promise
 
@@ -276,6 +281,7 @@ Amazon’s export does not reliably identify the Now channel by itself, so that 
 | 2026-09-02 | Delete/Undo is an ordered record decision, not only a tombstone | Merge the union of deleted ids forever | A newer restore must beat an older sync delete, while legacy deletion records still migrate safely |
 | 2026-09-02 | An unresolved purchase opens a blank personal-item draft prefilled only with its exact purchased name | Disable it forever, or prefill plausible nutrition | A missing label must never become guessed macros, but it must not be a dead end for someone who has the pack in hand |
 | 2026-09-02 | Copying a food or Meal always creates a new independent draft and never shares a managed food photo | Reuse the original identity or photo | Edits to a copy must not rewrite the original or let deletion of one item silently remove another item’s image |
+| 2026-09-03 | The final mobile accessibility contract lives last in the stylesheet and wins the cascade | Rely on an earlier generic 44 px rule | Later feature rules had silently shrunk real controls to 29–42 px; one final contract plus 375/414 px browser geometry makes the user-facing rule observable |
 
 ## §6 Current State
 
@@ -451,14 +457,14 @@ or deployed**
    insecure-Tailscale browser walk. Do not touch the live service or diary.
 6. Update this `SPEC.md` again as the final file action only after that work is complete.
 
-### §6.1 Current session state — 2026-09-02 (READ THIS FIRST if you are picking up)
+### §6.1 Current session state — 2026-09-03 (READ THIS FIRST if you are picking up)
 
-**Full Control UX/data-safety pass is active in the working tree — not committed, pushed, or deployed.**
+**Full Control UX/data-safety and mobile quality passes are complete on `main` and released on the Mac Mini.**
 
 The pass covers the lifecycle of personal foods, reusable Meals, Plan entries and food
-photos: create from a purchase, edit, copy, delete, Undo, sync and capacity limits. It used
-a disposable SQLite database only; neither the household diary nor the Mac Mini service was
-changed.
+photos: create from a purchase, edit, copy, delete, Undo, sync and capacity limits. Browser
+acceptance work used disposable data; the final production walkthrough was read-only and did
+not alter the household diary.
 
 1. **Delete and Undo preserve intent and context.** Each delete or restore has an ordered
    `{ removed, at }` decision, so a newer Undo survives an older delete arriving from another
@@ -477,28 +483,37 @@ changed.
    up the finished temporary photo. Replace and Remove are disabled while the photo is saving,
    preventing conflicting operations.
 
-**Evidence this turn**
+**Final evidence**
 
-- `npm test` completed with **202 passing checks** (49 JS/render/service and 153 TypeScript),
-  including new regressions for Plan restoration, ordered sync Undo, capacity-safe Undo and
-  conversion snapshot independence.
-- `npm run lint` completed cleanly.
-- A browser walk against `http://100.89.12.6:4317` used the disposable database over real
-  insecure HTTP. Purchases showed **Add details**; it opened a blank-macro draft with the
-  exact purchase title. The personal-item Copy draft appeared with a new label, and the
-  one-off Meal logger exposed saved-item search and add controls. No browser console errors
-  occurred. No upload, save, delete, restore, or real diary action was performed.
+- `npm test` completed with **214 passing checks** (54 JS/render/service and 160 TypeScript);
+  `npm run lint` and `git diff --check` also completed cleanly.
+- Tests include failure injection for missing assets, partial assets, silent stale database
+  writes, delete/Undo resurrection, insecure-context APIs, late CSS cascade overrides and
+  375/414 px media-query boundaries.
+- Disposable insecure-HTTP browser passes covered purchase-to-item creation, independent Copy,
+  one-off Meal component editing, repeated logging ids, photo upload/persistence, delete/Undo
+  hit-testing and a 120-character unbroken food name. The hostile name originally expanded the
+  page to about 1,470 px; it now wraps inside a 414 px screen.
+- A read-only production browser pass covered Today, History, Trends, Purchases, Plan Items,
+  Plan Meals, Settings and Log Food at 375 px and 414 px. Every visible user-facing control met
+  the 44 px mobile target, no page overflowed horizontally, and the console stayed clear. The
+  hidden 1×1 file input is activated by a measured 259×44 px photo label.
+- The Mac Mini release is commit `ec4d3ed`, snapshot
+  `releases/2026-09-03T04-35-13-901Z`, served by `com.kanwar.nourish` on `*:3902`.
+  The external health command loaded the page and all six code assets at
+  `http://100.81.29.11:3902`; retired port 4317 had no listener.
 
-**Remaining deliberate scope, not a release blocker**
+**Remaining deliberate scope, not a functional release blocker**
 
 - A browser cannot select a local photo or trigger destructive restore/reset controls without
   action-time approval. Server and source regressions cover photo cleanup; a future manual
   acceptance pass may exercise the physical file-picker path against a disposable database.
-- Catalogue thumbnail requests still fetch from `bbassets.com` while rendering. This violates
-  the local-first goal and can leave a blank image if a request hangs; keep the drawn icon
-  until decode or cache approved exact images locally in a separate change.
 - Profiles separate diary data but do not lock them; anyone on the tailnet can select a
-  household profile. Revisit only if the household wants privacy boundaries between people.
+  household profile. Authentication/security is parked by KP and must not be allowed to
+  rewrite or block the current functional result.
+- `app/page.tsx` and `app/globals.css` are now 2,275 and 1,144 lines. Split Plan, Track,
+  logger and shared-control ownership before the next broad UI feature, preserving the current
+  behaviour with the full suite and narrow-browser geometry checks.
 
 **Checkpoint A — 2026-09-02, functional audit complete; implementation next**
 
@@ -620,35 +635,35 @@ service was not restarted. Local `main` is clean at `ba84471` and five commits a
 `npm run release`, and run a final live health + real hit-test at
 `http://100.81.29.11:3902`. Do not deploy the older remote tip and do not force-push.
 
-**Checkpoint E — 2026-09-02, production release completed; final diagnostic micro-fix pending**
+**Checkpoint E — 2026-09-03, final mobile quality pass and production release complete**
 
-The ordinary push succeeded on retry with no force: GitHub `main`, the MacBook checkout,
-and the clean Mac Mini checkout all reached `fc604a5`. The Mac Mini's guarded
-`npm run release` built and froze `releases/2026-09-02T15-18-15-052Z`, switched the
-`com.kanwar.nourish` LaunchAgent, and loaded the live page plus all six referenced code
-assets. A second health check from the MacBook reached `http://100.81.29.11:3902`; port
-4317 refused connections as intended. Launchd reported the service running and `lsof`
-reported Node listening on `*:3902`.
+The earlier health-message correction reached the Mac Mini, then the final narrow-screen
+audit exposed two last rough edges: feature-level CSS rules were overriding the original
+44 px mobile target rule, and very long user-authored names could force cards beyond the
+viewport. A final, intentionally last mobile target contract now protects navigation,
+filters, steppers, creation/editing fields, upload links, Meal controls and removal actions.
+Grid/flex shrink rules and explicit wrapping contain hostile names without hiding the data.
+The regression parser now understands lower and upper media-query bounds and proves that a
+later rule would be caught at both 375 px and 414 px.
 
-The live browser loaded the dashboard from the Tailscale HTTP origin with no console errors.
-It was deliberately kept read-only: surfacing the transient Undo button requires a real
-diary mutation, so the household diary was not changed merely to repeat the already-passing
-desktop and 375px pointer hit-tests from Checkpoint C. The live asset check confirms that
-the released stylesheet contains that correction.
+Stopping the disposable dev server also exposed a double-close stack trace. Store shutdown
+is now idempotent and the development coordinator exits cleanly with code 130 on Ctrl-C; a
+regression covers repeated cleanup and the real process was started and stopped without an
+error trace.
 
-One honest diagnostic flaw surfaced: `scripts/health.mjs` checked the supplied Tailscale URL
-but its success sentence always printed `localhost`. The local correction now prints the
-address actually checked and has a regression test. The complete suite passes **210 checks**
-(50 JavaScript/render/service + 160 TypeScript) and lint is clean. This two-file micro-fix
-is the only unreleased work at this checkpoint; commit it, push normally, fast-forward the
-clean Mini, run `npm run release`, repeat the external health check, then replace this
-paragraph with the final release evidence.
+Commit `ec4d3ed` was pushed normally, fast-forwarded on the clean Mac Mini and published only
+through `npm run release`. Snapshot `releases/2026-09-03T04-35-13-901Z` is current. The full
+suite passed 214/214, lint passed, the external page and all six code assets loaded from the
+Tailscale address, Node listened on `*:3902`, and port 4317 remained retired. Production was
+then walked read-only at 375 px and 414 px across every primary Plan/Track area, Log Food and
+Settings: no horizontal overflow, undersized visible control, console warning or console
+error was observed. Household data was not changed for this final inspection.
 
 ## §7 Known Issues and deferred scope
 
 | Item | State | Resolution point |
 |---|---|---|
-| Permanent product name | Open | Confirm during design review |
+| Permanent product name | **Nourish** | Canonical product and repository name used by the app, service and current instructions. |
 | Undo toast button was dead on tap | **Fixed 2026-09-02** | `.toast` is `pointer-events: none` and `.toast-undo` inherited it, so every Undo in the app fell through to the panel behind. Fixed with `pointer-events: auto` and a 44px target; asserted in `tests/rendered-html.test.mjs`. Second instance of this bug class after `fd65693` — **any new control drawn inside a click-through overlay must be hit-tested, not just rendered.** |
 | Restore decisions share the 1000-slot deletion budget | Open, accepted | `removalDecisions` stores `removed: false` restores alongside real tombstones under one `MAX_REMOVED_IDS` cap, so heavy delete/Undo churn evicts the oldest decisions sooner than tombstones alone would. Bounded and safe; revisit only if the cap is ever approached. |
 | Delete/restore ordering trusts the wall clock | Open, accepted | `{ removed, at }` is last-writer-wins on `Date.now()`, so a device with a badly wrong clock wins permanently, and a future-dated `at` from another device is accepted on parse. Standard trade-off for this sync model; documented rather than solved. |
@@ -657,13 +672,13 @@ paragraph with the final release evidence.
 | 175 food purchase rows are deliberately not auto-linked | Open, enumerated | Exact Brand + Item + Variant/form + pack evidence was accepted for 18 titles. The complete unresolved list is generated in `data/UNMATCHED_CARDIQ_FOODS.md`; label photos, barcodes, or exact retailer IDs are the safe next input. |
 | Food photos cover 54 of 123 foods; 69 use drawn icons | Open, deliberately | Add a photo only after exact brand/product/variant/pack or raw/cooked form is visually confirmed. Unsafe automatic retailer/free-text sourcing stays retired. |
 | Browser file-picker acceptance for food-photo cancel/backdrop cleanup | Deferred safely | Uploading a local file requires action-time approval. Source and server regressions cover the cleanup; perform one manual disposable-database acceptance pass before a release that changes this area again. |
-| Full Control UX/data-safety pass | **Complete locally; release blocked at GitHub 2026-09-02** | Checkpoints A–D record the audit, repairs, adversarial tests and browser pass. The merged tree has 209 passing checks and clean lint; push/release resume instructions are in Checkpoint D. |
+| Full Control UX/data-safety pass | **Released 2026-09-03** | Checkpoints A–E record the audit, repairs, adversarial tests and browser passes. Commit `ec4d3ed` has 214 passing checks and is the Mac Mini release. |
 | Catalogue thumbnails are fetched from `bbassets.com` while rendering | **Resolved and browser-checked 2026-09-02** | Catalogue cards auto-load only bundled or Nourish-managed photos and otherwise use the drawn icon. Opening the logger on insecure HTTP produced zero third-party image requests. |
 | Any render error blanks the entire app | **Fixed 2026-08-30, unverified in browser** | `AppErrorBoundary` now catches it and offers a reload. Its absence is what turned the `randomUUID` bug into a total outage. Needs a live trigger to confirm. |
-| Main UI module and stylesheet are oversized | Architectural debt, worsening | `app/page.tsx` is now ~1,700 lines and `app/globals.css` ~1,000. Split by Plan/Track/product-area ownership before the next broad UI feature so one change does not require editing the whole screen. |
+| Main UI module and stylesheet are oversized | Architectural debt, worsening | `app/page.tsx` is 2,275 lines and `app/globals.css` is 1,144. Split by Plan/Track/product-area ownership before the next broad UI feature so one change does not require editing the whole screen. |
 | Legacy meal and schema compatibility paths have no deletion date | Architectural debt | Measure whether old schema-1/single-meal data still exists, document a sunset condition, then remove the compatibility branch only after a migration/backup checkpoint. |
 | Local canonical database | **Done 2026-08-23** | SQLite via `node:sqlite`, per-profile documents, 50-version server-side history, optimistic concurrency. Encrypted off-machine backup and a restore drill are still outstanding. |
-| ~~Nourish's release/serve path is broken by a `cloudflare:workers` import~~ | **Not a real bug — corrected 2026-08-24** | Wrongly logged 2026-08-23: assumed (from `db/index.ts` containing `import { env } from "cloudflare:workers"`, and pattern-matching Watch Book's real bug in the same starter template) that `npm run serve` would crash, without testing it, and deployed the Mac Mini via a `pm2 run dev` workaround instead. It doesn't crash: `db/index.ts` is dead scaffolding from the vinext starter template — nothing in the real app imports it (only the unused `examples/d1/` template folder does), and `.openai/hosting.json` has `"d1": null, "r2": null`. Confirmed by actually running `npm run release` locally on the Mac that already had `com.kanwar.nourish` installed (2026-08-14) — it worked cleanly. Corrected same day: removed the Mac Mini's `pm2` workaround, installed `ops/com.kanwar.nourish.plist` there via `launchctl bootstrap`, ran `npm run release` for real. Live and verified at `http://100.81.29.11:4317`. |
+| ~~Nourish's release/serve path is broken by a `cloudflare:workers` import~~ | **Not a real bug — corrected 2026-08-24** | Wrongly logged 2026-08-23: assumed (from `db/index.ts` containing `import { env } from "cloudflare:workers"`, and pattern-matching Watch Book's real bug in the same starter template) that `npm run serve` would crash, without testing it, and used a `pm2 run dev` workaround. `db/index.ts` is unused starter scaffolding. The launchd release path has since run repeatedly; the current production address is `http://100.81.29.11:3902` and the historical 4317 port is retired. |
 | No authentication on the diary API | **Parked by KP, 2026-09-02** | Tailnet membership remains the boundary. Do not let this expand or block the current functional-completeness pass. |
 | Watch Book has no assigned port | Open | 4400 proposed in the architecture doc; nothing depends on it yet. |
 | Fullness score is an estimate, not a measurement | By design, labelled "est." | Revisit if a measured satiety source with real Indian coverage becomes available |
@@ -689,7 +704,7 @@ paragraph with the final release evidence.
 
 ## §9 Build phases and handoff
 
-### Phase 0 — Product, design system, and researched seed catalogue (current)
+### Phase 0 — Product, design system, and researched seed catalogue (implemented; KP approval remains)
 
 - Complete information architecture, visual system, responsive behaviour, researched Items/Meals, and quantity-aware logging interactions.
 - Review every Plan and Track subsection with KP.
@@ -697,7 +712,7 @@ paragraph with the final release evidence.
 
 **Exit gate:** KP approves the end-to-end prototype and any changes are incorporated.
 
-### Phase 1 — Local foundation
+### Phase 1 — Local foundation (substantially complete; off-machine backup drill remains)
 
 - Introduce the local database, migrations, audit log, and safe backups.
 - Build canonical foods, servings, recipes, recipe versions, and food-log records.
@@ -705,7 +720,7 @@ paragraph with the final release evidence.
 
 **Exit gate:** logging, edits, reloads, day totals, and backup/restore agree end-to-end.
 
-### Phase 2 — Tracking loop
+### Phase 2 — Tracking loop (implemented)
 
 - Productionise quick add, search, repeated meals, custom labels, history editing, and trends.
 - Add incomplete-day semantics and export.
@@ -734,7 +749,7 @@ paragraph with the final release evidence.
 
 **Exit gate:** discovery recommends useful variety without copying uncertain nutrition blindly.
 
-### Phase 6 — Always-on Mac Mini
+### Phase 6 — Always-on Mac Mini (service active; backup hardening remains)
 
 - Run the app as a supervised service on the Mac Mini.
 - Add private-network access, health checks, restart policy, encrypted backup, restore drill, and update runbook.
@@ -776,18 +791,29 @@ the next broad UI feature. The diary API has no authentication by design.
 
 ### Current handoff
 
-KP can log a real day using Packaged Food, Open Ingredients, Ordered Food, or reusable Meals; use grams/ml, natural counts, exact pack fractions, and serving conversions; and trust immutable snapshots to preserve what was entered. An omitted fibre declaration remains visibly unknown, and an uncertain purchase or photo remains unresolved rather than borrowing a nearby product. Backup import preserves every current record at all caps and tells KP what was added, conflicted, or could not fit.
+Nourish's Full Control scope is released on the Mac Mini at runtime commit `ec4d3ed`.
+The app supports Packaged Food, Open Ingredient, Ordered Food and reusable Meal creation;
+multiple independent units; quantity and macro editing; one-off Meal rename/add/remove;
+personal filtering and independent Copy; purchase-to-item completion without guessed macros;
+food and log photos; Plan assembly; immutable diary snapshots; History corrections; weight
+editing; deletion with working Undo; additive restore; and sync that carries newer delete or
+restore intent. Capacity limits refuse unsafe changes rather than evicting unrelated data.
 
-The 2026-08-21 source tree passes the production build, lint, `npm audit --omit=dev` with zero known production vulnerabilities, and all 115 automated checks. The full test command was re-run and recorded through claim-gate. No deployment or Git publishing action occurred, and this audit did not inspect or alter the currently running launchd service. The pre-existing `.claude/CLAUDE.md` working-tree change belongs to KP and was left untouched.
+The final suite has **214 passing checks** (54 JavaScript/render/service, 160 TypeScript),
+with clean lint and diff checks. Production browser geometry is clean at 375 px and 414 px
+across every primary Plan/Track surface, Log Food and Settings. The Mac Mini serves frozen
+snapshot `2026-09-03T04-35-13-901Z` through launchd on port 3902; the external health check
+loads the page and all six referenced code assets. The final browser inspection was read-only.
 
 Worth doing next, in order:
 
 1. **Resolve purchases only from exact evidence.** Work down `data/UNMATCHED_CARDIQ_FOODS.md` with physical pack photos, barcodes, or exact retailer pages. Never restore category/reference auto-matching just to shrink the queue.
-2. **Split the large UI ownership boundaries.** Extract Plan, Track, logger, and their styles before another broad UI feature; preserve behaviour with the current 115-check suite.
-3. **Add the backed-up local database.** Move from a browser-profile safety net to Mac Mini persistence with encrypted backup and a restore drill.
+2. **Split the large UI ownership boundaries.** Extract Plan, Track, logger, and their styles before another broad UI feature; preserve behaviour with the current 214-check suite and mobile geometry checks.
+3. **Complete off-machine backup hardening.** SQLite persistence and 50-version local history exist; add encrypted off-machine snapshots and perform a real restore drill.
 4. **Set personal targets.** Today remains labelled Placeholder until KP supplies calorie/macro targets.
 
-The next foundation phase remains backed-up local persistence and exact product reconciliation. cardIQ should remain connected only through the documented narrow import contract, without payment or address data.
+Authentication/security remains explicitly parked by KP. cardIQ stays connected only through
+the documented narrow import contract, without payment or address data.
 
 ## §10 Deployment
 
@@ -842,4 +868,15 @@ app stayed healthy.
 
 **Operational state at 2026-08-21:** the source tree passed 115 automated checks, lint, the production build, and a production dependency audit with zero known vulnerabilities. This lead review did not deploy, restart, or inspect the live `com.kanwar.nourish` service, so the 2026-08-14 live-service observation remains the latest deployment evidence.
 
-Runbook once the Mac Mini is online: run the shared `nourish` launcher once to clone/pull GitHub `main`, then copy the checked-in LaunchAgent into `~/Library/LaunchAgents`, bootstrap it, and kickstart it. Terminal commands `nourish` and `health` are defined in the shared iCloud aliases file; on every synced Mac they pull the latest `main`, then open the local fixed-port copy. The Mac Mini was offline when this configuration was prepared on 2026-08-09, so the final always-on installation remains pending.
+**Operational state at 2026-09-03:** runtime commit `ec4d3ed` is published as frozen
+snapshot `releases/2026-09-03T04-35-13-901Z`. `com.kanwar.nourish` is listening on
+`*:3902`; vinext remains internal on 3903, and retired port 4317 has no listener. The
+MacBook-to-Mini health command loaded the page and all six referenced code assets from
+`http://100.81.29.11:3902`. The complete 214-check suite and lint passed before release,
+and the production UI was inspected read-only at 375 px and 414 px with no horizontal
+overflow, undersized visible control or console warning/error.
+
+Runbook: update the clean Mac Mini checkout with `git pull --ff-only`, then run
+`npm run release`. A Git push alone does not change the running snapshot. Terminal commands
+`nourish` and `health` are defined in the shared iCloud aliases file; the service itself is
+the checked-in `com.kanwar.nourish` LaunchAgent.
