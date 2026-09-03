@@ -192,9 +192,27 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
   // Modal scroll belongs to the logger and the body is explicitly frozen while it is open.
   assert.match(page, /document\.body\.style\.overflow = "hidden"/);
   assert.match(css, /\.food-dialog \{ overflow-y: auto; overscroll-behavior: contain;/);
-  assert.match(page, /Show trend chart/);
-  assert.match(page, /const \[showTrend, setShowTrend\] = useState\(true\)/, "saved weight history must be visible without another tap");
-  assert.match(page, /aria-label=\{`Weight trend across \$\{entries\.length\} entries`\}/, "the chart must remain available to screen readers");
+  // The trend opened inline by default once, but an entry list that lists every weigh-in
+  // forever grows the Track home page as entries pile up. It now opens in a dialog, "as
+  // needed" per KP, so the home card stays a fixed size regardless of history length.
+  assert.match(page, /View trend chart/);
+  assert.match(page, /const \[showTrend, setShowTrend\] = useState\(false\)/, "the trend must not add to the home page's height by default — it opens in a dialog");
+  assert.doesNotMatch(page, /Hide trend/, "the old inline toggle wording must not return");
+  assert.match(page, /function WeightTrendDialog/, "the full trend chart must live in its own dialog, not inline in the home-page card");
+  // KP could not tell which dot was which weight from a hover-only tooltip; every point
+  // now carries a visible number, and the chart's own width is what keeps them from
+  // overlapping as more entries accumulate (see weightChartWidth).
+  assert.match(page, /className="weight-chart-label"/, "every point must show its exact value, not rely on a hover tooltip");
+  assert.match(page, /function weightChartWidth/);
+  assert.match(page, /Math\.max\(1, Math\.round\(\(last - first\) \/ 86_400_000\)\)/, "chart width must scale with the date range so labels cannot collide regardless of entry count");
+  assert.match(page, /aria-label=\{`Weight trend across \$\{entries\.length\} entries, every point labelled with its exact weight`\}/, "the chart must remain available to screen readers");
+  // The last-vs-previous delta read as noise, not signal, and KP asked for it gone.
+  assert.doesNotMatch(page, /\$\{change > 0 \? "\+" : ""\}\$\{change\.toFixed\(1\)\} kg/, "the useless weight-delta text must not return");
+  // "Energy rhythm" duplicated the diary timeline in a smaller, harder-to-read form, and
+  // its day-letter labels were absolutely positioned below each bar with no reserved
+  // space — they bled into whatever sat underneath. Removed outright rather than patched.
+  assert.doesNotMatch(page, /Energy rhythm/, "the energy-rhythm strip must not return");
+  assert.doesNotMatch(css, /\.mini-bars/, "its overlapping day-letter labels must not return either");
   assert.match(page, /Change target/, "the calorie target needs an obvious control, not a fixed demo number");
   assert.match(page, /Daily targets for \{profileName\}/, "target editing must say which person it changes");
   assert.match(page, /updatedAt: nextTargetEditTime\(current\.targets\?\.updatedAt\)/, "target edits need monotonic ordering so an older or clock-skewed device cannot win later");
@@ -241,6 +259,11 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
   assert.match(page, /mobile-settings/, "settings must be reachable without the desktop sidebar");
   assert.match(css, /\.mobile-topbar > \.mobile-settings \{[^}]*44px/, "the mobile settings control needs a 44px tap target");
   assert.match(css, /\.app-shell:has\(\.target-editor\) > \.mobile-log-button \{ display: none; \}/, "the floating Log food action must not cover Save targets on a phone");
+  // Found during a full-app overlap audit: the energy card's own "+ Log food" button and
+  // the floating one do the identical openFoodLogger() action, and on a phone both land in
+  // the same bottom-right corner — confirmed by measuring both buttons' real rendered
+  // rects, which genuinely intersected. Hidden as the redundant one rather than repositioned.
+  assert.match(css, /\.runway > \.button\.orange \{ display: none; \}/, "the in-card Log food button must not fight the floating one on a phone");
   assert.match(page, /30 min or less/);
   assert.doesNotMatch(page, /Number\.parseInt\(recipe\.time/);
   // An unresolved purchase still cannot quick-log guessed macros, but it must
@@ -259,10 +282,10 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
   // The dashboard reads from the stored diary. No fabricated history may remain anywhere.
   assert.doesNotMatch(page, /sampleWeekCalories|sampleMonthDays|sampleMeals/);
   assert.doesNotMatch(page, /Masala oats \+ dahi|Rajma chawal bowl|Banana \+ whey/);
-  assert.match(page, /Last 7 days · your diary/);
   assert.match(page, /summariseHistory|summariseTrend/);
-  // A day with no diary must be shown as a gap, never as a zero-calorie day.
-  assert.match(page, /shown as gaps, not as zero/);
+  // A day with no diary must be shown as a gap, never as a zero-calorie day. That rule
+  // now lives only in Trends (below); "Energy rhythm" carried a second, smaller copy of
+  // it on Track home that duplicated the diary timeline and was removed outright.
   assert.match(page, /Averages count only the days you actually logged/);
   // The one remaining example on Today stays explicitly labelled.
   assert.match(page, /Sample meal idea · not logged/);

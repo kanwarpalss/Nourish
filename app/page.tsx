@@ -9,7 +9,7 @@ import { defaultCompositeItems, findComponentFood } from "./composite-foods";
 import { createProfile, deleteProfile as deleteRemoteProfile, describeSyncStatus, fetchProfiles, pullDiary, pushDiary, renameProfile, DEFAULT_PROFILE_ID, type DiaryProfile, type SyncStatus } from "./diary-sync";
 import { deleteFoodPhoto, deleteLogPhoto, foodPhotoKeyFromUrl, isAutoLoadedFoodImage, isSupportedPhotoFile, photoUrl, uploadFoodPhoto, uploadLogPhoto, type LogPhotoMeta } from "./log-photos";
 import { canRestoreRecord, clearAllUserData, emptyNutritionState, exportNutritionState, nutritionStorageKeys, withLogIds, getWeightTrendPoints, isSafeImageUrl, logsForDay, MAX_STORED_DAYS, MAX_TARGET_VALUE, mergeNutritionBackup, nextTargetEditTime, parseExportedNutritionState, parseSavedNutritionState, readStoredNutritionRaw, removeRecord, restoreRecord, upsertWeightEntry, withDayLogs, wouldDropOldestDay, writeStoredNutritionState, type RemovableKind, type RemovedRecord, type SavedLogEntry, type SavedNutritionState, type SavedTargets, type WeightEntry } from "./local-nutrition-state";
-import { DEFAULT_TARGETS, loggableMeals, recentDayKeys, resolveLoggedFood, summariseHistory, summariseTrend, type DaySummary } from "./day-history";
+import { DEFAULT_TARGETS, loggableMeals, resolveLoggedFood, summariseHistory, summariseTrend, type DaySummary } from "./day-history";
 import { estimateSatiety, getBangaloreClock, getBasisAmountForLogging, getEnergyRunway, getLoggingUnitLabel, getLoggingUnits, getQuantityLimit, hasNutritionTarget, isQuantityValid, matchesNutritionTarget, matchesRecipe, satietyLabel, scaleNutrition, scaleNutritionForUnit, sumLoggedNutrition, sumNutritionDetails, type DashboardClock, type NutritionTarget } from "./prototype-logic";
 import { meals, nutritionItems, SOURCE_LINKS, type Meal, type NutritionItem, type NutritionUnit } from "./nutrition-data";
 
@@ -261,35 +261,103 @@ function TargetEditor({ profileName, targets, isDefault, onSave, onCancel }: { p
   );
 }
 
+/**
+ * How wide the trend chart needs to be so no two point labels can ever touch.
+ * Point x-position is proportional to elapsed days, and `getWeightTrendPoints`
+ * dedupes to one entry per date, so the smallest possible gap between any two
+ * points is exactly one day of width. Sizing the chart by day-span rather than
+ * by entry count is what makes that gap provably >= PX_PER_DAY regardless of
+ * how many entries pile up — a fixed-width chart with more points would just
+ * make the "72.5" labels run into each other, which is the overlap KP is
+ * asking to have eliminated everywhere, not just fixed once.
+ */
+const WEIGHT_CHART_PX_PER_DAY = 42;
+// A defensive ceiling only — guards a corrupted date far in the past from
+// producing a multi-million-pixel SVG. Nowhere near what real logging needs.
+const WEIGHT_CHART_MAX_WIDTH = 50_000;
+const WEIGHT_CHART_HEIGHT = 140;
+
+function weightChartWidth(entries: WeightEntry[]) {
+  if (entries.length < 2) return 300;
+  const first = Date.parse(`${entries[0].date}T00:00:00.000Z`);
+  const last = Date.parse(`${entries.at(-1)?.date}T00:00:00.000Z`);
+  const days = Math.max(1, Math.round((last - first) / 86_400_000));
+  return Math.min(WEIGHT_CHART_MAX_WIDTH, Math.max(300, days * WEIGHT_CHART_PX_PER_DAY));
+}
+
+/** The full trend chart, opened "as needed" rather than living inline — see WeightCard. */
+function WeightTrendDialog({ entries, onDelete, onClose }: { entries: WeightEntry[]; onDelete: (date: string) => void; onClose: () => void }) {
+  const width = weightChartWidth(entries);
+  const height = WEIGHT_CHART_HEIGHT;
+  const points = getWeightTrendPoints(entries, width, height);
+  const minimum = Math.min(...entries.map((entry) => entry.kg));
+  const maximum = Math.max(...entries.map((entry) => entry.kg));
+  const linePoints = points.map((point) => `${point.x},${point.y}`).join(" ");
+  const areaPoints = points.length > 1 ? `0,${height} ${linePoints} ${width},${height}` : "";
+  useEffect(() => {
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = ""; };
+  }, []);
+  return (
+    <div className="dialog-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}>
+      <section className="food-dialog weight-trend-dialog" role="dialog" aria-modal="true" aria-labelledby="weight-trend-title">
+        <header>
+          <div><span className="eyebrow">Body weight</span><h2 id="weight-trend-title">Weight trend</h2></div>
+          <button className="close-button" onClick={onClose} aria-label="Close weight trend">×</button>
+        </header>
+        <div className="weight-trend-body">
+          <div className="weight-chart-head"><span>{minimum.toFixed(1)} kg low</span><strong>{entries.length} {entries.length === 1 ? "entry" : "entries"}</strong><span>{maximum.toFixed(1)} kg high</span></div>
+          <div className="weight-chart-scroll">
+            <svg className="weight-chart" viewBox={`-26 -24 ${width + 52} ${height + 48}`} width={width} height={height} role="img" aria-label={`Weight trend across ${entries.length} entries, every point labelled with its exact weight`}>
+              <defs><linearGradient id="weight-area" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#7aa13b" stopOpacity="0.3" /><stop offset="100%" stopColor="#7aa13b" stopOpacity="0.02" /></linearGradient></defs>
+              <line className="weight-chart-grid" x1="0" x2={width} y1="0" y2="0" />
+              <line className="weight-chart-grid" x1="0" x2={width} y1={height / 2} y2={height / 2} />
+              <line className="weight-chart-grid" x1="0" x2={width} y1={height} y2={height} />
+              {areaPoints ? <polygon className="weight-chart-area" points={areaPoints} /> : null}
+              <polyline points={linePoints} />
+              {points.map((point) => (
+                <g key={point.date}>
+                  <circle cx={point.x} cy={point.y} r="4" />
+                  <text className="weight-chart-label" x={point.x} y={point.y - 12} textAnchor="middle">{point.kg.toFixed(1)}</text>
+                  <title>{point.date}: {point.kg.toFixed(1)} kg</title>
+                </g>
+              ))}
+            </svg>
+          </div>
+          <div className="weight-chart-axis"><span>{entries[0].date}</span><span>{entries.at(-1)?.date}</span></div>
+          {/* Every weigh-in is listed, because a typo you cannot delete bends the whole trend line. */}
+          <ul className="weight-entry-list">{[...entries].reverse().map((entry) => <li key={entry.date}><span>{entry.date}</span><strong>{entry.kg.toFixed(1)} kg</strong><button onClick={() => onDelete(entry.date)} aria-label={`Delete the ${entry.kg.toFixed(1)} kg weigh-in from ${entry.date}`}>×</button></li>)}</ul>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function WeightCard({ dayKey, entries, onSave, onDelete }: { dayKey: string; entries: WeightEntry[]; onSave: (entry: WeightEntry) => void; onDelete: (date: string) => void }) {
   const [showForm, setShowForm] = useState(false);
-  const [showTrend, setShowTrend] = useState(true);
+  const [showTrend, setShowTrend] = useState(false);
   const [date, setDate] = useState(dayKey);
   const [kg, setKg] = useState("");
   const latest = entries.at(-1) ?? null;
-  const previous = entries.at(-2) ?? null;
-  const change = latest && previous ? Math.round((latest.kg - previous.kg) * 10) / 10 : null;
-  const points = getWeightTrendPoints(entries, 300, 92);
-  const minimum = entries.length ? Math.min(...entries.map((entry) => entry.kg)) : null;
-  const maximum = entries.length ? Math.max(...entries.map((entry) => entry.kg)) : null;
-  const linePoints = points.map((point) => `${point.x},${point.y}`).join(" ");
-  const areaPoints = points.length > 1 ? `0,92 ${linePoints} 300,92` : "";
   const kgNumber = Number(kg);
   const valid = Number.isFinite(kgNumber) && kgNumber >= 20 && kgNumber <= 400 && date <= dayKey;
   return (
     <section className="weight-card surface-card">
       <div className="section-title-row"><div><span className="eyebrow">Body weight</span><h2>{latest ? `${latest.kg.toFixed(1)} kg` : "Start your trend"}</h2></div><button className="weight-add-button" onClick={() => setShowForm((value) => !value)}>{showForm ? "Close" : "+ Log"}</button></div>
-      {latest ? <div className="weight-summary"><span>Last logged {latest.date === dayKey ? "today" : latest.date}</span><strong>{change === null ? "First entry" : `${change > 0 ? "+" : ""}${change.toFixed(1)} kg`}</strong></div> : <p className="weight-empty">Log whenever you weigh in. No daily streaks or pressure.</p>}
+      {/* Only "when" is shown here, deliberately — the last-vs-previous delta read as noise
+          more than signal, and it is one more number that would need re-deriving safely
+          every time the entry list changes. The dialog's full chart carries the real trend. */}
+      {latest ? <div className="weight-summary"><span>Last logged {latest.date === dayKey ? "today" : latest.date}</span></div> : <p className="weight-empty">Log whenever you weigh in. No daily streaks or pressure.</p>}
       {showForm ? <form className="weight-form" onSubmit={(event) => { event.preventDefault(); if (!valid) return; onSave({ date, kg: kgNumber }); setKg(""); setShowForm(false); }}>
         <label><span>Date</span><input type="date" max={dayKey} value={date} onChange={(event) => setDate(event.target.value)} required /></label>
         <label><span>Weight</span><div><input type="number" min="20" max="400" step="0.1" inputMode="decimal" value={kg} onChange={(event) => setKg(event.target.value)} placeholder="72.5" aria-label="Weight in kilograms" /><b>kg</b></div></label>
         <button className="button primary" disabled={!valid}>Save</button>
       </form> : null}
-      {entries.length ? <button className="weight-trend-toggle" onClick={() => setShowTrend((value) => !value)} aria-expanded={showTrend}>{showTrend ? "Hide trend" : "Show trend chart"} <span>{showTrend ? "↑" : "↗"}</span></button> : null}
-      {showTrend && entries.length ? <div className="weight-chart-wrap"><div className="weight-chart-head"><span>{minimum?.toFixed(1)} kg low</span><strong>{entries.length} {entries.length === 1 ? "entry" : "entries"}</strong><span>{maximum?.toFixed(1)} kg high</span></div><svg className="weight-chart" viewBox="-8 -8 316 108" role="img" aria-label={`Weight trend across ${entries.length} entries`}><defs><linearGradient id="weight-area" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#7aa13b" stopOpacity="0.3" /><stop offset="100%" stopColor="#7aa13b" stopOpacity="0.02" /></linearGradient></defs><line className="weight-chart-grid" x1="0" x2="300" y1="0" y2="0" /><line className="weight-chart-grid" x1="0" x2="300" y1="46" y2="46" /><line className="weight-chart-grid" x1="0" x2="300" y1="92" y2="92" />{areaPoints ? <polygon className="weight-chart-area" points={areaPoints} /> : null}<polyline points={linePoints} />{points.map((point) => <circle key={point.date} cx={point.x} cy={point.y} r="4"><title>{point.date}: {point.kg.toFixed(1)} kg</title></circle>)}</svg><div className="weight-chart-axis"><span>{entries[0].date}</span><span>{latest?.date}</span></div>
-        {/* Every weigh-in is listed, because a typo you cannot delete bends the whole trend line. */}
-        <ul className="weight-entry-list">{[...entries].reverse().map((entry) => <li key={entry.date}><span>{entry.date}</span><strong>{entry.kg.toFixed(1)} kg</strong><button onClick={() => onDelete(entry.date)} aria-label={`Delete the ${entry.kg.toFixed(1)} kg weigh-in from ${entry.date}`}>×</button></li>)}</ul>
-      </div> : null}
+      {/* The chart and full entry list live in a dialog rather than inline, so this card
+          stays a fixed size on the Track home page no matter how many weigh-ins pile up —
+          "as needed" per KP, not permanently taking up room. */}
+      {entries.length ? <button className="weight-trend-toggle" onClick={() => setShowTrend(true)}>View trend chart <span>↗</span></button> : null}
+      {showTrend && entries.length ? <WeightTrendDialog entries={entries} onDelete={onDelete} onClose={() => setShowTrend(false)} /> : null}
     </section>
   );
 }
@@ -314,7 +382,7 @@ function DiaryEntryRow({ entry, index, profileId, photoIndex, onEdit, onDelete }
   );
 }
 
-function TodayView({ clock, profileName, calories, macros, entries, quickFoods, weights, hasCardIqImport, targets, targetsAreDefaults, history, profileId, photoIndex, onLog, onAdd, onEdit, onDelete, onSaveWeight, onDeleteWeight, onOpenMeals, onSaveTargets }: {
+function TodayView({ clock, profileName, calories, macros, entries, quickFoods, weights, hasCardIqImport, targets, targetsAreDefaults, profileId, photoIndex, onLog, onAdd, onEdit, onDelete, onSaveWeight, onDeleteWeight, onOpenMeals, onSaveTargets }: {
   clock: DashboardClock;
   profileName: string;
   calories: number;
@@ -325,7 +393,6 @@ function TodayView({ clock, profileName, calories, macros, entries, quickFoods, 
   hasCardIqImport: boolean;
   targets: SavedTargets;
   targetsAreDefaults: boolean;
-  history: DaySummary[];
   profileId: string;
   photoIndex: PhotoIndex;
   onLog: () => void;
@@ -345,17 +412,6 @@ function TodayView({ clock, profileName, calories, macros, entries, quickFoods, 
   const description = calories === 0
     ? "Nothing is assumed. Start by logging what you actually ate today."
     : `You’ve logged ${Math.round(calories).toLocaleString("en-IN")} kcal today. Add or edit foods whenever you need.`;
-
-  // The strip shows the last seven Bangalore days including today. A day with no diary is
-  // drawn as a gap, never as a zero, because not logging is not the same as not eating.
-  const weekKeys = recentDayKeys(clock.dayKey, 7);
-  const week = weekKeys.map((dayKey) => {
-    const logged = dayKey === clock.dayKey ? { dayKey, calories, entryCount: entries.length } : history.find((day) => day.dayKey === dayKey);
-    return { dayKey, calories: logged?.calories ?? null, isToday: dayKey === clock.dayKey };
-  });
-  const weekLogged = week.filter((day) => day.calories !== null);
-  const weekAverage = weekLogged.length > 0 ? Math.round(weekLogged.reduce((sum, day) => sum + (day.calories ?? 0), 0) / weekLogged.length) : null;
-  const weekPeak = Math.max(targets.calories, ...weekLogged.map((day) => day.calories ?? 0));
 
   return (
     <>
@@ -416,23 +472,6 @@ function TodayView({ clock, profileName, calories, macros, entries, quickFoods, 
             <h2>{suggestedMeal.name}</h2>
             <p>A researched example with {suggestedMeal.protein} g protein and {suggestedMeal.fiber} g fibre for {suggestedMeal.calories} kcal. Browse it before choosing anything.</p>
             <button className="button lime" onClick={onOpenMeals}>Browse meals <span>→</span></button>
-          </section>
-          <section className="week-card surface-card">
-            <div className="section-title-row"><div><span className="eyebrow">Last 7 days · your diary</span><h2>Energy rhythm</h2></div>{weekAverage !== null ? <strong>{weekAverage.toLocaleString("en-IN")} <small>avg of {weekLogged.length}</small></strong> : null}</div>
-            {weekLogged.length === 0 ? (
-              <p className="week-empty">Nothing logged in the last seven days yet. This fills in as you log.</p>
-            ) : (
-              <>
-                <div className="mini-bars" role="img" aria-label={`Calories logged on ${weekLogged.length} of the last 7 days`}>
-                  {week.map((day) => (
-                    <span key={day.dayKey} className={`${day.isToday ? "active" : ""} ${day.calories === null ? "no-data" : ""}`} style={{ height: day.calories === null ? "4%" : `${Math.max(4, Math.round((day.calories / weekPeak) * 100))}%` }}>
-                      <i>{new Date(`${day.dayKey}T00:00:00Z`).toLocaleDateString("en-GB", { weekday: "narrow", timeZone: "UTC" })}</i>
-                    </span>
-                  ))}
-                </div>
-                {weekLogged.length < 7 ? <small className="week-note">{7 - weekLogged.length} of these days have no diary. They are shown as gaps, not as zero.</small> : null}
-              </>
-            )}
           </section>
         </aside>
       </div>
@@ -2270,7 +2309,7 @@ function NourishApp() {
 
   const renderContent = () => {
     if (area === "track") {
-      if (trackView === "today") return <TodayView clock={clock} profileName={profileName} calories={calories} macros={macros} entries={entries} quickFoods={quickFoods} weights={saved.weights} hasCardIqImport={cardIqImport !== null} targets={targets} targetsAreDefaults={targetsAreDefaults} history={history} profileId={profileId} photoIndex={photoIndex} onLog={() => openFoodLogger()} onAdd={(food) => openFoodLogger(food)} onEdit={(index) => openFoodLogger(entries[index]?.food ?? null, index, entries[index]?.meal ?? null)} onDelete={deleteLoggedFood} onSaveWeight={saveWeight} onDeleteWeight={(date) => deleteRecord("weight", date, `The ${date} weigh-in`)} onOpenMeals={() => { setArea("plan"); setPlanView("meals"); window.scrollTo({ top: 0, behavior: "smooth" }); }} onSaveTargets={saveTargets} />;
+      if (trackView === "today") return <TodayView clock={clock} profileName={profileName} calories={calories} macros={macros} entries={entries} quickFoods={quickFoods} weights={saved.weights} hasCardIqImport={cardIqImport !== null} targets={targets} targetsAreDefaults={targetsAreDefaults} profileId={profileId} photoIndex={photoIndex} onLog={() => openFoodLogger()} onAdd={(food) => openFoodLogger(food)} onEdit={(index) => openFoodLogger(entries[index]?.food ?? null, index, entries[index]?.meal ?? null)} onDelete={deleteLoggedFood} onSaveWeight={saveWeight} onDeleteWeight={(date) => deleteRecord("weight", date, `The ${date} weigh-in`)} onOpenMeals={() => { setArea("plan"); setPlanView("meals"); window.scrollTo({ top: 0, behavior: "smooth" }); }} onSaveTargets={saveTargets} />;
       if (trackView === "history") return <HistoryView history={history} clock={clock} targets={targets} entriesFor={(dayKey) => restoreDayEntries(saved, dayKey, foodCatalog)} profileId={profileId} photoIndex={photoIndex} onDeleteEntry={deleteLoggedEntry} onDeleteDay={(dayKey) => deleteRecord("day", dayKey, `${dayKey}`)} />;
       if (trackView === "trends") return <TrendsView history={history} targets={targets} />;
       return <PurchasesView cardIqImport={cardIqImport} onAdd={(food) => openFoodLogger(food)} onCreateFromPurchase={(name) => setPlanFoodEditor({ initial: null, initialName: name })} />;

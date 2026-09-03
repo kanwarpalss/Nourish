@@ -10,6 +10,10 @@
 > contains 123 foods and 18 exact purchase-title matches. Authentication remains
 > explicitly parked; unresolved product labels and encrypted off-machine
 > backup/restore are the principal product inputs still outstanding.
+>
+> **Working tree, not yet released:** the cardIQ importer's release-time refresh, a
+> redesigned weight card (no delta, dialog-based trend with per-point value labels), the
+> "Energy rhythm" removal, and a fixed mobile button collision — see §6.1.
 
 ## §1 Product promise
 
@@ -708,6 +712,71 @@ the “Saved on the Mac Mini for KP” status at 390 px, had no horizontal overf
 no console messages. The page and all six referenced assets returned 200; port 4317 remained
 closed. No household diary value was changed during acceptance.
 
+### §6.1 Session state — 2026-09-03, four feedback fixes (committed, not yet released)
+
+KP reported four problems after using the release above. All four are fixed in the working
+tree; **none have been deployed to the Mac Mini yet** — that needs `npm run release` run
+there, which was deliberately not done without confirmation.
+
+1. **The cardIQ importer itself was never broken.** `node --import tsx scripts/import-cardiq-food.ts`
+   ran cleanly on demand and produced a correct snapshot (291 products from 153 orders). The
+   real fault: `public/cardiq-food-import.json` is gitignored by design (invariant 5 — no
+   order data may be committed), so every machine serving Nourish has to generate its own
+   copy, and nobody had ever run the importer *on the Mac Mini*. `curl` against the live
+   service confirmed `/cardiq-food-import.json` → **404**, even though the same cardIQ
+   credentials exist there. Fixed by making `npm run release` refresh the snapshot itself,
+   right before the build that copies `public/` into `dist/client/`, inside the same
+   `if (!skipBuild)` guard as the build step. A failed refresh (missing credentials, no
+   network) warns loudly and does not block the release — Purchases already has an honest
+   empty state for this. `tests/release-cardiq.test.mjs` asserts the ordering and the
+   warn-don't-fail behaviour from the source, since the real script builds and restarts a
+   live launchd service and cannot run inside the test suite; it fails against the
+   pre-fix script (TEST-01). Verified with a disposable-database preview build: the
+   generated snapshot served correctly (200, 291 items) and Purchases rendered real
+   retailer summaries and status pills with no overlap.
+2. **The last-vs-previous weight delta is gone.** It read as noise more than signal and
+   needed re-deriving safely on every entry-list change for no real benefit. The card now
+   shows only "Last logged {date}".
+3. **The weight trend chart no longer lives inline.** A `WeightTrendDialog` opens "as
+   needed" from a "View trend chart" button; the home-page card is a fixed size regardless
+   of how many weigh-ins accumulate — proved by seeding 38 entries via the diary API and
+   confirming the card's rendered height did not change. Every point is labelled with its
+   exact kg, not just a hover tooltip, per KP. Chart width is proportional to the date range
+   (`weightChartWidth()`, `WEIGHT_CHART_PX_PER_DAY = 42`) rather than to entry count, which
+   is what makes the labels provably unable to collide: since `getWeightTrendPoints` keeps
+   one entry per date, the smallest possible gap between any two points is exactly one day
+   of chart width. Confirmed by seeding 38 entries across ~100 days, including
+   consecutive-day pairs (the tightest realistic case), and measuring every rendered label's
+   bounding box in the browser: **zero pixel overlaps**, minimum gap 41px. Dense history
+   scrolls horizontally inside the dialog instead of squeezing labels together; no
+   horizontal page overflow at 375px even with a 4,200px-wide chart. The dialog reuses the
+   existing `.dialog-backdrop` pattern (not a click-through overlay), and its close button,
+   per-entry delete button and the reused Undo toast were all confirmed hit-testable with a
+   real mouse click, not just a scripted one, per the lesson from `4706a1c`.
+4. **"Energy rhythm" is removed, not patched.** Its day-letter labels were absolutely
+   positioned 20px below each bar with no reserved space in normal flow, bleeding into
+   whatever sat beneath — a duplicate, harder-to-read copy of the diary timeline that also
+   happened to be the overlapping-text KP pointed at directly. Removed along with its dead
+   `week`/`weekLogged`/`weekPeak` computation and the now-unused `recentDayKeys` import
+   (the function itself stays in `day-history.ts`; it is independently tested, generic, and
+   not clutter). A full-app audit followed rather than trusting the one fix: every screen
+   (Today, History with a populated month, Trends at 7D/30D/90D, Purchases with real cardIQ
+   data, Plan Items and Meals, the Log Food dialog including its scrolled food list and the
+   custom-food/alternate-units forms, and the Settings dialog) was checked in a real browser
+   with a script that measures every visible text element's actual rendered bounding box and
+   flags genuine pixel intersections — not a source-text search, which cannot see layout.
+   The scan found one real, pre-existing bug unrelated to Energy rhythm: on a phone, the
+   energy card's own "+ Log food" button and the always-visible floating one do the
+   identical `openFoodLogger()` action and land in the same bottom-right corner. Fixed by
+   hiding the redundant in-card button under the same breakpoint that introduces the
+   floating one (`.runway > .button.orange { display: none }`), rather than repositioning
+   either. No other overlap was found anywhere in the audit.
+
+`npm test`: **218 passing checks** (56 JavaScript/render/service and 162 TypeScript,
+including the new `release-cardiq` and weight/overlap regressions). `npm run lint` clean.
+All browser verification ran against a disposable SQLite database on an isolated preview
+port; port 3902, the live service and the household diary were never touched.
+
 ## §7 Known Issues and deferred scope
 
 | Item | State | Resolution point |
@@ -719,6 +788,10 @@ closed. No household diary value was changed during acceptance.
 | Exact calorie/macro target and personal dietary constraints | **Editable and persisted per person; constraints still open** | Calorie, protein, carbohydrate and fat targets are user-controlled and sync independently. Medical/allergy constraints remain separate reviewed scope. |
 | Nandini and Epigamia seed entries rely on current label mirrors | Needs exact-pack confirmation | Reconcile barcode/variant and pack photo during cardIQ import before promotion |
 | 175 food purchase rows are deliberately not auto-linked | Open, enumerated | Exact Brand + Item + Variant/form + pack evidence was accepted for 18 titles. The complete unresolved list is generated in `data/UNMATCHED_CARDIQ_FOODS.md`; label photos, barcodes, or exact retailer IDs are the safe next input. |
+| cardIQ importer 404'd on the live service | **Fixed 2026-09-03, code-complete, not yet deployed** | The importer itself worked; nobody had ever run it on the Mac Mini, and its gitignored output was therefore never in any release. `npm run release` now refreshes the snapshot itself before building; a failure warns instead of blocking the release. Confirmed the Mac Mini has cardIQ credentials, so a real `npm run release` there closes this — that release action was deliberately not taken without KP's go-ahead. |
+| Weight card showed a last-vs-previous delta and its full trend/entry list inline | **Fixed 2026-09-03** | The delta is removed. The chart and full history now open from "View trend chart" into a dialog, so the home-page card stays a fixed size regardless of entry count. Every point is labelled with its exact kg; chart width scales with the date range so labels cannot collide as history grows — proved with 38 seeded entries, zero pixel overlaps measured in the browser. |
+| "Energy rhythm" duplicated the diary timeline with overlapping day-letter labels | **Removed 2026-09-03** | Its absolutely-positioned labels had no reserved space and bled into whatever sat beneath — the concrete example KP flagged. Removed outright. A full-app rendered-bounding-box audit followed and found no other overlap, except one unrelated pre-existing bug below. |
+| Energy card's in-card "+ Log food" collided with the floating mobile one | **Fixed 2026-09-03** | Both buttons call the identical `openFoodLogger()` action and landed in the same bottom-right corner on a phone — found by the overlap audit above, not by the original report. The redundant in-card button is hidden on mobile rather than repositioned. |
 | Food photos cover 54 of 123 foods; 69 use drawn icons | Open, deliberately | Add a photo only after exact brand/product/variant/pack or raw/cooked form is visually confirmed. Unsafe automatic retailer/free-text sourcing stays retired. |
 | Browser file-picker acceptance for food-photo cancel/backdrop cleanup | Deferred safely | Uploading a local file requires action-time approval. Source and server regressions cover the cleanup; perform one manual disposable-database acceptance pass before a release that changes this area again. |
 | Full Control UX/data-safety pass | **Released 2026-09-03** | Checkpoints A–F record the audit, repairs, adversarial tests and browser passes. Runtime commit `eb98c55` has 217 passing checks and is the Mac Mini release. |

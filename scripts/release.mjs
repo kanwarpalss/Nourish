@@ -81,6 +81,29 @@ async function waitForHealth() {
   return report;
 }
 
+// ---------------------------------------------------------------- cardIQ
+
+// public/cardiq-food-import.json is gitignored (it holds real order history),
+// so every machine that serves Nourish has to generate its own copy — nobody
+// ever ran this on the Mac Mini, which is why Purchases silently 404'd there
+// for as long as the service existed. Refreshing here, right before the build
+// copies public/ into dist/client/, is what keeps that from recurring: it runs
+// on every release instead of depending on someone remembering a manual step.
+// A failure here (missing cardIQ credentials, network) must not block the
+// release — Purchases already degrades to an honest empty state — but it must
+// never fail silently either (EDGE-03), so it warns loudly instead.
+if (!skipBuild) {
+  step("Refreshing your cardIQ purchase snapshot...");
+  const cardIqImport = spawnSync("npm", ["run", "import:cardiq"], { cwd: repoRoot, stdio: "inherit" });
+  if (cardIqImport.status !== 0) {
+    console.warn(
+      "\nWARNING: the cardIQ import did not run, so Purchases will keep showing whatever snapshot",
+      "already exists on this machine (or stay empty). This did not stop the release.",
+      "Fix cardIQ separately, then run: npm run import:cardiq",
+    );
+  }
+}
+
 // ---------------------------------------------------------------- build
 
 if (!skipBuild) {

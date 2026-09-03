@@ -142,7 +142,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .entry-actions button { padding: 0; border: 0; color: var(--forest); background: transparent; font-size: 8px; font-weight: 750; cursor: pointer; }
 .sample-note { display: block; color: #93a098; font-size: 9px; line-height: 1.5; }
 .today-rail { display: grid; gap: 18px; }
-.quick-card, .week-card { padding: 22px; }
+.quick-card { padding: 22px; }
 .quick-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 18px; }
 .quick-grid button { display: flex; min-height: 50px; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 10px 10px 13px; border: 1px solid var(--line); border-radius: 13px; background: rgb(255 255 255 / 0.35); font-size: 11px; text-align: left; cursor: pointer; }
 .quick-grid button:hover { border-color: var(--lime-deep); }
@@ -150,13 +150,6 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .nudge-card { padding: 24px; border-radius: 22px; background: linear-gradient(145deg, var(--forest), #102c20); }
 .nudge-card h2 { margin: 10px 0; font-size: 24px; line-height: 1.05; }
 .nudge-card p { margin: 0 0 22px; color: #aebbb3; font-size: 12px; line-height: 1.55; }
-.week-card .section-title-row strong { font-size: 16px; }
-.week-card .section-title-row strong small { color: var(--muted); font-size: 9px; font-weight: 600; }
-.mini-bars { display: flex; height: 120px; gap: 8px; align-items: flex-end; margin-top: 18px; padding-top: 10px; border-bottom: 1px solid var(--line); background: repeating-linear-gradient(to bottom, transparent 0 29px, rgb(193 201 189 / 0.5) 30px); }
-.mini-bars > span { position: relative; flex: 1; min-height: 12px; border-radius: 7px 7px 0 0; background: #aebfa8; }
-.mini-bars > span.active { background: var(--orange); }
-.mini-bars i { position: absolute; right: 0; bottom: -20px; left: 0; color: var(--muted); font-size: 9px; font-style: normal; text-align: center; }
-
 .history-layout { display: grid; grid-template-columns: minmax(660px, 1.5fr) minmax(330px, 0.65fr); gap: 22px; max-width: 1440px; margin: 0 auto; }
 .calendar-card { padding: 28px; }
 .legend { display: flex; gap: 13px; align-items: center; color: var(--muted); font-size: 9px; }
@@ -509,8 +502,6 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .target-editor { display: grid; gap: 14px; margin-bottom: 16px; padding: 18px 20px; }
 .target-drift { color: var(--muted); font-size: 10px; }
 .target-drift.warn { color: #b4531f; }
-.week-empty, .week-note { display: block; margin-top: 8px; color: var(--muted); font-size: 9px; line-height: 1.5; }
-.mini-bars span.no-data { background: rgb(20 40 30 / 0.12); }
 .month-pad { display: block; }
 .month-grid button.no-data { opacity: 0.45; cursor: default; }
 .no-data-mark { color: var(--muted); }
@@ -619,6 +610,11 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
   .mobile-log-button { position: fixed; right: 18px; bottom: 18px; z-index: 45; display: inline-flex; min-height: 48px; align-items: center; padding: 0 18px; border: 0; border-radius: 14px; color: var(--ink); background: var(--orange); box-shadow: 0 16px 40px rgb(16 23 34 / 0.24); font-size: 12px; font-weight: 800; }
   /* The floating food action must never cover the target editor's save action. */
   .app-shell:has(.target-editor) > .mobile-log-button { display: none; }
+  /* The energy card's own "+ Log food" does the identical openFoodLogger() action as the
+     floating button above, and on a phone the two land in the same bottom-right corner —
+     found overlapping during a full-app text/control audit. Redundant here, not just
+     visually colliding, so it is hidden rather than repositioned. */
+  .runway > .button.orange { display: none; }
 }
 
 @media (max-width: 700px) {
@@ -701,15 +697,28 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .weight-form b { padding-right: 9px; color: var(--text); font-size: 9px; }
 .weight-form .button { min-height: 40px; padding-inline: 13px; font-size: 10px; }
 .weight-trend-toggle { display: flex; width: 100%; justify-content: space-between; margin-top: 14px; padding: 11px 0 0; border: 0; border-top: 1px solid var(--line); color: var(--forest); background: transparent; font-size: 10px; font-weight: 800; cursor: pointer; }
-.weight-chart-wrap { margin-top: 13px; padding: 11px; border: 1px solid var(--line); border-radius: 14px; background: linear-gradient(180deg, rgb(255 255 255 / 0.62), rgb(238 242 232 / 0.72)); }
-.weight-chart-head, .weight-chart-axis { display: flex; justify-content: space-between; gap: 10px; color: #526158; font-size: 8px; }
+/* The trend lives in a dialog (WeightTrendDialog) rather than inline, so the home-page
+   card stays a fixed size no matter how many weigh-ins pile up. */
+.weight-trend-dialog { width: min(680px, 100%); }
+.weight-trend-body { display: grid; gap: 4px; padding: 4px 26px 26px; }
+.weight-chart-head, .weight-chart-axis { display: flex; justify-content: space-between; gap: 10px; color: #526158; font-size: 10px; }
 .weight-chart-head strong { color: var(--forest); }
-.weight-chart { width: 100%; height: 112px; margin: 7px 0 3px; overflow: visible; }
+/* The chart's own width (px, set on the <svg> element) is proportional to the date
+   range so no two point labels can ever collide — see weightChartWidth() in page.tsx.
+   That means it is very often wider than this wrapper, hence the horizontal scroll:
+   dense history scrolls instead of squeezing labels into each other. */
+.weight-chart-scroll { overflow-x: auto; overscroll-behavior-x: contain; border-radius: 12px; background: linear-gradient(180deg, rgb(255 255 255 / 0.62), rgb(238 242 232 / 0.72)); }
+.weight-chart { display: block; height: 188px; margin: 7px 0 3px; overflow: visible; }
 .weight-chart polyline { fill: none; stroke: var(--forest); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .weight-chart circle { fill: var(--lime-deep); stroke: white; stroke-width: 2; vector-effect: non-scaling-stroke; }
 .weight-chart-grid { stroke: rgb(64 80 71 / 0.12); stroke-width: 1; stroke-dasharray: 4 5; vector-effect: non-scaling-stroke; }
 .weight-chart-area { fill: url("#weight-area"); }
 .weight-chart-axis span:last-child { text-align: right; }
+/* One label per point, per KP: hover tooltips alone made it impossible to tell which
+   dot was which weight. Horizontal spacing is what keeps these from overlapping — see
+   WEIGHT_CHART_PX_PER_DAY — so this must stay a single non-wrapping line, never given
+   a background or box that could bleed into its neighbour. */
+.weight-chart-label { fill: var(--forest); font-size: 11px; font-weight: 800; white-space: pre; user-select: none; }
 .logging-mode-switch { display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px; margin: 0 26px 14px; padding: 4px; border-radius: 12px; background: #e8ece5; }
 .logging-mode-switch button { padding: 9px 12px; border: 0; border-radius: 9px; color: var(--muted); background: transparent; font-size: 10px; font-weight: 800; cursor: pointer; }
 .logging-mode-switch button.active { color: white; background: var(--forest); }
