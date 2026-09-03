@@ -8,7 +8,7 @@ import { addToTray, areFoodConversionsValid, cloneNutritionItem, cloneUserMeal, 
 import { defaultCompositeItems, findComponentFood } from "./composite-foods";
 import { createProfile, deleteProfile as deleteRemoteProfile, describeSyncStatus, fetchProfiles, pullDiary, pushDiary, renameProfile, DEFAULT_PROFILE_ID, type DiaryProfile, type SyncStatus } from "./diary-sync";
 import { deleteFoodPhoto, deleteLogPhoto, foodPhotoKeyFromUrl, isAutoLoadedFoodImage, isSupportedPhotoFile, photoUrl, uploadFoodPhoto, uploadLogPhoto, type LogPhotoMeta } from "./log-photos";
-import { canRestoreRecord, clearAllUserData, emptyNutritionState, exportNutritionState, nutritionStorageKeys, withLogIds, getWeightTrendPoints, isSafeImageUrl, logsForDay, MAX_STORED_DAYS, mergeNutritionBackup, parseExportedNutritionState, parseSavedNutritionState, readStoredNutritionRaw, removeRecord, restoreRecord, upsertWeightEntry, withDayLogs, wouldDropOldestDay, writeStoredNutritionState, type RemovableKind, type RemovedRecord, type SavedLogEntry, type SavedNutritionState, type WeightEntry } from "./local-nutrition-state";
+import { canRestoreRecord, clearAllUserData, emptyNutritionState, exportNutritionState, nutritionStorageKeys, withLogIds, getWeightTrendPoints, isSafeImageUrl, logsForDay, MAX_STORED_DAYS, MAX_TARGET_VALUE, mergeNutritionBackup, nextTargetEditTime, parseExportedNutritionState, parseSavedNutritionState, readStoredNutritionRaw, removeRecord, restoreRecord, upsertWeightEntry, withDayLogs, wouldDropOldestDay, writeStoredNutritionState, type RemovableKind, type RemovedRecord, type SavedLogEntry, type SavedNutritionState, type SavedTargets, type WeightEntry } from "./local-nutrition-state";
 import { DEFAULT_TARGETS, loggableMeals, recentDayKeys, resolveLoggedFood, summariseHistory, summariseTrend, type DaySummary } from "./day-history";
 import { estimateSatiety, getBangaloreClock, getBasisAmountForLogging, getEnergyRunway, getLoggingUnitLabel, getLoggingUnits, getQuantityLimit, hasNutritionTarget, isQuantityValid, matchesNutritionTarget, matchesRecipe, satietyLabel, scaleNutrition, scaleNutritionForUnit, sumLoggedNutrition, sumNutritionDetails, type DashboardClock, type NutritionTarget } from "./prototype-logic";
 import { meals, nutritionItems, SOURCE_LINKS, type Meal, type NutritionItem, type NutritionUnit } from "./nutrition-data";
@@ -20,6 +20,7 @@ type MacroKey = "protein" | "carbs" | "fat";
 type Food = NutritionItem;
 type Recipe = Meal;
 type PlannedEntry = Pick<Meal, "id" | "name" | "calories" | "protein" | "carbs" | "fat" | "fiber"> & { serving: string; kind: "food" | "meal"; fiberDeclared?: boolean };
+type TargetValues = Omit<SavedTargets, "updatedAt">;
 
 /** Which person's diary this device had open. Not the diary itself — just the pointer. */
 const PROFILE_STORAGE_KEY = "nourish.profile";
@@ -28,6 +29,11 @@ const PROFILE_STORAGE_KEY = "nourish.profile";
 function toProfileId(name: string) {
   const slug = name.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24);
   return slug ? `${slug}-${Math.random().toString(36).slice(2, 6)}` : `person-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function profileInitials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  return (parts.length > 1 ? `${parts[0][0]}${parts.at(-1)?.[0] ?? ""}` : parts[0]?.slice(0, 2) ?? "?").toUpperCase();
 }
 
 
@@ -220,7 +226,7 @@ function SectionHeading({ eyebrow, title, description, action }: { eyebrow: stri
   );
 }
 
-function TargetEditor({ targets, isDefault, onSave, onCancel }: { targets: typeof DEFAULT_TARGETS; isDefault: boolean; onSave: (next: typeof DEFAULT_TARGETS) => void; onCancel: () => void }) {
+function TargetEditor({ profileName, targets, isDefault, onSave, onCancel }: { profileName: string; targets: SavedTargets; isDefault: boolean; onSave: (next: TargetValues) => void; onCancel: () => void }) {
   const [draft, setDraft] = useState({ calories: String(targets.calories), protein: String(targets.protein), carbs: String(targets.carbs), fat: String(targets.fat) });
   const fields: Array<{ key: keyof typeof draft; label: string; suffix: string }> = [
     { key: "calories", label: "Daily energy", suffix: "kcal" },
@@ -229,26 +235,26 @@ function TargetEditor({ targets, isDefault, onSave, onCancel }: { targets: typeo
     { key: "fat", label: "Fat", suffix: "g" },
   ];
   const parsed = { calories: Number(draft.calories), protein: Number(draft.protein), carbs: Number(draft.carbs), fat: Number(draft.fat) };
-  const valid = Object.values(parsed).every((value) => Number.isFinite(value) && value > 0);
+  const valid = Object.values(parsed).every((value) => Number.isFinite(value) && value > 0 && value <= MAX_TARGET_VALUE);
   // Shown so KP can see whether the macro grams he typed actually add up to the energy he typed.
   const macroEnergy = parsed.protein * 4 + parsed.carbs * 4 + parsed.fat * 9;
   const drift = valid ? Math.round(macroEnergy - parsed.calories) : 0;
   return (
     <section className="target-editor surface-card">
       <div className="target-filters-head">
-        <div><span className="eyebrow">Your daily targets</span><h2>{isDefault ? "These are placeholders until you set your own" : "Saved in this browser"}</h2></div>
+        <div><span className="eyebrow">Daily targets for {profileName}</span><h2>{isDefault ? "Replace the placeholders with personal targets" : "Change energy or macros at any time"}</h2></div>
         <button className="text-button" onClick={onCancel}>Cancel</button>
       </div>
       <div className="target-fields">
         {fields.map((field) => (
           <label key={field.key}>
             <span>{field.label}</span>
-            <div><input type="number" min={1} inputMode="numeric" value={draft[field.key]} onChange={(event) => setDraft((current) => ({ ...current, [field.key]: event.target.value }))} /><i>{field.suffix}</i></div>
+            <div><input type="number" min={1} max={MAX_TARGET_VALUE} inputMode="numeric" value={draft[field.key]} onChange={(event) => setDraft((current) => ({ ...current, [field.key]: event.target.value }))} /><i>{field.suffix}</i></div>
           </label>
         ))}
       </div>
       <p className={`target-drift ${Math.abs(drift) > 100 ? "warn" : ""}`}>
-        {valid ? `Those macros come to ${Math.round(macroEnergy).toLocaleString("en-IN")} kcal, ${drift === 0 ? "exactly matching" : `${Math.abs(drift)} kcal ${drift > 0 ? "above" : "below"}`} your energy target.` : "Every target must be a number above zero."}
+        {valid ? `Those macros come to ${Math.round(macroEnergy).toLocaleString("en-IN")} kcal, ${drift === 0 ? "exactly matching" : `${Math.abs(drift)} kcal ${drift > 0 ? "above" : "below"}`} your energy target.` : `Every target must be between 1 and ${MAX_TARGET_VALUE.toLocaleString("en-IN")}.`}
       </p>
       <button className="button lime full" disabled={!valid} onClick={() => onSave(parsed)}>Save targets</button>
     </section>
@@ -257,13 +263,17 @@ function TargetEditor({ targets, isDefault, onSave, onCancel }: { targets: typeo
 
 function WeightCard({ dayKey, entries, onSave, onDelete }: { dayKey: string; entries: WeightEntry[]; onSave: (entry: WeightEntry) => void; onDelete: (date: string) => void }) {
   const [showForm, setShowForm] = useState(false);
-  const [showTrend, setShowTrend] = useState(false);
+  const [showTrend, setShowTrend] = useState(true);
   const [date, setDate] = useState(dayKey);
   const [kg, setKg] = useState("");
   const latest = entries.at(-1) ?? null;
   const previous = entries.at(-2) ?? null;
   const change = latest && previous ? Math.round((latest.kg - previous.kg) * 10) / 10 : null;
   const points = getWeightTrendPoints(entries, 300, 92);
+  const minimum = entries.length ? Math.min(...entries.map((entry) => entry.kg)) : null;
+  const maximum = entries.length ? Math.max(...entries.map((entry) => entry.kg)) : null;
+  const linePoints = points.map((point) => `${point.x},${point.y}`).join(" ");
+  const areaPoints = points.length > 1 ? `0,92 ${linePoints} 300,92` : "";
   const kgNumber = Number(kg);
   const valid = Number.isFinite(kgNumber) && kgNumber >= 20 && kgNumber <= 400 && date <= dayKey;
   return (
@@ -276,7 +286,7 @@ function WeightCard({ dayKey, entries, onSave, onDelete }: { dayKey: string; ent
         <button className="button primary" disabled={!valid}>Save</button>
       </form> : null}
       {entries.length ? <button className="weight-trend-toggle" onClick={() => setShowTrend((value) => !value)} aria-expanded={showTrend}>{showTrend ? "Hide trend" : "Show trend chart"} <span>{showTrend ? "↑" : "↗"}</span></button> : null}
-      {showTrend ? <div className="weight-chart-wrap"><svg className="weight-chart" viewBox="-8 -8 316 108" role="img" aria-label={`Weight trend across ${entries.length} entries`} preserveAspectRatio="none"><polyline points={points.map((point) => `${point.x},${point.y}`).join(" ")} />{points.map((point) => <circle key={point.date} cx={point.x} cy={point.y} r="4" />)}</svg><div><span>{entries[0].date}</span><strong>{entries.length} {entries.length === 1 ? "entry" : "entries"}</strong><span>{latest?.date}</span></div>
+      {showTrend && entries.length ? <div className="weight-chart-wrap"><div className="weight-chart-head"><span>{minimum?.toFixed(1)} kg low</span><strong>{entries.length} {entries.length === 1 ? "entry" : "entries"}</strong><span>{maximum?.toFixed(1)} kg high</span></div><svg className="weight-chart" viewBox="-8 -8 316 108" role="img" aria-label={`Weight trend across ${entries.length} entries`}><defs><linearGradient id="weight-area" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#7aa13b" stopOpacity="0.3" /><stop offset="100%" stopColor="#7aa13b" stopOpacity="0.02" /></linearGradient></defs><line className="weight-chart-grid" x1="0" x2="300" y1="0" y2="0" /><line className="weight-chart-grid" x1="0" x2="300" y1="46" y2="46" /><line className="weight-chart-grid" x1="0" x2="300" y1="92" y2="92" />{areaPoints ? <polygon className="weight-chart-area" points={areaPoints} /> : null}<polyline points={linePoints} />{points.map((point) => <circle key={point.date} cx={point.x} cy={point.y} r="4"><title>{point.date}: {point.kg.toFixed(1)} kg</title></circle>)}</svg><div className="weight-chart-axis"><span>{entries[0].date}</span><span>{latest?.date}</span></div>
         {/* Every weigh-in is listed, because a typo you cannot delete bends the whole trend line. */}
         <ul className="weight-entry-list">{[...entries].reverse().map((entry) => <li key={entry.date}><span>{entry.date}</span><strong>{entry.kg.toFixed(1)} kg</strong><button onClick={() => onDelete(entry.date)} aria-label={`Delete the ${entry.kg.toFixed(1)} kg weigh-in from ${entry.date}`}>×</button></li>)}</ul>
       </div> : null}
@@ -304,15 +314,16 @@ function DiaryEntryRow({ entry, index, profileId, photoIndex, onEdit, onDelete }
   );
 }
 
-function TodayView({ clock, calories, macros, entries, quickFoods, weights, hasCardIqImport, targets, targetsAreDefaults, history, profileId, photoIndex, onLog, onAdd, onEdit, onDelete, onSaveWeight, onDeleteWeight, onOpenMeals, onSaveTargets }: {
+function TodayView({ clock, profileName, calories, macros, entries, quickFoods, weights, hasCardIqImport, targets, targetsAreDefaults, history, profileId, photoIndex, onLog, onAdd, onEdit, onDelete, onSaveWeight, onDeleteWeight, onOpenMeals, onSaveTargets }: {
   clock: DashboardClock;
+  profileName: string;
   calories: number;
   macros: Record<MacroKey, number>;
   entries: LoggedDisplayEntry[];
   quickFoods: Food[];
   weights: WeightEntry[];
   hasCardIqImport: boolean;
-  targets: typeof DEFAULT_TARGETS;
+  targets: SavedTargets;
   targetsAreDefaults: boolean;
   history: DaySummary[];
   profileId: string;
@@ -324,7 +335,7 @@ function TodayView({ clock, calories, macros, entries, quickFoods, weights, hasC
   onSaveWeight: (entry: WeightEntry) => void;
   onDeleteWeight: (date: string) => void;
   onOpenMeals: () => void;
-  onSaveTargets: (next: typeof DEFAULT_TARGETS) => void;
+  onSaveTargets: (next: TargetValues) => void;
 }) {
   const [editingTargets, setEditingTargets] = useState(false);
   const runway = getEnergyRunway(calories, targets.calories);
@@ -350,16 +361,16 @@ function TodayView({ clock, calories, macros, entries, quickFoods, weights, hasC
     <>
       <SectionHeading
         eyebrow={clock.dateLabel}
-        title={`${clock.greeting}, KP`}
+        title={`${clock.greeting}, ${profileName.split(/\s+/)[0]}`}
         description={description}
         action={<button className="button primary" onClick={onLog}><span>＋</span> Log food</button>}
       />
 
-      {editingTargets ? <TargetEditor targets={targets} isDefault={targetsAreDefaults} onSave={(next) => { onSaveTargets(next); setEditingTargets(false); }} onCancel={() => setEditingTargets(false)} /> : null}
+      {editingTargets ? <TargetEditor profileName={profileName} targets={targets} isDefault={targetsAreDefaults} onSave={(next) => { onSaveTargets(next); setEditingTargets(false); }} onCancel={() => setEditingTargets(false)} /> : null}
 
       <div className="today-layout">
         <section className="energy-card dark-card">
-          <div className="card-kicker"><span>Daily energy</span><span className={`status-pill ${runway.isOver ? "over" : ""}`}>{runway.isOver ? `Over ${targetWord}` : targetsAreDefaults ? "Placeholder target" : "On plan"}</span></div>
+          <div className="card-kicker"><span>Daily energy</span><div><span className={`status-pill ${runway.isOver ? "over" : ""}`}>{runway.isOver ? `Over ${targetWord}` : targetsAreDefaults ? "Placeholder target" : "On plan"}</span><button className="target-change-button" onClick={() => setEditingTargets((value) => !value)}>{editingTargets ? "Close targets" : "Change target"}</button></div></div>
           <div className="energy-main">
             <div className="energy-ring" style={circleStyle} role="progressbar" aria-label={`${calories} of ${targets.calories} calories eaten`} aria-valuenow={calories} aria-valuemin={0} aria-valuemax={targets.calories}>
               <div><strong>{Math.round(calories).toLocaleString("en-IN")}</strong><span>kcal eaten</span></div>
@@ -373,7 +384,7 @@ function TodayView({ clock, calories, macros, entries, quickFoods, weights, hasC
             </div>
           </div>
           <div className="macro-stack dark-macros">
-            <span className="sample-context">{targetsAreDefaults ? "Placeholder targets · set your own" : "Your targets"} <button className="text-button inline" onClick={() => setEditingTargets((value) => !value)}>Edit</button></span>
+            <span className="sample-context">{targetsAreDefaults ? "Placeholder targets · set your own" : `${profileName}’s personal targets`} <button className="text-button inline" onClick={() => setEditingTargets((value) => !value)}>Adjust targets</button></span>
             <MacroBar label="Protein" value={macros.protein} target={targets.protein} tone="protein" />
             <MacroBar label="Carbs" value={macros.carbs} target={targets.carbs} tone="carbs" />
             <MacroBar label="Fat" value={macros.fat} target={targets.fat} tone="fat" />
@@ -1763,6 +1774,8 @@ function NourishApp() {
   const [profileId, setProfileId] = useState<string>(DEFAULT_PROFILE_ID);
   const [profiles, setProfiles] = useState<DiaryProfile[] | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("unknown");
+  /** Bumped after a failed/offline save so unchanged local work gets another route to the Mini. */
+  const [syncRetry, setSyncRetry] = useState(0);
   /** Which logIds have a photo, per the diary database. Live-only: never persisted, never merged, refreshed on every pull. */
   const [photoIndex, setPhotoIndex] = useState<PhotoIndex>({});
   /** Applied the moment an upload/delete succeeds, so the thumbnail appears without waiting on the next sync. */
@@ -1785,6 +1798,8 @@ function NourishApp() {
   const lastPushedRef = useRef<SavedNutritionState | null>(null);
   const storageKeys = nutritionStorageKeys(profileId);
   const activeProfile = profiles?.find((profile) => profile.id === profileId) ?? null;
+  const profileName = activeProfile?.name ?? (profileId === DEFAULT_PROFILE_ID ? "Kanwar" : "This person");
+  const profileAvatar = profileInitials(profileName);
   const foodCatalog = mergeFoodCatalog(baseLogFoods, saved.customFoods);
   const legacyMeals: UserMeal[] = saved.customFoods.filter((food) => food.category === "Meal").map((food) => ({
     id: `legacy-${food.id}`,
@@ -1877,7 +1892,18 @@ function NourishApp() {
       setSyncStatus(pulled.status);
     })();
     return () => { cancelled = true; };
-  }, [storageLoaded, loadedProfile, profileId]);
+  }, [storageLoaded, loadedProfile, profileId, syncRetry]);
+
+  /**
+   * Offline work stays dirty until the host confirms it. A retry must not depend
+   * on another edit: someone may log breakfast once, close nothing, and expect
+   * the Mini to catch up when it wakes ten seconds later.
+   */
+  useEffect(() => {
+    if (!storageLoaded || loadedProfile !== profileId || !["local-only", "failed", "conflict"].includes(syncStatus)) return;
+    const timer = window.setTimeout(() => setSyncRetry((attempt) => attempt + 1), 10_000);
+    return () => window.clearTimeout(timer);
+  }, [syncStatus, storageLoaded, loadedProfile, profileId, syncRetry]);
   useEffect(() => {
     // Pure external-system sync: the diary is the source of truth and this mirrors it to
     // storage. Only today's slice is ever rewritten, so earlier days survive midnight.
@@ -1908,15 +1934,18 @@ function NourishApp() {
     // Nothing to send, and no diary database to send it to, are both normal.
     if (!storageLoaded || loadedProfile !== profileId || profiles === null || lastPushedRef.current === saved) return;
     if (pushTimer.current !== null) window.clearTimeout(pushTimer.current);
+    let cancelled = false;
     pushTimer.current = window.setTimeout(() => {
       pushTimer.current = null;
       const outgoing = savedRef.current;
       void (async () => {
+        setSyncStatus("syncing");
         const result = await pushDiary(profileId, outgoing, revisionRef.current);
+        if (cancelled) return;
         if (result.revision !== undefined) revisionRef.current = result.revision;
-        // Recording what actually went up is what stops this effect from
-        // re-sending the same diary forever once the server answers.
-        lastPushedRef.current = result.state ?? outgoing;
+        // Only the host's success response proves this exact object is durable.
+        // Offline/error/conflict results deliberately stay dirty for the retry effect.
+        if (result.status === "synced") lastPushedRef.current = result.state ?? outgoing;
         // A merge that came back from a conflict has to be adopted, or this device
         // keeps arguing with a server that has already moved past it.
         if (result.state && result.state !== outgoing) setSaved(result.state);
@@ -1924,6 +1953,7 @@ function NourishApp() {
       })();
     }, 1200);
     return () => {
+      cancelled = true;
       if (pushTimer.current !== null) window.clearTimeout(pushTimer.current);
     };
   }, [saved, storageLoaded, loadedProfile, profileId, profiles]);
@@ -1990,9 +2020,9 @@ function NourishApp() {
   const history = summariseHistory(saved.days, foodCatalog).filter((day) => day.dayKey !== clock.dayKey);
   const targets = saved.targets ?? DEFAULT_TARGETS;
   const targetsAreDefaults = saved.targets === null;
-  const saveTargets = (next: typeof DEFAULT_TARGETS) => {
-    setSaved((current) => ({ ...current, targets: next }));
-    notify("Daily targets saved in this browser");
+  const saveTargets = (next: TargetValues) => {
+    setSaved((current) => ({ ...current, targets: { ...next, updatedAt: nextTargetEditTime(current.targets?.updatedAt) } }));
+    notify("Daily targets updated · saving to the Mac Mini…");
   };
   const setTodayLogs = (update: (logs: SavedLogEntry[]) => SavedLogEntry[]) => {
     setSaved((current) => withDayLogs(current, clock.dayKey, update(logsForDay(current, clock.dayKey))));
@@ -2240,7 +2270,7 @@ function NourishApp() {
 
   const renderContent = () => {
     if (area === "track") {
-      if (trackView === "today") return <TodayView clock={clock} calories={calories} macros={macros} entries={entries} quickFoods={quickFoods} weights={saved.weights} hasCardIqImport={cardIqImport !== null} targets={targets} targetsAreDefaults={targetsAreDefaults} history={history} profileId={profileId} photoIndex={photoIndex} onLog={() => openFoodLogger()} onAdd={(food) => openFoodLogger(food)} onEdit={(index) => openFoodLogger(entries[index]?.food ?? null, index, entries[index]?.meal ?? null)} onDelete={deleteLoggedFood} onSaveWeight={saveWeight} onDeleteWeight={(date) => deleteRecord("weight", date, `The ${date} weigh-in`)} onOpenMeals={() => { setArea("plan"); setPlanView("meals"); window.scrollTo({ top: 0, behavior: "smooth" }); }} onSaveTargets={saveTargets} />;
+      if (trackView === "today") return <TodayView clock={clock} profileName={profileName} calories={calories} macros={macros} entries={entries} quickFoods={quickFoods} weights={saved.weights} hasCardIqImport={cardIqImport !== null} targets={targets} targetsAreDefaults={targetsAreDefaults} history={history} profileId={profileId} photoIndex={photoIndex} onLog={() => openFoodLogger()} onAdd={(food) => openFoodLogger(food)} onEdit={(index) => openFoodLogger(entries[index]?.food ?? null, index, entries[index]?.meal ?? null)} onDelete={deleteLoggedFood} onSaveWeight={saveWeight} onDeleteWeight={(date) => deleteRecord("weight", date, `The ${date} weigh-in`)} onOpenMeals={() => { setArea("plan"); setPlanView("meals"); window.scrollTo({ top: 0, behavior: "smooth" }); }} onSaveTargets={saveTargets} />;
       if (trackView === "history") return <HistoryView history={history} clock={clock} targets={targets} entriesFor={(dayKey) => restoreDayEntries(saved, dayKey, foodCatalog)} profileId={profileId} photoIndex={photoIndex} onDeleteEntry={deleteLoggedEntry} onDeleteDay={(dayKey) => deleteRecord("day", dayKey, `${dayKey}`)} />;
       if (trackView === "trends") return <TrendsView history={history} targets={targets} />;
       return <PurchasesView cardIqImport={cardIqImport} onAdd={(food) => openFoodLogger(food)} onCreateFromPurchase={(name) => setPlanFoodEditor({ initial: null, initialName: name })} />;
@@ -2255,12 +2285,13 @@ function NourishApp() {
         <div className="brand"><span>N</span><div><strong>Nourish</strong><small>Personal nutrition</small></div></div>
         <div className="area-switch" aria-label="Main sections"><button className={area === "plan" ? "active" : ""} onClick={() => switchArea("plan")}><span>PLAN</span><small>Decide what to eat</small></button><button className={area === "track" ? "active" : ""} onClick={() => switchArea("track")}><span>TRACK</span><small>See how you’re doing</small></button></div>
         <nav className="side-nav" aria-label={`${area} navigation`}>{nav.map((item) => <button key={item.id} className={activeView === item.id ? "active" : ""} onClick={() => switchView(item.id)}><i>{item.icon}</i><span>{item.label}</span></button>)}</nav>
-        <div className="sidebar-footer"><span className="kp-avatar">KP</span><div><strong>Kanwar</strong><small>{targetsAreDefaults ? "Set your targets" : `${targets.calories.toLocaleString("en-IN")} kcal target`}</small></div><button aria-label="Open settings" onClick={() => setSettingsOpen(true)}>•••</button></div>
+        <div className="sidebar-footer"><span className="kp-avatar">{profileAvatar}</span><div><strong>{profileName}</strong><small>{targetsAreDefaults ? "Set personal targets" : `${targets.calories.toLocaleString("en-IN")} kcal target`}</small></div><button aria-label="Open settings" onClick={() => setSettingsOpen(true)}>•••</button></div>
       </aside>
-      <div className="mobile-topbar"><div className="brand"><span>N</span><strong>Nourish</strong></div><div className="mobile-area"><button className={area === "plan" ? "active" : ""} onClick={() => switchArea("plan")}>Plan</button><button className={area === "track" ? "active" : ""} onClick={() => switchArea("track")}>Track</button></div><button className="kp-avatar mobile-settings" aria-label="Open settings" onClick={() => setSettingsOpen(true)}><span>KP</span></button></div>
+      <div className="mobile-topbar"><div className="brand"><span>N</span><strong>Nourish</strong></div><div className="mobile-area"><button className={area === "plan" ? "active" : ""} onClick={() => switchArea("plan")}>Plan</button><button className={area === "track" ? "active" : ""} onClick={() => switchArea("track")}>Track</button></div><button className="kp-avatar mobile-settings" aria-label={`Open settings for ${profileName}`} onClick={() => setSettingsOpen(true)}><span>{profileAvatar}</span></button></div>
       <div className="mobile-subnav">{nav.map((item) => <button key={item.id} className={activeView === item.id ? "active" : ""} onClick={() => switchView(item.id)}>{item.label}</button>)}</div>
       <main className="workspace">
         {saveFailed ? <div className="save-warning" role="alert"><strong>Nourish cannot save to this browser.</strong><span>Anything you log now will be lost when you close the tab. This usually means private browsing or a full storage quota.</span></div> : null}
+        <div className={`persistence-status ${syncStatus}`} role="status" aria-live="polite"><i aria-hidden="true" /><span><strong>{describeSyncStatus(syncStatus, profileName)}</strong>{syncStatus === "synced" ? " Every change is stored outside app releases." : syncStatus === "syncing" ? " Your browser copy is already safe while this finishes." : syncStatus === "unknown" ? " Connecting to the durable diary…" : " Keep this tab open; Nourish retries automatically."}</span></div>
         {renderContent()}
       </main>
       {area === "track" ? <button className="mobile-log-button" onClick={() => openFoodLogger()}>＋ Log food</button> : null}

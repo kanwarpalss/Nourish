@@ -94,7 +94,18 @@ export type SavedTargets = {
   protein: number;
   carbs: number;
   fat: number;
+  /** Resolves edits made on different devices without letting a stale browser win. */
+  updatedAt?: number;
 };
+
+export const MAX_TARGET_VALUE = 50_000;
+
+/** A newly saved target must outrank the last one even when device clocks disagree. */
+export function nextTargetEditTime(previous?: number, now = Date.now()) {
+  const prior = Number.isSafeInteger(previous) && (previous as number) >= 0 ? previous as number : 0;
+  const wallTime = Number.isSafeInteger(now) && now >= 0 ? now : 0;
+  return prior >= Number.MAX_SAFE_INTEGER ? prior : Math.max(wallTime, prior + 1);
+}
 
 export type WeightEntry = { date: string; kg: number };
 
@@ -398,10 +409,11 @@ function parseTargets(value: unknown): SavedTargets | null {
   const parsed = {} as SavedTargets;
   for (const field of fields) {
     const raw = candidate[field];
-    if (!Number.isFinite(raw) || (raw as number) <= 0) return null;
+    if (!Number.isFinite(raw) || (raw as number) <= 0 || (raw as number) > MAX_TARGET_VALUE) return null;
     parsed[field] = raw as number;
   }
-  return parsed;
+  const updatedAt = candidate.updatedAt;
+  return Number.isSafeInteger(updatedAt) && (updatedAt as number) >= 0 ? { ...parsed, updatedAt: updatedAt as number } : parsed;
 }
 
 /**
@@ -852,6 +864,13 @@ function unionRecords<T>(local: T[], remote: T[], key: (item: T) => string, dele
   return [...byId.values()].filter((item) => !deleted.has(key(item)));
 }
 
+/** The most recently edited per-person target wins; legacy targets retain local-first behaviour. */
+function mergeTargets(local: SavedTargets | null, remote: SavedTargets | null) {
+  if (!local) return remote;
+  if (!remote) return local;
+  return (remote.updatedAt ?? 0) > (local.updatedAt ?? 0) ? remote : local;
+}
+
 /**
  * Combine this device's diary with the one on the Mac Mini.
  *
@@ -908,7 +927,7 @@ export function mergeSyncedStates(local: SavedNutritionState, remote: SavedNutri
       .slice(-MAX_WEIGHT_ENTRIES),
     // The plan draft is today's scratch pad on one device, not shared state.
     planned: local.planned,
-    targets: local.targets ?? remote.targets,
+    targets: mergeTargets(local.targets, remote.targets),
     removed,
     removalDecisions,
     carried: { ...(remote.carried ?? {}), ...(local.carried ?? {}) },

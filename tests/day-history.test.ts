@@ -5,6 +5,7 @@ import {
   getWeightTrendPoints,
   logsForDay,
   MAX_STORED_DAYS,
+  nextTargetEditTime,
   parseSavedNutritionState,
   stringifySavedNutritionState,
   upsertWeightEntry,
@@ -102,6 +103,28 @@ test("corrupt or hostile stored data degrades to an empty diary instead of throw
   assert.deepEqual(logsForDay(mixed, "2026-08-10"), [milk]);
   assert.deepEqual(mixed.planned, []);
   assert.equal(mixed.targets, null, "a zero calorie target is not a usable target");
+});
+
+test("personal targets preserve their edit time and reject values that could break charts", () => {
+  const exact = { calories: 2250, protein: 155, carbs: 230, fat: 70, updatedAt: 1_788_400_000_000 };
+  const saved = parseSavedNutritionState(JSON.stringify({ schemaVersion: 2, days: [], planned: [], targets: exact }));
+  assert.deepEqual(saved.targets, exact);
+
+  for (const targets of [
+    { ...exact, calories: 0 },
+    { ...exact, calories: 50_001 },
+    { ...exact, protein: Number.POSITIVE_INFINITY },
+  ]) {
+    assert.equal(parseSavedNutritionState(JSON.stringify({ schemaVersion: 2, days: [], planned: [], targets })).targets, null);
+  }
+
+  const malformedClock = parseSavedNutritionState(JSON.stringify({ schemaVersion: 2, days: [], planned: [], targets: { ...exact, updatedAt: "tomorrow" } }));
+  assert.deepEqual(malformedClock.targets, { calories: 2250, protein: 155, carbs: 230, fat: 70 }, "a bad clock loses ordering metadata, not the user's targets");
+
+  assert.equal(nextTargetEditTime(200, 100), 201, "an inherited future clock can always be superseded by the next local edit");
+  assert.equal(nextTargetEditTime(undefined, 100), 100);
+  assert.equal(nextTargetEditTime(-1, 100), 100);
+  assert.equal(nextTargetEditTime(Number.MAX_SAFE_INTEGER, 100), Number.MAX_SAFE_INTEGER);
 });
 
 test("a day's totals are the sum of what was actually logged", () => {

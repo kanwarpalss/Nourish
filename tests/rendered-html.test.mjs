@@ -28,7 +28,7 @@ function assertPrototypeShell(html) {
   assert.match(html, /aria-label="Main sections"/);
   assert.match(html, />PLAN</);
   assert.match(html, />TRACK</);
-  assert.match(html, /Good (morning|afternoon|evening|night), KP/);
+  assert.match(html, /Good (morning|afternoon|evening|night), Kanwar/);
   assert.match(html, /Daily energy/);
   assert.match(html, /Today’s timeline/);
   assert.match(html, /Log food/);
@@ -37,7 +37,7 @@ function assertPrototypeShell(html) {
   assert.match(html, /0<\/strong><span>kcal eaten/);
   assert.match(html, /No food logged yet/);
   assert.match(html, /Placeholder target/);
-  assert.match(html, /Set your targets/);
+  assert.match(html, /Set personal targets/);
   assert.doesNotMatch(html, /Masala oats \+ dahi|Rajma chawal bowl|Banana \+ whey/);
   assert.match(html, /role="progressbar"/);
   assert.match(html, /aria-live="polite"/);
@@ -55,6 +55,23 @@ test("server-renders the Nourish design-review prototype", async () => {
 test("prototype test detects a missing critical product area", () => {
   const broken = '<title>Nourish — Plan well. Track gently.</title><main aria-label="Main sections">PLAN</main>';
   assert.throws(() => assertPrototypeShell(broken), /TRACK/);
+});
+
+test("a failed diary push remains dirty and has an automatic retry path", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+
+  assert.doesNotMatch(
+    page,
+    /^\s*lastPushedRef\.current\s*=\s*result\.state\s*\?\?\s*outgoing/m,
+    "a failed or local-only response has no durable server copy and must not be marked pushed",
+  );
+  assert.match(
+    page,
+    /result\.status === "synced"[^\n]*lastPushedRef\.current/,
+    "only a successful server response may mark a diary revision durable",
+  );
+  assert.match(page, /\["local-only", "failed", "conflict"\]\.includes\(syncStatus\)/);
+  assert.match(page, /setTimeout\(\(\) => setSyncRetry/, "unchanged local work needs a timed retry after a failed push");
 });
 
 test("keeps the prototype complete, responsive, and free of starter residue", async () => {
@@ -176,6 +193,11 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
   assert.match(page, /document\.body\.style\.overflow = "hidden"/);
   assert.match(css, /\.food-dialog \{ overflow-y: auto; overscroll-behavior: contain;/);
   assert.match(page, /Show trend chart/);
+  assert.match(page, /const \[showTrend, setShowTrend\] = useState\(true\)/, "saved weight history must be visible without another tap");
+  assert.match(page, /aria-label=\{`Weight trend across \$\{entries\.length\} entries`\}/, "the chart must remain available to screen readers");
+  assert.match(page, /Change target/, "the calorie target needs an obvious control, not a fixed demo number");
+  assert.match(page, /Daily targets for \{profileName\}/, "target editing must say which person it changes");
+  assert.match(page, /updatedAt: nextTargetEditTime\(current\.targets\?\.updatedAt\)/, "target edits need monotonic ordering so an older or clock-skewed device cannot win later");
   assert.match(page, /upsertWeightEntry/);
   assert.match(page, /if \(!storageLoaded \|\| loadedProfile !== profileId\) return/, "nothing may be written back before that profile's diary has finished loading");
   // Reading older storage keys still has to happen on load; it moved out of the
@@ -185,7 +207,7 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
 
   // The diary now also lives in SQLite on the Mac Mini, with the browser copy as
   // the working copy. Nothing here may claim a server copy exists unless one does.
-  assert.match(page, /describeSyncStatus\(syncStatus, activeProfile\?\.name\)/, "the screen must state where the diary actually is");
+  assert.match(page, /describeSyncStatus\(syncStatus, profileName\)/, "the main screen must always state where this person's diary actually is");
   assert.match(sync, /Saved in this browser only — the Mac Mini is not reachable/, "an unreachable server must be said plainly, not hidden");
   assert.match(sync, /if \(response\.status === 409\)/, "a save that lost a race must merge and retry, never overwrite");
   assert.match(sync, /mergeSyncedStates\(state, parseSavedNutritionState/, "the server's copy is parsed like any other stored bytes before being trusted");
@@ -200,8 +222,8 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
   // write and sync must therefore wait for the load of THAT profile. Without this
   // guard, switching to a second person wrote the first person's whole diary into
   // the second person's row, on the device and on the Mac Mini — observed, not theorised.
-  assert.equal((page.match(/loadedProfile !== profileId/g) ?? []).length, 3,
-    "the localStorage write, the pull and the push must each refuse to run mid-switch");
+  assert.equal((page.match(/loadedProfile !== profileId/g) ?? []).length, 4,
+    "the localStorage write, pull, push and retry timer must each refuse to run mid-switch");
   assert.match(page, /setLoadedProfile\(profileId\)/, "and the guard must be released only once that profile's diary is actually loaded");
   assert.match(state, /LEGACY_NUTRITION_STORAGE_KEYS/, "older keys must still be read somewhere");
   assert.match(state, /NUTRITION_BACKUP_STORAGE_KEY/);
@@ -218,6 +240,7 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
   // backup and restore are unreachable on a phone.
   assert.match(page, /mobile-settings/, "settings must be reachable without the desktop sidebar");
   assert.match(css, /\.mobile-topbar > \.mobile-settings \{[^}]*44px/, "the mobile settings control needs a 44px tap target");
+  assert.match(css, /\.app-shell:has\(\.target-editor\) > \.mobile-log-button \{ display: none; \}/, "the floating Log food action must not cover Save targets on a phone");
   assert.match(page, /30 min or less/);
   assert.doesNotMatch(page, /Number\.parseInt\(recipe\.time/);
   // An unresolved purchase still cannot quick-log guessed macros, but it must
@@ -312,8 +335,8 @@ test("keeps the prototype complete, responsive, and free of starter residue", as
   assert.match(layout, /title:\s*"Nourish — Plan well\. Track gently\."/);
   assert.doesNotMatch(layout, /next\/font/);
   assert.doesNotMatch(page + css + layout + packageJson, /codex-preview|_sites-preview|react-loading-skeleton/i);
-  assert.match(spec, /Phase 0 — Product, design system, and researched seed catalogue \(current\)/);
-  assert.match(spec, /cardIQ should (?:be|remain) connected only through the documented narrow import contract/);
+  assert.match(spec, /Phase 0 — Product, design system, and researched seed catalogue \(implemented; KP approval remains\)/);
+  assert.match(spec, /cardIQ stays connected only through\s+the documented narrow import contract/);
 
   await assert.rejects(access(new URL("../app/_sites-preview/SkeletonPreview.tsx", import.meta.url)));
 });

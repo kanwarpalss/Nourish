@@ -10,6 +10,7 @@ import {
   exportNutritionState,
   isSafeImageUrl,
   mergeNutritionBackup,
+  nutritionStorageKeys,
   parseExportedNutritionState,
   parseSavedNutritionState,
   readStoredNutritionRaw,
@@ -138,6 +139,21 @@ test("an export round-trips, and a wrong file is refused rather than half-import
   for (const junk of ['{"kind":"something-else","state":{}}', "not json at all", "[]", "null", '{"app":"nourish"}', JSON.stringify({ kind: "nourish-backup", state: {} })]) {
     assert.equal(parseExportedNutritionState(junk), null, `must refuse: ${junk.slice(0, 40)}`);
   }
+});
+
+test("target edit times round-trip and separate profiles never overwrite one another", () => {
+  const storage = memoryStorage();
+  const mine = stateWith({ targets: { calories: 2200, protein: 150, carbs: 220, fat: 70, updatedAt: 1_725_000_000_000 } });
+  const partner = stateWith({ targets: { calories: 1800, protein: 120, carbs: 175, fat: 58, updatedAt: 1_725_000_000_001 } });
+
+  writeStoredNutritionState(storage, mine, nutritionStorageKeys("kp"));
+  writeStoredNutritionState(storage, partner, nutritionStorageKeys("partner"));
+
+  assert.deepEqual(parseSavedNutritionState(readStoredNutritionRaw(storage, nutritionStorageKeys("kp"))!).targets, mine.targets);
+  assert.deepEqual(parseSavedNutritionState(readStoredNutritionRaw(storage, nutritionStorageKeys("partner"))!).targets, partner.targets);
+
+  const legacy = parseSavedNutritionState(JSON.stringify({ schemaVersion: 2, days: [], planned: [], customFoods: [], userMeals: [], weights: [], targets: { calories: 2100, protein: 145, carbs: 210, fat: 68 } }));
+  assert.deepEqual(legacy.targets, { calories: 2100, protein: 145, carbs: 210, fat: 68 }, "backups from before target timestamps must remain readable");
 });
 
 test("backup merge keeps every current record and reports only genuine additions", () => {

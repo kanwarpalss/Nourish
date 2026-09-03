@@ -122,15 +122,22 @@ test("syncing twice changes nothing the second time", () => {
   assert.deepEqual(twice, once, "merging is stable, so repeated syncs cannot multiply entries");
 });
 
-test("targets and the plan draft do not fight across devices", () => {
+test("the latest target edit wins across devices while the plan stays local", () => {
   const laptop = stateWith({ targets: { calories: 2200, protein: 150, carbs: 220, fat: 70 }, planned: [{ id: seedFood.id, kind: "food" }] });
-  const phone = stateWith({ targets: { calories: 1800, protein: 120, carbs: 180, fat: 60 }, planned: [] });
+  const phone = stateWith({ targets: { calories: 1800, protein: 120, carbs: 180, fat: 60, updatedAt: 200 }, planned: [] });
 
   const merged = mergeSyncedStates(laptop, phone);
 
-  assert.equal(merged.targets?.calories, 2200, "the device in front of you keeps its targets");
+  assert.equal(merged.targets?.calories, 1800, "a stale browser must not overwrite the newer target already on the Mini");
+  assert.equal(mergeSyncedStates(phone, laptop).targets?.calories, 1800, "merge direction cannot change which target wins");
   assert.deepEqual(merged.planned, [{ id: seedFood.id, kind: "food" }], "and its own scratch plan");
   assert.equal(mergeSyncedStates(stateWith(), phone).targets?.calories, 1800, "but an unset target adopts the other device's");
+
+  const legacyRemote = stateWith({ targets: { calories: 1900, protein: 130, carbs: 190, fat: 60 } });
+  assert.equal(mergeSyncedStates(laptop, legacyRemote).targets?.calories, 2200, "two legacy targets retain the established local-first tie-break");
+
+  const simultaneous = stateWith({ targets: { calories: 1700, protein: 110, carbs: 170, fat: 55, updatedAt: 200 } });
+  assert.equal(mergeSyncedStates(phone, simultaneous).targets?.calories, 1800, "same-millisecond edits resolve deterministically to the visible device");
 });
 
 test("entries are stamped with ids once, and keep them", () => {

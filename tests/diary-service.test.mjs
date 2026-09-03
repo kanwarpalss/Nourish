@@ -102,7 +102,12 @@ test("a write built on a stale revision is refused and handed the newer copy", a
 
 test("the diary survives the service restarting", async () => {
   await withService(async ({ call, store, reopen }) => {
-    await call("PUT", "/diary/kp", { baseRevision: 0, state: diary("2026-08-22", ["survivor"]) });
+    const durableDiary = {
+      ...diary("2026-08-22", ["survivor"]),
+      weights: [{ date: "2026-08-22", kg: 72.4 }],
+      targets: { calories: 2150, protein: 150, carbs: 215, fat: 72, updatedAt: 1_725_000_000_000 },
+    };
+    await call("PUT", "/diary/kp", { baseRevision: 0, state: durableDiary });
     store.close();
 
     // A genuinely fresh handle on the same file, as if the Mac Mini had rebooted.
@@ -112,6 +117,8 @@ test("the diary survives the service restarting", async () => {
 
     assert.equal(read.revision, 1);
     assert.deepEqual(read.state.days[0].logs.map((log) => log.logId), ["survivor"], "this is the entire reason for moving off browser storage");
+    assert.deepEqual(read.state.weights, durableDiary.weights, "weight history must live in SQLite, not disappear with a browser cache");
+    assert.deepEqual(read.state.targets, durableDiary.targets, "personal targets must survive app and service restarts");
   });
 });
 
