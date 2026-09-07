@@ -47,7 +47,7 @@ const vinextBin = path.join(repoRoot, "node_modules", ".bin", "vinext");
  * another port is blocked outright as mixed content. Fronting both on one port
  * side-steps all of it, and keeps 3902 the only port Nourish ever occupies.
  */
-const INTERNAL_APP_PORT = 3903;
+const INTERNAL_APP_PORT = 3910;
 const PUBLIC_PORT = 3902;
 
 const child = spawn(vinextBin, ["start", "--port", String(INTERNAL_APP_PORT), "--hostname", "127.0.0.1"], {
