@@ -12,6 +12,7 @@ import { canRestoreRecord, clearAllUserData, emptyNutritionState, exportNutritio
 import { DEFAULT_TARGETS, loggableMeals, resolveLoggedFood, summariseHistory, summariseTrend, type DaySummary } from "./day-history";
 import { estimateSatiety, getBangaloreClock, getBasisAmountForLogging, getEnergyRunway, getLoggingUnitLabel, getLoggingUnits, getQuantityLimit, hasNutritionTarget, isQuantityValid, matchesNutritionTarget, matchesRecipe, satietyLabel, scaleNutrition, scaleNutritionForUnit, sumLoggedNutrition, sumNutritionDetails, type DashboardClock, type NutritionTarget } from "./prototype-logic";
 import { meals, nutritionItems, SOURCE_LINKS, type Meal, type NutritionItem, type NutritionUnit } from "./nutrition-data";
+import { BASE_PATH } from "../shared/base-path.mjs";
 
 type Area = "plan" | "track";
 type PlanView = "items" | "meals";
@@ -2040,7 +2041,7 @@ function NourishApp() {
   }, []);
   useEffect(() => {
     let active = true;
-    fetch("/cardiq-food-import.json")
+    fetch(`${BASE_PATH}/cardiq-food-import.json`)
       .then((response) => response.ok ? response.json() : null)
       // Classification and matching are re-applied here rather than trusted from the file,
       // so a matcher fix reaches KP without re-running the cardIQ import.

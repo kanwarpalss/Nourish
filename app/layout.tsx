@@ -1,12 +1,13 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { BASE_PATH } from "../shared/base-path.mjs";
 
 export const metadata: Metadata = {
   title: "Nourish — Plan well. Track gently.",
   description: "A private, Indian-first nutrition planning and food tracking companion.",
   icons: {
-    icon: "/favicon.svg",
-    shortcut: "/favicon.svg",
+    icon: `${BASE_PATH}/favicon.svg`,
+    shortcut: `${BASE_PATH}/favicon.svg`,
   },
 };
 

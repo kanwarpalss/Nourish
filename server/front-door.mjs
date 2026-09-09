@@ -14,6 +14,7 @@
 import { createServer, request as httpRequest } from "node:http";
 import { openDiaryStore } from "./diary-store.mjs";
 import { createDiaryHandler, ensureFirstProfile, schedulePhotoSweep, API_PREFIX } from "./diary-service.mjs";
+import { BASE_PATH } from "../shared/base-path.mjs";
 
 export async function startFrontDoor({ port = 3902, host = "0.0.0.0", appOrigin, databasePath } = {}) {
   const store = openDiaryStore(databasePath);
@@ -23,7 +24,26 @@ export async function startFrontDoor({ port = 3902, host = "0.0.0.0", appOrigin,
   const upstream = new URL(appOrigin);
 
   const server = createServer((clientRequest, clientResponse) => {
-    if ((clientRequest.url ?? "").startsWith(API_PREFIX)) {
+    const rawUrl = clientRequest.url ?? "";
+
+    // The bare origin (http://mac-mini:3902/) has nothing to serve once the
+    // app lives under a base path, so send it into the app rather than
+    // letting it 404. Deliberately NOT redirecting to BASE_PATH + "/":
+    // the framework 308s that back to the slashless form, and the pair
+    // becomes an infinite loop.
+    if (rawUrl === "/") {
+      clientResponse.writeHead(302, { location: BASE_PATH });
+      clientResponse.end();
+      return;
+    }
+
+    // The page calls the diary API under the base path
+    // (/nourish/api/nourish/...) because DIARY_API_BASE carries the prefix.
+    // A direct hit on the port still uses the bare /api/nourish. Accept both
+    // and hand the diary handler the bare form it was written against.
+    const prefixedApi = rawUrl.startsWith(BASE_PATH + API_PREFIX);
+    if (prefixedApi || rawUrl.startsWith(API_PREFIX)) {
+      if (prefixedApi) clientRequest.url = rawUrl.slice(BASE_PATH.length);
       handleDiary(clientRequest, clientResponse).catch((error) => {
         console.error("[nourish] diary request failed:", error);
         if (!clientResponse.headersSent) {
