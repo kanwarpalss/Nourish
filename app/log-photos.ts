@@ -1,4 +1,5 @@
 import { DIARY_API_BASE } from "./diary-api";
+import { BASE_PATH } from "../shared/base-path.mjs";
 
 /**
  * Photos for a logged entry live only on the diary database, never in the
@@ -11,8 +12,12 @@ import { DIARY_API_BASE } from "./diary-api";
 export type LogPhotoMeta = { mimeType: string; createdAt: string };
 
 const SUPPORTED_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
-const FOOD_PHOTO_URL_PATTERN = new RegExp(`^${DIARY_API_BASE}/diary/[a-z0-9][a-z0-9-]{0,30}/food/([A-Za-z0-9_-]{1,64})/photo(?:[?#].*)?$`);
-const BUNDLED_FOOD_PHOTO_PATTERN = /^\/food-images\/[A-Za-z0-9._-]+\.(?:jpe?g|png|webp)(?:[?#].*)?$/i;
+// Compatibility for food-photo URLs already stored in diaries before the
+// /nourish base path shipped. TODO 2027-03-31: audit every profile and backup;
+// remove only after no unprefixed saved URLs remain, including offline devices.
+const LEGACY_DIARY_API_BASE = "/api/nourish";
+const FOOD_PHOTO_URL_PATTERN = new RegExp(`^(?:${DIARY_API_BASE}|${LEGACY_DIARY_API_BASE})/diary/[a-z0-9][a-z0-9-]{0,30}/food/([A-Za-z0-9_-]{1,64})/photo(?:[?#].*)?$`);
+const BUNDLED_FOOD_PHOTO_PATTERN = new RegExp(`^(?:${BASE_PATH})?/food-images/[A-Za-z0-9._-]+\\.(?:jpe?g|png|webp)(?:[?#].*)?$`, "i");
 
 export function isSupportedPhotoFile(file: File) {
   return SUPPORTED_TYPES.has(file.type);
@@ -89,6 +94,17 @@ export function isFoodPhotoUrl(value: string | undefined) {
  */
 export function isAutoLoadedFoodImage(value: string | undefined) {
   return Boolean(value && (BUNDLED_FOOD_PHOTO_PATTERN.test(value) || isFoodPhotoUrl(value)));
+}
+
+/**
+ * Keep the durable stored value stable while requesting it through the app's
+ * base path. This preserves food photos saved before /nourish existed and the
+ * bundled catalogue paths, without rewriting anyone's diary during an update.
+ */
+export function foodImageUrlForDisplay(value: string | undefined) {
+  if (!value || value.startsWith(BASE_PATH)) return value;
+  if (BUNDLED_FOOD_PHOTO_PATTERN.test(value) || isFoodPhotoUrl(value)) return `${BASE_PATH}${value}`;
+  return value;
 }
 
 export async function uploadFoodPhoto(profileId: string, foodId: string, file: File): Promise<{ ok: true; url: string } | { ok: false; reason: string }> {

@@ -2,13 +2,18 @@ import assert from "node:assert/strict";
 import { access, readFile } from "node:fs/promises";
 import test from "node:test";
 
+import { BASE_PATH } from "../shared/base-path.mjs";
+
 async function render() {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
   const { default: worker } = await import(workerUrl.href);
 
   return worker.fetch(
-    new Request("http://localhost/", {
+    // The production front door owns `/` and redirects it to BASE_PATH.
+    // This test calls vinext directly, so it must request the app route vinext
+    // actually owns rather than expecting the proxy's redirect behaviour.
+    new Request(`http://localhost${BASE_PATH}`, {
       headers: { accept: "text/html" },
     }),
     {

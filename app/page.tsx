@@ -7,7 +7,7 @@ import { freshTrayId, freshUnique } from "./ids";
 import { addToTray, areFoodConversionsValid, cloneNutritionItem, cloneUserMeal, createCustomFood, createUserMeal, forkFoodForEdit, getSingleItemKind, isOwnedFood, isUserMealNameValid, MAX_CONVERSION_LABEL_LENGTH, MAX_FOOD_CONVERSIONS, MAX_MEAL_COMPONENTS, MAX_MEAL_NAME_LENGTH, mergeFoodCatalog, singleItemKindLabel, upsertUserMeal, userMealToNutritionItem, userMealTotals, type SingleItemKind, type TrayItem, type UserMeal } from "./logging-session";
 import { defaultCompositeItems, findComponentFood } from "./composite-foods";
 import { createProfile, deleteProfile as deleteRemoteProfile, describeSyncStatus, fetchProfiles, pullDiary, pushDiary, renameProfile, DEFAULT_PROFILE_ID, type DiaryProfile, type SyncStatus } from "./diary-sync";
-import { deleteFoodPhoto, deleteLogPhoto, foodPhotoKeyFromUrl, isAutoLoadedFoodImage, isSupportedPhotoFile, photoUrl, uploadFoodPhoto, uploadLogPhoto, type LogPhotoMeta } from "./log-photos";
+import { deleteFoodPhoto, deleteLogPhoto, foodImageUrlForDisplay, foodPhotoKeyFromUrl, isAutoLoadedFoodImage, isSupportedPhotoFile, photoUrl, uploadFoodPhoto, uploadLogPhoto, type LogPhotoMeta } from "./log-photos";
 import { canRestoreRecord, clearAllUserData, emptyNutritionState, exportNutritionState, nutritionStorageKeys, withLogIds, isSafeImageUrl, logsForDay, MAX_STORED_DAYS, MAX_TARGET_VALUE, mergeNutritionBackup, nextTargetEditTime, parseExportedNutritionState, parseSavedNutritionState, readStoredNutritionRaw, removeRecord, restoreRecord, upsertWeightEntry, withDayLogs, wouldDropOldestDay, writeStoredNutritionState, type RemovableKind, type RemovedRecord, type SavedLogEntry, type SavedNutritionState, type SavedTargets, type WeightEntry } from "./local-nutrition-state";
 import { DEFAULT_TARGETS, loggableMeals, resolveLoggedFood, summariseHistory, summariseTrend, type DaySummary } from "./day-history";
 import { estimateSatiety, getBangaloreClock, getBasisAmountForLogging, getEnergyRunway, getLoggingUnitLabel, getLoggingUnits, getQuantityLimit, hasNutritionTarget, isQuantityValid, matchesNutritionTarget, matchesRecipe, satietyLabel, scaleNutrition, scaleNutritionForUnit, sumLoggedNutrition, sumNutritionDetails, type DashboardClock, type NutritionTarget } from "./prototype-logic";
@@ -77,7 +77,7 @@ function foodAtBasis(food: Food): Food {
 function FoodThumb({ food }: { food: Pick<Food, "name" | "brand" | "category" | "imageUrl"> & { aliases?: string[] } }) {
   const [failed, setFailed] = useState(false);
   if (food.imageUrl && isAutoLoadedFoodImage(food.imageUrl) && !failed) {
-    return <span className="food-thumb"><img src={food.imageUrl} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)} /></span>;
+    return <span className="food-thumb"><img src={foodImageUrlForDisplay(food.imageUrl)} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)} /></span>;
   }
   return <span className={`food-thumb icon ${foodIconKey(food)}`}><FoodIcon name={foodIconKey(food)} /></span>;
 }
@@ -1175,7 +1175,7 @@ function FoodPhotoField({ profileId, draft, setDraft, shouldKeep, onBusyChange, 
     <div className="food-photo-field">
       <span className="food-photo-label">Photo <small>optional</small></span>
       <div className="food-photo-row">
-        {hasPhoto ? <span className="food-photo-preview"><img src={draft.imageUrl} alt="" /></span> : <span className="food-photo-preview empty" aria-hidden="true">🍽</span>}
+        {hasPhoto ? <span className="food-photo-preview"><img src={foodImageUrlForDisplay(draft.imageUrl)} alt="" /></span> : <span className="food-photo-preview empty" aria-hidden="true">🍽</span>}
         <div className="food-photo-actions">
           <label className="food-photo-button">
             {hasPhoto ? "Replace photo" : "📷 Take or choose a photo"}

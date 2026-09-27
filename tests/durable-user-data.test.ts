@@ -241,6 +241,7 @@ test("backup parsing rejects impossible and future diary dates", () => {
 test("a food photo path from the diary database is treated as safe", () => {
   assert.equal(isSafeImageUrl("/api/nourish/diary/kp/food/abc123/photo"), true);
   assert.equal(isSafeImageUrl("/api/nourish/diary/kp/food/abc123/photo?v=1724928000000"), true);
+  assert.equal(isSafeImageUrl("/nourish/api/nourish/diary/kp/food/abc123/photo"), true);
 });
 
 test("only the diary API's own paths are allowed without a scheme", () => {

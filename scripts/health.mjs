@@ -17,8 +17,13 @@ import { pathToFileURL } from "node:url";
 const DEFAULT_BASE_URL = "http://127.0.0.1:3902";
 const REQUEST_TIMEOUT_MS = 5000;
 
-/** Matches the hashed build assets Nourish serves, e.g. /assets/index-DPuT0EBM.js */
-const ASSET_PATTERN = /\/assets\/[A-Za-z0-9_\-.]+\.(?:js|css)/g;
+/**
+ * Matches the exact same-origin asset path the page names, including Nourish's
+ * base path, e.g. /nourish/assets/index-DPuT0EBM.js. The old pattern started
+ * matching at the inner `/assets`, so it checked a healthy URL the browser
+ * never requested and missed a completely broken prefixed route.
+ */
+const ASSET_PATTERN = /\/(?:[A-Za-z0-9._~-]+\/)*assets\/[A-Za-z0-9_.-]+\.(?:js|css)(?:\?[^"'`\s<>)]+)?/g;
 
 function findAssetPaths(text) {
   return [...new Set(text.match(ASSET_PATTERN) ?? [])];

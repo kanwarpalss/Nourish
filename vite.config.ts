@@ -2,6 +2,7 @@ import vinext from "vinext";
 import { defineConfig } from "vite";
 import hostingConfig from "./.openai/hosting.json";
 import { sites } from "./build/sites-vite-plugin";
+import { BASE_PATH, DIARY_API_BASE } from "./shared/base-path.mjs";
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   "00000000-0000-4000-8000-000000000000";
@@ -44,7 +45,7 @@ export default defineConfig(async () => {
   const { cloudflare } = await import("@cloudflare/vite-plugin");
 
   // In development the diary service runs beside Vite and Vite proxies to it, so
-  // the browser calls the same relative /api/nourish path it will call in
+  // the browser calls the same prefixed diary path it will call in
   // production. Production instead fronts both on 3902 (see server/front-door.mjs);
   // either way the app never learns a second origin.
   const diaryServicePort = Number(process.env.NOURISH_DATA_PORT ?? 4319);
@@ -53,9 +54,10 @@ export default defineConfig(async () => {
     server: {
       ...(isCodexSeatbeltSandbox ? { watch: { useFsEvents: false, usePolling: true } } : {}),
       proxy: {
-        "/api/nourish": {
+        [DIARY_API_BASE]: {
           target: `http://127.0.0.1:${diaryServicePort}`,
           changeOrigin: false,
+          rewrite: (requestPath) => requestPath.slice(BASE_PATH.length),
         },
       },
     },

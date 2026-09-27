@@ -7,3 +7,5 @@
  * never drift between the page and the API it calls.
  */
 export const BASE_PATH = "/nourish";
+export const API_PREFIX = "/api/nourish";
+export const DIARY_API_BASE = `${BASE_PATH}${API_PREFIX}`;

@@ -1,7 +1,7 @@
 /**
  * Development: the app on 3902, the diary database beside it on 4319.
  *
- * Vite proxies /api/nourish through to the data service (see vite.config.ts), so
+ * Vite proxies /nourish/api/nourish through to the data service (see vite.config.ts), so
  * the browser talks to one origin in development exactly as it does in production.
  * Running the service in this process rather than a second terminal means there is
  * no way to start the app and forget the database.

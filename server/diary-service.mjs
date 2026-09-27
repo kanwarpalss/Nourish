@@ -16,8 +16,9 @@
 
 import { createServer } from "node:http";
 import { openDiaryStore, isValidProfileId, isValidProfileName, isValidLogId, isSupportedPhotoMimeType, MAX_PAYLOAD_BYTES, MAX_PHOTO_BYTES } from "./diary-store.mjs";
+import { API_PREFIX } from "../shared/base-path.mjs";
 
-export const API_PREFIX = "/api/nourish";
+export { API_PREFIX };
 const BODY_LIMIT = MAX_PAYLOAD_BYTES + 64 * 1024;
 const PHOTO_BODY_LIMIT = MAX_PHOTO_BYTES + 16 * 1024;
 

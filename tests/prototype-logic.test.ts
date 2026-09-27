@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { foodPhotoKeyFromUrl, foodPhotoUrl, isAutoLoadedFoodImage, isFoodPhotoUrl } from "../app/log-photos";
+import { foodImageUrlForDisplay, foodPhotoKeyFromUrl, foodPhotoUrl, isAutoLoadedFoodImage, isFoodPhotoUrl } from "../app/log-photos";
 import { calculateMealNutrition, meals, numericTags, nutritionItems } from "../app/nutrition-data";
 import { estimateSatiety, getBangaloreClock, getEnergyRunway, getLoggingUnits, getNutritionDelta, getQuantityLimit, hasNutritionTarget, isQuantityValid, matchesNutritionTarget, matchesRecipe, satietyLabel, scaleNutrition, scaleNutritionForUnit, sumLoggedNutrition, sumNutritionDetails } from "../app/prototype-logic";
 
@@ -18,6 +18,15 @@ test("food-photo cache-busting keeps the original storage key for later edits", 
     assert.equal(isFoodPhotoUrl(storedUrl), true, storedUrl);
     assert.equal(foodPhotoKeyFromUrl(storedUrl), foodId, storedUrl);
   }
+});
+
+test("legacy food photos and bundled images gain the base path only when displayed", () => {
+  const legacyPhoto = "/api/nourish/diary/kp/food/my-oats/photo?v=123";
+  assert.equal(isFoodPhotoUrl(legacyPhoto), true, "an existing saved photo must not disappear after the base-path move");
+  assert.equal(foodImageUrlForDisplay(legacyPhoto), `/nourish${legacyPhoto}`);
+  assert.equal(foodImageUrlForDisplay("/food-images/fortune-poha-thick.jpg"), "/nourish/food-images/fortune-poha-thick.jpg");
+  assert.equal(foodImageUrlForDisplay(foodPhotoUrl("kp", "my-oats")), foodPhotoUrl("kp", "my-oats"), "a current URL must never be double-prefixed");
+  assert.equal(foodImageUrlForDisplay("https://example.com/food.jpg"), "https://example.com/food.jpg");
 });
 
 test("food-photo URL helpers reject malformed and non-food routes without throwing", () => {

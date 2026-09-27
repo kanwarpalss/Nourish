@@ -15,6 +15,7 @@ import { checkNourishHealth, healthyMessage } from "../scripts/health.mjs";
 
 const ENTRY = "/assets/index-TESTHASH.js";
 const LAZY = "/assets/lazy-CHUNKHASH.js";
+const PREFIXED_ENTRY = "/nourish/assets/index-TESTHASH.js";
 
 test("the success message names the address that was actually checked", () => {
   const tailscaleUrl = "http://100.81.29.11:3902";
@@ -68,6 +69,55 @@ test("THE REAL BUG: page served from an older build, asset now missing", async (
       const report = await checkNourishHealth(baseUrl);
       assert.equal(report.healthy, false);
       assert.match(report.problems.join(" "), /missing \(404\)/);
+    },
+  );
+});
+
+test("THE REBOOT BUG: the health check tests the prefixed asset URL the browser actually requests", async () => {
+  // A tempting but wrong implementation extracts the inner /assets path from
+  // /nourish/assets and reports green because that unprefixed file exists.
+  // The browser never requests it, so the prefixed 404 must make health red.
+  const brokenPrefixedAsset = `${PREFIXED_ENTRY}?build=stale`;
+  const seen = [];
+  await withServer(
+    (req, res) => {
+      seen.push(req.url);
+      if (req.url === "/") {
+        res.writeHead(302, { location: "/nourish" });
+        return res.end();
+      }
+      if (req.url === "/nourish") return res.end(pageHtml(brokenPrefixedAsset));
+      if (req.url === ENTRY) return res.end("console.log('trap: browser never asks for this')");
+      res.statusCode = 404;
+      res.end();
+    },
+    async (baseUrl) => {
+      const report = await checkNourishHealth(baseUrl);
+      assert.equal(report.healthy, false);
+      assert.ok(seen.includes(brokenPrefixedAsset), "must request the exact URL emitted by the page");
+      assert.equal(seen.includes(ENTRY), false, "must not silently substitute the unprefixed decoy");
+      assert.match(report.problems.join(" "), /\/nourish\/assets\/index-TESTHASH\.js\?build=stale is missing/);
+    },
+  );
+});
+
+test("a healthy base-path build checks the full prefixed asset path and its query string", async () => {
+  const queriedAsset = `${PREFIXED_ENTRY}?build=current`;
+  await withServer(
+    (req, res) => {
+      if (req.url === "/") {
+        res.writeHead(302, { location: "/nourish" });
+        return res.end();
+      }
+      if (req.url === "/nourish") return res.end(pageHtml(queriedAsset));
+      if (req.url === queriedAsset) return res.end("console.log('real prefixed app code')");
+      res.statusCode = 404;
+      res.end();
+    },
+    async (baseUrl) => {
+      const report = await checkNourishHealth(baseUrl);
+      assert.equal(report.healthy, true, report.problems.join("; "));
+      assert.equal(report.assetsChecked, 1);
     },
   );
 });
