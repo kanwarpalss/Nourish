@@ -51,14 +51,14 @@ async function withFrontDoor(run) {
   }
 }
 
-test("the front door maps prefixed browser files to vinext's real static paths", async () => {
+test("the front door rewrites build assets but preserves basePath-prefixed public files", async () => {
   await withFrontDoor(async ({ baseUrl, seen }) => {
     const cases = [
       ["/nourish/assets/app-HASH.js?build=7&build=8", "/assets/app-HASH.js?build=7&build=8"],
       ["/nourish/assets/theme-HASH.css?name=light%20mode", "/assets/theme-HASH.css?name=light%20mode"],
-      ["/nourish/food-images/thick%20poha.jpg?width=640", "/food-images/thick%20poha.jpg?width=640"],
-      ["/nourish/favicon.svg?v=2", "/favicon.svg?v=2"],
-      ["/nourish/cardiq-food-import.json?fresh=1", "/cardiq-food-import.json?fresh=1"],
+      ["/nourish/food-images/thick%20poha.jpg?width=640", "/nourish/food-images/thick%20poha.jpg?width=640"],
+      ["/nourish/favicon.svg?v=2", "/nourish/favicon.svg?v=2"],
+      ["/nourish/cardiq-food-import.json?fresh=1", "/nourish/cardiq-food-import.json?fresh=1"],
     ];
 
     for (const [requested, expectedUpstream] of cases) {

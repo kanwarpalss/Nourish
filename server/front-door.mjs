@@ -56,22 +56,14 @@ export async function startFrontDoor({ port = 3902, host = "0.0.0.0", appOrigin,
       return;
     }
 
-    // vinext currently honours basePath when it writes asset/public URLs into
-    // the HTML, but its production server still exposes those files at the
-    // unprefixed paths. Translate only the known static-file routes here; app
-    // navigation must keep /nourish so the framework can route it correctly.
+    // vinext currently writes basePath-prefixed build-asset URLs into the HTML,
+    // but exposes those hashed files only under /assets. Its public/ files are
+    // different: they really are served under /nourish and must keep the prefix.
+    // Translate only the hashed build directory here; app navigation, bundled
+    // food images, icons and the cardIQ snapshot must remain prefixed.
     // Slice the original URL rather than rebuilding it so query strings survive.
-    const isPrefixedStaticDirectory = ["assets", "food-images"].some((directory) =>
-      requestUrl.pathname.startsWith(`${BASE_PATH}/${directory}/`),
-    );
-    const isPrefixedPublicFile = new Set([
-      `${BASE_PATH}/favicon.svg`,
-      `${BASE_PATH}/file.svg`,
-      `${BASE_PATH}/globe.svg`,
-      `${BASE_PATH}/window.svg`,
-      `${BASE_PATH}/cardiq-food-import.json`,
-    ]).has(requestUrl.pathname);
-    const upstreamPath = isPrefixedStaticDirectory || isPrefixedPublicFile
+    const isPrefixedBuildAsset = requestUrl.pathname.startsWith(`${BASE_PATH}/assets/`);
+    const upstreamPath = isPrefixedBuildAsset
       ? rawUrl.slice(BASE_PATH.length)
       : rawUrl;
 
