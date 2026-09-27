@@ -6,16 +6,17 @@
 > Meal, photo, Plan, diary, delete/Undo and sync flows are released. Per-person calorie
 > and macro targets, an auto-refreshing cardIQ purchase snapshot, a redesigned weight
 > card (no delta, dialog-based trend, every point labelled), no "Energy rhythm", honest
-> persistence status and retry-safe Mini sync are released at runtime commit `0ecd42e`;
-> the production address is `http://100.81.29.11:3902`. The researched catalogue
+> persistence status and retry-safe Mini sync are released at runtime commit `086f369`;
+> the production addresses are `http://mac-mini/nourish` and `http://mac-mini:3902/nourish`.
+> The researched catalogue
 > contains 123 foods and 18 exact purchase-title matches. Authentication remains
 > explicitly parked; unresolved product labels and encrypted off-machine
 > backup/restore are the principal product inputs still outstanding.
 >
-> **Working tree, not yet released:** the weight trend chart's point layout was replaced
-> the same day after a real-world complaint about the released version — see the §6.1
-> addendum. Live Mac Mini still serves the superseded (but not buggy) time-proportional
-> layout until `npm run release` runs there again.
+> **Current runtime:** the Mac Mini serves frozen snapshot
+> `releases/2026-09-27T17-04-00-737Z`; the base-path front door and exact-URL health
+> checks come from `086f369`. The diary database remains outside releases and has a
+> pre-update SQLite backup dated 2026-09-27.
 
 ## §1 Product promise
 
@@ -820,13 +821,14 @@ time-proportional layout until `npm run release` runs there again.
 | Item | State | Resolution point |
 |---|---|---|
 | Permanent product name | **Nourish** | Canonical product and repository name used by the app, service and current instructions. |
+| `/nourish` rendered but all browser assets returned 404 after restart | **Fixed and released 2026-09-27** | Vinext emits base-path-prefixed build assets while serving those hashed files at `/assets`; the front door now translates only `/nourish/assets/*`. Public files genuinely live under `/nourish` and retain that prefix. Health checks request the exact URL emitted into HTML, so the old false-green cannot recur. |
 | Undo toast button was dead on tap | **Fixed 2026-09-02** | `.toast` is `pointer-events: none` and `.toast-undo` inherited it, so every Undo in the app fell through to the panel behind. Fixed with `pointer-events: auto` and a 44px target; asserted in `tests/rendered-html.test.mjs`. Second instance of this bug class after `fd65693` — **any new control drawn inside a click-through overlay must be hit-tested, not just rendered.** |
 | Restore decisions share the 1000-slot deletion budget | Open, accepted | `removalDecisions` stores `removed: false` restores alongside real tombstones under one `MAX_REMOVED_IDS` cap, so heavy delete/Undo churn evicts the oldest decisions sooner than tombstones alone would. Bounded and safe; revisit only if the cap is ever approached. |
 | Delete/restore ordering trusts the wall clock | Open, accepted | `{ removed, at }` is last-writer-wins on `Date.now()`, so a device with a badly wrong clock wins permanently, and a future-dated `at` from another device is accepted on parse. Standard trade-off for this sync model; documented rather than solved. |
 | Exact calorie/macro target and personal dietary constraints | **Editable and persisted per person; constraints still open** | Calorie, protein, carbohydrate and fat targets are user-controlled and sync independently. Medical/allergy constraints remain separate reviewed scope. |
 | Nandini and Epigamia seed entries rely on current label mirrors | Needs exact-pack confirmation | Reconcile barcode/variant and pack photo during cardIQ import before promotion |
 | 175 food purchase rows are deliberately not auto-linked | Open, enumerated | Exact Brand + Item + Variant/form + pack evidence was accepted for 18 titles. The complete unresolved list is generated in `data/UNMATCHED_CARDIQ_FOODS.md`; label photos, barcodes, or exact retailer IDs are the safe next input. |
-| cardIQ importer 404'd on the live service | **Fixed 2026-09-03, code-complete, not yet deployed** | The importer itself worked; nobody had ever run it on the Mac Mini, and its gitignored output was therefore never in any release. `npm run release` now refreshes the snapshot itself before building; a failure warns instead of blocking the release. Confirmed the Mac Mini has cardIQ credentials, so a real `npm run release` there closes this — that release action was deliberately not taken without KP's go-ahead. |
+| cardIQ purchase snapshot cannot refresh | **External blocker found 2026-09-27; prior snapshot remains usable** | Nourish serves the saved 2026-09-09 snapshot correctly, but cardIQ's configured Supabase hostname now returns authoritative `NXDOMAIN`, so `npm run import:cardiq` cannot fetch newer orders. This is a cardIQ/Supabase project issue, not a Nourish routing or credential-file issue; replace/restore that project before refreshing the snapshot. |
 | Weight card showed a last-vs-previous delta and its full trend/entry list inline | **Fixed 2026-09-03** | The delta is removed. The chart and full history now open from "View trend chart" into a dialog, so the home-page card stays a fixed size regardless of entry count. Every point is labelled with its exact kg. |
 | Weight chart forced a scroll even for a handful of sparse entries | **Fixed 2026-09-03, same-day addendum, not yet deployed** | 5 real entries spread across 23 days forced a 966px scrolling chart, because width was proportional to elapsed time rather than point count — "a sticky, fixed scrollable piece of crap" per KP. Points are now spaced evenly by index instead, and a 1W/1M/6M/1Y/All range filter (`.segmented`, same control Trends uses) scopes the chart. Zero pixel overlaps at every range, stress-tested with 365 daily entries. |
 | "Energy rhythm" duplicated the diary timeline with overlapping day-letter labels | **Removed 2026-09-03** | Its absolutely-positioned labels had no reserved space and bled into whatever sat beneath — the concrete example KP flagged. Removed outright. A full-app rendered-bounding-box audit followed and found no other overlap, except one unrelated pre-existing bug below. |
@@ -952,6 +954,22 @@ the next broad UI feature. The diary API has no authentication by design.
 
 ### Current handoff
 
+Runtime commit `086f369` is on GitHub and the Mac Mini. The 2026-09-27 release repaired
+the `/nourish` base-path boundary end to end: the page, all six emitted build assets,
+bundled food images, favicon, cardIQ snapshot and both direct/prefixed diary health routes
+answer through the raw port and friendly Caddy route. A real browser rendered Today and
+Purchases with two profiles visible through the diary API and no console warnings/errors.
+The complete suite has **227 passing checks** (64 JavaScript/render/service and 163
+TypeScript), with clean lint and diff validation. The old code failed the new route and
+false-green health tests before the repair.
+
+The only current operational exception is upstream of Nourish: cardIQ's configured
+Supabase project hostname returns authoritative `NXDOMAIN`, so the purchase snapshot could
+not refresh and remains dated 2026-09-09. Do not change Mac Mini DNS to mask this; the
+project address itself must be restored or replaced.
+
+Earlier handoff detail follows for historical product context.
+
 Nourish's Full Control scope is released on the Mac Mini at runtime commit `eb98c55`.
 The app supports Packaged Food, Open Ingredient, Ordered Food and reusable Meal creation;
 multiple independent units; quantity and macro editing; one-off Meal rename/add/remove;
@@ -983,7 +1001,7 @@ the documented narrow import contract, without payment or address data.
 
 ## §10 Deployment
 
-Target deployment is the always-on Mac Mini, not a public cloud product. The named service is `com.kanwar.nourish`; its public front door is **3902** and vinext stays loopback-only on **3903**. The service never selects a fallback port: if 3902 is already occupied, it exits with a clear error so the conflicting application can be fixed.
+Target deployment is the always-on Mac Mini, not a public cloud product. The named service is `com.kanwar.nourish`; its public front door is **3902** and vinext stays loopback-only on **3910**. The service never selects a fallback port: if 3902 is already occupied, it exits with a clear error so the conflicting application can be fixed.
 
 - Application: `launchd` service using `ops/com.kanwar.nourish.plist`, with `RunAtLoad`, restart after failure, and a 10-second restart throttle.
 - Address: `http://localhost:3902` on each Mac. The shared launcher pulls the latest public GitHub `main` checkout before opening the local app.
@@ -1043,6 +1061,17 @@ The production UI was inspected read-only in its real insecure HTTP context at 3
 no horizontal overflow or console output, and Change target remained a visible 44 px
 control. KP's full server-state fingerprint and revision matched before and after the
 release, proving the frozen app update did not rewrite or reset the household diary.
+
+**Operational state at 2026-09-27:** runtime commit `086f369` is on GitHub and the clean
+Mac Mini checkout; frozen build snapshot `releases/2026-09-27T17-04-00-737Z` is served by
+the running `com.kanwar.nourish` LaunchAgent. Before release, SQLite `.backup` created
+`~/Library/Application Support/Nourish/backups/pre-route-fix-20260927-223343.db`; its
+`PRAGMA quick_check` returned `ok`. The complete 227-check suite, lint and diff validation
+passed. Direct and friendly routes loaded the page, all six exact emitted asset paths,
+bundled food image, favicon, saved cardIQ snapshot and diary API (two profiles). A real
+browser rendered Today and Purchases with no console warnings/errors. The release-time
+cardIQ refresh warned because cardIQ's configured Supabase hostname is now authoritative
+`NXDOMAIN`; the prior 2026-09-09 snapshot remains present and readable.
 
 Runbook: update the clean Mac Mini checkout with `git pull --ff-only`, then run
 `npm run release`. A Git push alone does not change the running snapshot. Terminal commands
